@@ -38,7 +38,7 @@
     p.lead { font-size: 18px; color:#475569; }
     .card { border:1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); background:#fff; }
     .card .body { padding: 18px; }
-    .list li { display:flex; gap:10px; margin: 10px 0; color:#334155; }
+    .list li::before { content: "✒";          /* Quill icon */color: #1E4E5F;        /* PubliMentor brand colour */font-size: 16px;       /* Adjust size if needed */margin-right: 8px;     /* Space between icon and text */}
     .services, .mission, .newsletter { padding: 72px 0; }
     .services { background: #f8fafc; border-top:1px solid var(--border); border-bottom:1px solid var(--border);}
     .cards { display:grid; grid-template-columns: 1fr; gap: 16px; }
