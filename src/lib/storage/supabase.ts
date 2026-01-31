@@ -45,14 +45,21 @@ export class SupabaseStorageProvider implements StorageProvider {
   ): Promise<StorageFile> {
     const url = `${this.storageUrl}/object/${BUCKET_NAME}/${path}`;
     
+    // Convert to ArrayBuffer for fetch compatibility
+    const contentType = options?.contentType || "application/octet-stream";
+    const arrayBuffer = data.buffer.slice(
+      data.byteOffset,
+      data.byteOffset + data.byteLength
+    ) as ArrayBuffer;
+    
     const response = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.serviceKey}`,
-        "Content-Type": options?.contentType || "application/octet-stream",
+        "Content-Type": contentType,
         "x-upsert": "true", // Overwrite if exists
       },
-      body: data,
+      body: arrayBuffer,
     });
 
     if (!response.ok) {
