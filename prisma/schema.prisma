@@ -655,3 +655,143 @@ model ProcessingJob {
   @@index([status])
   @@index([jobType, status])
 }
+
+// ============================================================
+// AUDIT LOG - Immutable audit trail for compliance
+// ============================================================
+
+enum AuditAction {
+  // Authentication
+  AUTH_LOGIN
+  AUTH_LOGOUT
+  AUTH_FAILED
+  AUTH_PASSWORD_CHANGE
+  AUTH_PASSWORD_RESET
+  
+  // User management
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  USER_ROLE_CHANGED
+  
+  // Manuscript operations
+  MANUSCRIPT_UPLOADED
+  MANUSCRIPT_VIEWED
+  MANUSCRIPT_DOWNLOADED
+  MANUSCRIPT_UPDATED
+  MANUSCRIPT_DELETED
+  MANUSCRIPT_SHARED
+  MANUSCRIPT_PERMISSION_GRANTED
+  MANUSCRIPT_PERMISSION_REVOKED
+  
+  // Review operations
+  REVIEWER_DISCOVERED
+  REVIEWER_ASSIGNED
+  REVIEW_SUBMITTED
+  REVIEW_DECISION_MADE
+  
+  // COI and Integrity
+  COI_CHECK_PERFORMED
+  INTEGRITY_CHECK_PERFORMED
+  
+  // Publisher/Journal
+  PUBLISHER_CREATED
+  PUBLISHER_UPDATED
+  JOURNAL_CREATED
+  JOURNAL_UPDATED
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  
+  // Security events
+  SECURITY_RATE_LIMIT_EXCEEDED
+  SECURITY_UNAUTHORIZED_ACCESS
+  SECURITY_SUSPICIOUS_ACTIVITY
+  SECURITY_FILE_VALIDATION_FAILED
+}
+
+enum AuditCategory {
+  AUTHENTICATION
+  USER_MANAGEMENT
+  MANUSCRIPT
+  REVIEW
+  COMPLIANCE
+  PUBLISHER
+  SECURITY
+  SYSTEM
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @db.Timestamptz
+  // NOTE: Audit logs are IMMUTABLE - no updatedAt or deletedAt
+
+  // What happened
+  action   AuditAction
+  category AuditCategory
+
+  // Who did it
+  actorType  String  // user, system, api, anonymous
+  actorId    String? // User ID if applicable
+  actorEmail String? // For display/search
+
+  // What was affected
+  entityType String // manuscript, user, journal, etc.
+  entityId   String
+
+  // Change details (for data changes)
+  oldValues Json? @db.JsonB
+  newValues Json? @db.JsonB
+
+  // Request context
+  ipAddress   String? @db.VarChar(45) // IPv6 compatible
+  userAgent   String? @db.VarChar(500)
+  requestId   String? // Correlation ID
+  sessionId   String?
+
+  // Additional context
+  description String? // Human-readable description
+  metadata    Json    @default("{}") @db.JsonB
+
+  // Multi-tenancy (optional, for filtering)
+  publisherId String?
+
+  // Indexes optimized for compliance queries
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([action])
+  @@index([category])
+  @@index([createdAt(sort: Desc)])
+  @@index([publisherId, createdAt(sort: Desc)])
+  @@index([requestId])
+
+  @@map("audit_logs")
+}
+
+// ============================================================
+// DATA RETENTION CONFIG - For automated cleanup
+// ============================================================
+
+model DataRetentionPolicy {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // What to retain
+  entityType String @unique // audit_logs, manuscripts, sessions, etc.
+
+  // Retention rules
+  retentionDays     Int // How long to keep
+  archiveAfterDays  Int? // When to move to cold storage
+  deletionStrategy  String // soft, hard, anonymize
+
+  // Compliance
+  legalHoldExempt    Boolean  @default(false)
+  complianceFramework String[] // GDPR, SOX, HIPAA, etc.
+
+  // Status
+  isActive Boolean @default(true)
+  lastRunAt DateTime?
+  lastRunResult Json?
+
+  @@map("data_retention_policies")
+}

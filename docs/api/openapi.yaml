@@ -1,0 +1,1038 @@
+openapi: 3.1.0
+info:
+  title: PubliMentor API
+  version: 1.0.0
+  description: |
+    Scientific Editorial Workflow Management API.
+    
+    ## Overview
+    PubliMentor provides APIs for managing manuscripts, finding reviewers,
+    checking conflicts of interest, and validating research integrity.
+    
+    ## Authentication
+    All endpoints except health checks require Bearer token authentication.
+    
+    ```
+    Authorization: Bearer <access_token>
+    ```
+    
+    ## Rate Limiting
+    API requests are rate limited. When exceeded, responses include:
+    - `429 Too Many Requests` status
+    - `Retry-After` header with seconds until reset
+    
+    ## Request IDs
+    All responses include `X-Request-ID` header for tracing.
+    Include `X-Request-ID` in requests to correlate logs.
+  contact:
+    name: PubliMentor Support
+    email: support@publimentor.io
+  license:
+    name: Proprietary
+    url: https://publimentor.io/license
+
+servers:
+  - url: http://localhost:3000/api
+    description: Development server
+  - url: https://api.publimentor.io/api
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Authentication
+    description: User authentication and registration
+  - name: Manuscripts
+    description: Manuscript upload and management
+  - name: Reviewers
+    description: Reviewer discovery and search
+  - name: COI
+    description: Conflict of Interest checking
+  - name: Integrity
+    description: Research integrity validation
+  - name: Publishers
+    description: Publisher management
+  - name: Journals
+    description: Journal management
+
+paths:
+  # ============================================================
+  # Health Endpoints
+  # ============================================================
+  /health:
+    get:
+      tags: [Health]
+      summary: Get overall health status
+      description: Returns health status of all components
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Indicates if the application is running
+      operationId: getLiveness
+      security: []
+      responses:
+        '200':
+          description: Application is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessResponse'
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Indicates if the application can handle traffic
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Application is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  # ============================================================
+  # Authentication Endpoints
+  # ============================================================
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a new user
+      description: Create a new user account
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # Manuscript Endpoints
+  # ============================================================
+  /manuscripts:
+    get:
+      tags: [Manuscripts]
+      summary: List manuscripts
+      description: Get paginated list of manuscripts accessible to the user
+      operationId: listManuscripts
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ManuscriptStatus'
+        - name: journalId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of manuscripts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManuscriptListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /manuscripts/upload:
+    post:
+      tags: [Manuscripts]
+      summary: Upload a manuscript
+      description: Upload a PDF, DOCX, or LaTeX document
+      operationId: uploadManuscript
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, publisherId]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The manuscript file (PDF, DOCX, or LaTeX)
+                publisherId:
+                  type: string
+                  description: Publisher ID for the manuscript
+                journalId:
+                  type: string
+                  description: Optional journal ID
+      responses:
+        '201':
+          description: Manuscript uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManuscriptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /manuscripts/{id}:
+    get:
+      tags: [Manuscripts]
+      summary: Get manuscript details
+      description: Get full details of a manuscript
+      operationId: getManuscript
+      parameters:
+        - $ref: '#/components/parameters/ManuscriptIdParam'
+      responses:
+        '200':
+          description: Manuscript details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManuscriptResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Manuscripts]
+      summary: Delete a manuscript
+      description: Delete a manuscript (soft delete)
+      operationId: deleteManuscript
+      parameters:
+        - $ref: '#/components/parameters/ManuscriptIdParam'
+      responses:
+        '200':
+          description: Manuscript deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /manuscripts/{id}/download:
+    get:
+      tags: [Manuscripts]
+      summary: Download manuscript file
+      description: Download the original uploaded file
+      operationId: downloadManuscript
+      parameters:
+        - $ref: '#/components/parameters/ManuscriptIdParam'
+      responses:
+        '200':
+          description: File download
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================
+  # Reviewer Discovery Endpoints
+  # ============================================================
+  /reviewers/discover:
+    post:
+      tags: [Reviewers]
+      summary: Discover potential reviewers
+      description: |
+        Find potential reviewers based on manuscript content and keywords.
+        Uses AI to suggest experts, then verifies with PubMed and enriches
+        with citation data from Semantic Scholar and OpenAlex.
+      operationId: discoverReviewers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewerDiscoveryRequest'
+      responses:
+        '200':
+          description: List of potential reviewers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewerDiscoveryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  # ============================================================
+  # COI Endpoints
+  # ============================================================
+  /coi/check:
+    post:
+      tags: [COI]
+      summary: Check conflict of interest
+      description: Check for conflicts between authors and a potential reviewer
+      operationId: checkCOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/COICheckRequest'
+      responses:
+        '200':
+          description: COI check results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/COICheckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /coi/batch-check:
+    post:
+      tags: [COI]
+      summary: Batch COI check
+      description: Check conflicts for multiple reviewers at once
+      operationId: batchCheckCOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCOICheckRequest'
+      responses:
+        '200':
+          description: Batch COI check results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCOICheckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  # ============================================================
+  # Integrity Endpoints
+  # ============================================================
+  /integrity/identity:
+    post:
+      tags: [Integrity]
+      summary: Verify author identities
+      description: Verify author identities using ORCID, ROR, and OpenAlex
+      operationId: verifyIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityVerificationRequest'
+      responses:
+        '200':
+          description: Identity verification results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityVerificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /integrity/references:
+    post:
+      tags: [Integrity]
+      summary: Validate references
+      description: Validate reference DOIs and check for retractions
+      operationId: validateReferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReferenceValidationRequest'
+      responses:
+        '200':
+          description: Reference validation results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferenceValidationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /integrity/tortured-phrases:
+    post:
+      tags: [Integrity]
+      summary: Check for tortured phrases
+      description: Detect potential paper mill indicators
+      operationId: checkTorturedPhrases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TorturedPhrasesRequest'
+      responses:
+        '200':
+          description: Tortured phrases check results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorturedPhrasesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+# ============================================================
+# Components
+# ============================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    ManuscriptIdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Bad request - validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until rate limit resets
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # Base response types
+    ApiResponse:
+      type: object
+      required: [success, requestId, timestamp]
+      properties:
+        success:
+          type: boolean
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: object
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    ErrorResponse:
+      type: object
+      required: [success, requestId, timestamp, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            target:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+                  target:
+                    type: string
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalCount:
+          type: integer
+        totalPages:
+          type: integer
+        hasMore:
+          type: boolean
+
+    # Health schemas
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+        uptime:
+          type: integer
+        checks:
+          type: object
+          properties:
+            database:
+              $ref: '#/components/schemas/ComponentHealth'
+            memory:
+              $ref: '#/components/schemas/ComponentHealth'
+
+    ComponentHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency:
+          type: integer
+        message:
+          type: string
+
+    LivenessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          properties:
+            database:
+              type: boolean
+
+    # Auth schemas
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+        name:
+          type: string
+        institution:
+          type: string
+
+    # Manuscript schemas
+    ManuscriptStatus:
+      type: string
+      enum: [UPLOADED, EXTRACTING, EXTRACTED, PROCESSING, EMBEDDING, READY, ERROR]
+
+    ManuscriptResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Manuscript'
+
+    ManuscriptListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ManuscriptSummary'
+
+    Manuscript:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        abstract:
+          type: string
+        status:
+          $ref: '#/components/schemas/ManuscriptStatus'
+        fileName:
+          type: string
+        fileType:
+          type: string
+        wordCount:
+          type: integer
+        pageCount:
+          type: integer
+        keywords:
+          type: array
+          items:
+            type: string
+        authors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Author'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ManuscriptSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/ManuscriptStatus'
+        fileName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Author:
+      type: object
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+        orcid:
+          type: string
+        isCorresponding:
+          type: boolean
+        affiliations:
+          type: array
+          items:
+            type: string
+
+    # Reviewer schemas
+    ReviewerDiscoveryRequest:
+      type: object
+      required: [primaryKeywords]
+      properties:
+        manuscriptId:
+          type: string
+          description: Optional manuscript ID to use for discovery
+        primaryKeywords:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        secondaryKeywords:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        excludeAuthors:
+          type: array
+          items:
+            type: string
+        minHIndex:
+          type: integer
+          minimum: 0
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+
+    ReviewerDiscoveryResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                reviewers:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Reviewer'
+                source:
+                  type: string
+
+    Reviewer:
+      type: object
+      properties:
+        name:
+          type: string
+        affiliation:
+          type: string
+        country:
+          type: string
+        matchScore:
+          type: number
+        hIndex:
+          type: integer
+        publicationCount:
+          type: integer
+        recentPublications:
+          type: array
+          items:
+            $ref: '#/components/schemas/Publication'
+        expertise:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+
+    Publication:
+      type: object
+      properties:
+        title:
+          type: string
+        journal:
+          type: string
+        year:
+          type: integer
+        pmid:
+          type: string
+
+    # COI schemas
+    COICheckRequest:
+      type: object
+      required: [authors, reviewer]
+      properties:
+        authors:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              orcid:
+                type: string
+              openalexId:
+                type: string
+        reviewer:
+          type: object
+          properties:
+            name:
+              type: string
+            orcid:
+              type: string
+            openalexId:
+              type: string
+        fromYear:
+          type: integer
+          description: Check publications from this year
+
+    COICheckResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                hasConflict:
+                  type: boolean
+                conflicts:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/COIConflict'
+                score:
+                  type: number
+
+    COIConflict:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [co_authorship, same_institution, recent_collaboration]
+        author:
+          type: string
+        description:
+          type: string
+        publication:
+          type: string
+        year:
+          type: integer
+
+    BatchCOICheckRequest:
+      type: object
+      required: [authors, reviewers]
+      properties:
+        authors:
+          type: array
+          items:
+            type: object
+        reviewers:
+          type: array
+          items:
+            type: object
+
+    BatchCOICheckResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  reviewer:
+                    type: string
+                  hasConflict:
+                    type: boolean
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/COIConflict'
+
+    # Integrity schemas
+    IdentityVerificationRequest:
+      type: object
+      required: [authors]
+      properties:
+        authors:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              email:
+                type: string
+              orcid:
+                type: string
+              affiliations:
+                type: array
+                items:
+                  type: string
+
+    IdentityVerificationResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                results:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      author:
+                        type: string
+                      verified:
+                        type: boolean
+                      checks:
+                        type: object
+
+    ReferenceValidationRequest:
+      type: object
+      required: [references]
+      properties:
+        references:
+          type: array
+          items:
+            type: object
+            properties:
+              doi:
+                type: string
+              pmid:
+                type: string
+              title:
+                type: string
+
+    ReferenceValidationResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                validCount:
+                  type: integer
+                invalidCount:
+                  type: integer
+                results:
+                  type: array
+                  items:
+                    type: object
+
+    TorturedPhrasesRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          maxLength: 100000
+
+    TorturedPhrasesResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                hasTorturedPhrases:
+                  type: boolean
+                matches:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      phrase:
+                        type: string
+                      standard:
+                        type: string
+                      position:
+                        type: integer
+
+security:
+  - bearerAuth: []
