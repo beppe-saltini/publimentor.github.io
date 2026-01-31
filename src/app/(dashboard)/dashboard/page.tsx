@@ -12,7 +12,10 @@ export default async function DashboardPage() {
   let journalCount = 0;
   let submissionCount = 0;
   let pendingReviews = 0;
-  let recentJournals: Awaited<ReturnType<typeof prisma.journal.findMany>> = [];
+  type JournalWithCount = Awaited<ReturnType<typeof prisma.journal.findMany<{
+    include: { _count: { select: { submissions: true; members: true } } }
+  }>>>;
+  let recentJournals: JournalWithCount = [];
 
   try {
     const userId = session?.user?.id;
