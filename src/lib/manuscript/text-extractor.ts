@@ -57,10 +57,8 @@ async function extractFromPDF(buffer: Buffer): Promise<ExtractionResult> {
   // Create parser instance with buffer data
   const parser = new PDFParse({ data: buffer });
   
-  // Load the document
-  await parser.load();
-  
   // Get text from all pages - returns { text: string, pages: [...], total: number }
+  // Note: load() is called internally by getText() in pdf-parse v2
   const result = await parser.getText();
   const text = typeof result === "string" ? result : result.text || "";
   const pageCount = typeof result === "object" ? result.total : undefined;
@@ -70,7 +68,8 @@ async function extractFromPDF(buffer: Buffer): Promise<ExtractionResult> {
   let info: Record<string, unknown> = {};
   
   try {
-    info = await parser.getInfo();
+    const infoResult = await parser.getInfo();
+    info = infoResult as unknown as Record<string, unknown>;
   } catch {
     // Info may not be available for all PDFs
   }

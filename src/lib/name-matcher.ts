@@ -154,7 +154,7 @@ const CHINESE_PINYIN_VARIANTS: Record<string, string[]> = {
   yu: ["yue", "yee", "yeo"],
   xiao: ["hsiao", "siu", "shiu"],
   jin: ["kim", "chin", "king"],
-  wei: ["wai", "ngai"],
+  wei: ["wai", "ngai", "way"],
   qian: ["chien", "chin"],
   qin: ["chin", "tsin"],
   jiang: ["chiang", "keung"],
@@ -170,7 +170,6 @@ const CHINESE_PINYIN_VARIANTS: Record<string, string[]> = {
   shi: ["shih", "sze", "si"],
   su: ["soo", "so"],
   // Given name variants
-  wei: ["wai", "way"],
   ming: ["min", "meng"],
   hua: ["hwa", "wah"],
   jing: ["ching", "ging"],

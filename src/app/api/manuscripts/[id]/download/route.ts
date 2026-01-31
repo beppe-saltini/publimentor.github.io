@@ -132,7 +132,8 @@ export async function GET(
       });
 
       // Return file with secure headers
-      return new NextResponse(buffer, {
+      // Convert Buffer to Uint8Array for NextResponse compatibility
+      return new NextResponse(new Uint8Array(buffer), {
         headers: {
           "Content-Type": manuscript.fileMimeType,
           // Use both filename and filename* for compatibility

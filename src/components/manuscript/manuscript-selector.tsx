@@ -195,7 +195,7 @@ export function ManuscriptSelector({
                   <Card
                     key={m.id}
                     className={`cursor-pointer hover:border-blue-300 transition-colors ${
-                      selected?.id === m.id ? "border-blue-500 bg-blue-50" : ""
+                      value === m.id ? "border-blue-500 bg-blue-50" : ""
                     }`}
                     onClick={() => handleSelect(m)}
                   >
@@ -214,7 +214,7 @@ export function ManuscriptSelector({
                           <Badge variant="secondary" className="uppercase text-xs">
                             {m.fileType}
                           </Badge>
-                          {selected?.id === m.id && (
+                          {value === m.id && (
                             <Check className="h-5 w-5 text-blue-600" />
                           )}
                         </div>

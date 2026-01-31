@@ -132,6 +132,13 @@ interface DiscoverySummary {
   avgPublications: number;
   avgSeniorAuthorships: number;
   llmEnhanced?: boolean;
+  avgHIndex?: number | null;
+  dataSources?: {
+    semanticScholar: number;
+    openAlex: number;
+    pubMed?: number;
+  };
+  searchStrategy?: string;
 }
 
 interface DiscoveryResult {
@@ -790,8 +797,8 @@ function ReviewerSearchContent() {
                             <li>✓ Verified against PubMed, Semantic Scholar, OpenAlex</li>
                           </>
                         )}
-                        {(discoveryResult.summary as Record<string, unknown>).avgHIndex !== null && (
-                          <li>✓ Avg H-index: {(discoveryResult.summary as Record<string, unknown>).avgHIndex as number}</li>
+                        {discoveryResult.summary.avgHIndex !== null && (
+                          <li>✓ Avg H-index: {discoveryResult.summary.avgHIndex as number}</li>
                         )}
                         <li>✓ Avg {discoveryResult.summary.avgPublications} publications per reviewer</li>
                         <li>✓ Avg {discoveryResult.summary.avgSeniorAuthorships} senior author papers</li>
@@ -804,14 +811,14 @@ function ReviewerSearchContent() {
                             AI-Suggested
                           </Badge>
                         )}
-                        {(discoveryResult.summary as Record<string, unknown>).dataSources && (
+                        {discoveryResult.summary.dataSources && (
                           <>
-                            {((discoveryResult.summary as Record<string, unknown>).dataSources as Record<string, number>).semanticScholar > 0 && (
+                            {discoveryResult.summary.dataSources?.semanticScholar > 0 && (
                               <Badge variant="outline" className="bg-orange-50 text-orange-700">
                                 Semantic Scholar
                               </Badge>
                             )}
-                            {((discoveryResult.summary as Record<string, unknown>).dataSources as Record<string, number>).openAlex > 0 && (
+                            {discoveryResult.summary.dataSources?.openAlex > 0 && (
                               <Badge variant="outline" className="bg-teal-50 text-teal-700">
                                 OpenAlex
                               </Badge>
@@ -822,9 +829,9 @@ function ReviewerSearchContent() {
                           </>
                         )}
                       </div>
-                      {(discoveryResult.summary as Record<string, unknown>).searchStrategy && (
+                      {discoveryResult.summary.searchStrategy && (
                         <p className="text-xs text-purple-600 mt-2 italic">
-                          Strategy: {(discoveryResult.summary as Record<string, unknown>).searchStrategy as string}
+                          Strategy: {discoveryResult.summary.searchStrategy}
                         </p>
                       )}
                     </div>

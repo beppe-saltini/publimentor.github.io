@@ -81,10 +81,11 @@ export async function POST(request: Request) {
     // Search OpenAlex for potential reviewers
     if (searchKeywords.length > 0) {
       try {
-        const openAlexResults = await openAlex.findReviewers(
-          searchKeywords.join(" "),
-          20
-        );
+        const openAlexResponse = await openAlex.findReviewers({
+          keywords: searchKeywords.join(" "),
+          perPage: 20
+        });
+        const openAlexResults = openAlexResponse.results;
 
         for (const result of openAlexResults) {
           const nameParts = result.display_name.split(" ");
@@ -101,8 +102,8 @@ export async function POST(request: Request) {
             existing.citedByCount = result.cited_by_count;
             existing.hIndex = result.summary_stats?.h_index;
             existing.orcid = result.orcid;
-            if (result.last_known_institution?.display_name) {
-              existing.affiliation = result.last_known_institution.display_name;
+            if (result.last_known_institutions?.[0]?.display_name) {
+              existing.affiliation = result.last_known_institutions[0].display_name;
             }
             existing.topics = result.topics?.slice(0, 5).map(
               (t: { display_name: string }) => t.display_name
@@ -113,7 +114,7 @@ export async function POST(request: Request) {
               name: result.display_name,
               firstName,
               lastName,
-              affiliation: result.last_known_institution?.display_name,
+              affiliation: result.last_known_institutions?.[0]?.display_name,
               source: "openalex",
               worksCount: result.works_count,
               citedByCount: result.cited_by_count,
