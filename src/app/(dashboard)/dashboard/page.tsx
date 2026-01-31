@@ -8,41 +8,56 @@ import Link from "next/link";
 export default async function DashboardPage() {
   const session = await auth();
   
-  const [journalCount, submissionCount, pendingReviews] = await Promise.all([
-    prisma.journalMember.count({
-      where: { userId: session?.user?.id },
-    }),
-    prisma.submission.count({
-      where: {
-        journal: {
+  // Default values in case of errors
+  let journalCount = 0;
+  let submissionCount = 0;
+  let pendingReviews = 0;
+  let recentJournals: Awaited<ReturnType<typeof prisma.journal.findMany>> = [];
+
+  try {
+    const userId = session?.user?.id;
+    
+    if (userId) {
+      [journalCount, submissionCount, pendingReviews] = await Promise.all([
+        prisma.journalMember.count({
+          where: { userId },
+        }),
+        prisma.submission.count({
+          where: {
+            journal: {
+              members: {
+                some: { userId },
+              },
+            },
+          },
+        }),
+        prisma.reviewAssignment.count({
+          where: {
+            reviewerId: userId,
+            status: "PENDING",
+          },
+        }),
+      ]);
+
+      recentJournals = await prisma.journal.findMany({
+        where: {
           members: {
-            some: { userId: session?.user?.id },
+            some: { userId },
           },
         },
-      },
-    }),
-    prisma.reviewAssignment.count({
-      where: {
-        reviewerId: session?.user?.id,
-        status: "PENDING",
-      },
-    }),
-  ]);
-
-  const recentJournals = await prisma.journal.findMany({
-    where: {
-      members: {
-        some: { userId: session?.user?.id },
-      },
-    },
-    include: {
-      _count: {
-        select: { submissions: true, members: true },
-      },
-    },
-    take: 5,
-    orderBy: { updatedAt: "desc" },
-  });
+        include: {
+          _count: {
+            select: { submissions: true, members: true },
+          },
+        },
+        take: 5,
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+  } catch (error) {
+    console.error("Dashboard data fetch error:", error);
+    // Continue with default values
+  }
 
   return (
     <div className="space-y-8">
