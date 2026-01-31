@@ -131,6 +131,7 @@ interface DiscoverySummary {
   };
   avgPublications: number;
   avgSeniorAuthorships: number;
+  llmEnhanced?: boolean;
 }
 
 interface DiscoveryResult {
@@ -775,15 +776,15 @@ function ReviewerSearchContent() {
           {discoveryResult && (
             <>
               {/* Summary Card */}
-              <Card className={(discoveryResult.summary as Record<string, unknown>).llmEnhanced ? "bg-purple-50 border-purple-200" : "bg-green-50 border-green-200"}>
+              <Card className={discoveryResult.summary.llmEnhanced ? "bg-purple-50 border-purple-200" : "bg-green-50 border-green-200"}>
                 <CardContent className="py-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className={`font-semibold ${(discoveryResult.summary as Record<string, unknown>).llmEnhanced ? "text-purple-800" : "text-green-800"}`}>
-                        {(discoveryResult.summary as Record<string, unknown>).llmEnhanced ? "🤖 AI-Suggested Reviewers" : "Database Search Results"}
+                      <h3 className={`font-semibold ${discoveryResult.summary.llmEnhanced ? "text-purple-800" : "text-green-800"}`}>
+                        {discoveryResult.summary.llmEnhanced ? "🤖 AI-Suggested Reviewers" : "Database Search Results"}
                       </h3>
-                      <ul className={`text-sm mt-1 space-y-0.5 ${(discoveryResult.summary as Record<string, unknown>).llmEnhanced ? "text-purple-700" : "text-green-700"}`}>
-                        {(discoveryResult.summary as Record<string, unknown>).llmEnhanced && (
+                      <ul className={`text-sm mt-1 space-y-0.5 ${discoveryResult.summary.llmEnhanced ? "text-purple-700" : "text-green-700"}`}>
+                        {discoveryResult.summary.llmEnhanced && (
                           <>
                             <li>✓ Claude AI suggested experts in this field</li>
                             <li>✓ Verified against PubMed, Semantic Scholar, OpenAlex</li>
@@ -797,7 +798,7 @@ function ReviewerSearchContent() {
                         <li>✓ {discoveryResult.summary.diversity.countryCount} countries represented</li>
                       </ul>
                       <div className="flex gap-2 mt-2 flex-wrap">
-                        {(discoveryResult.summary as Record<string, unknown>).llmEnhanced && (
+                        {discoveryResult.summary.llmEnhanced && (
                           <Badge variant="outline" className="bg-purple-100 text-purple-700">
                             <Sparkles className="h-3 w-3 mr-1" />
                             AI-Suggested
