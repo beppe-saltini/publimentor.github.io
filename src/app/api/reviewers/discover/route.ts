@@ -1,0 +1,646 @@
+import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { searchPubMed, fetchPubMedArticles, PubMedArticle } from "@/lib/pubmed";
+import { parseAuthorList } from "@/lib/author-parser";
+import { suggestReviewersWithLLM } from "@/lib/llm";
+import { searchAuthor as searchSemanticScholar } from "@/lib/semantic-scholar";
+import { openAlex } from "@/lib/openalex";
+import { z } from "zod";
+import {
+  checkRateLimit,
+  getRateLimitResponse,
+  sanitizeString,
+  auditLog,
+  getClientIp,
+  getUserAgent,
+} from "@/lib/security";
+
+export const dynamic = "force-dynamic";
+
+// Rate limit: 10 requests per minute (expensive LLM calls)
+const DISCOVER_RATE_LIMIT = { windowMs: 60000, maxRequests: 10 };
+
+const discoverSchema = z.object({
+  // Limit keyword lengths to prevent abuse
+  primaryKeywords: z.array(z.string().max(200)).min(1).max(10),
+  secondaryKeywords: z.array(z.string().max(200)).max(10).optional(),
+  minHIndex: z.number().min(0).default(0),
+  maxHIndex: z.number().min(0).default(100),
+  minPublications: z.number().min(1).default(1),
+  maxPublications: z.number().min(1).default(500),
+  yearsActive: z.number().min(1).max(20).default(5),
+  requireSeniorAuthor: z.boolean().default(true),
+  maxResults: z.number().min(5).max(50).default(10),
+  manuscriptAuthors: z.string().optional(),
+  diversifyGeo: z.boolean().default(true),
+  avoidSameInstitution: z.boolean().default(true),
+  useLLM: z.boolean().default(true),
+});
+
+interface ReviewerCandidate {
+  id: string;
+  name: string;
+  firstName: string;
+  lastName: string;
+  affiliation: string;
+  country: string;
+  hIndex: number | null;
+  citationCount: number | null;
+  publicationCount: number;
+  firstAuthorCount: number;
+  lastAuthorCount: number;
+  correspondingCount: number;
+  seniorAuthorCount: number;
+  recentArticles: {
+    title: string;
+    journal: string;
+    year: string;
+    pmid: string;
+    position: "first" | "last" | "middle";
+  }[];
+  sources: ("PubMed" | "SemanticScholar" | "OpenAlex")[];
+  verificationUrls: {
+    pubmedSearchUrl: string;
+    googleScholarUrl: string;
+    institutionSearchUrl: string;
+    semanticScholarUrl?: string;
+    openAlexUrl?: string;
+  };
+  llmAnalysis?: {
+    relevanceScore: number;
+    reasoning: string;
+    topicalMatch: "excellent" | "good" | "moderate" | "weak";
+    seniorityAssessment: string;
+    recommendation: "highly_recommended" | "recommended" | "consider" | "not_recommended";
+    expertise: string[];
+  };
+}
+
+// Helper to delay between API calls
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export async function POST(request: Request) {
+  try {
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const clientIp = getClientIp(request);
+    
+    // Rate limiting - expensive API calls
+    const rateLimit = checkRateLimit(
+      `discover:${session.user.id}`,
+      DISCOVER_RATE_LIMIT
+    );
+    if (!rateLimit.allowed) {
+      auditLog({
+        userId: session.user.id,
+        action: "RATE_LIMIT_EXCEEDED",
+        resource: "reviewers/discover",
+        resourceId: "api",
+        ip: clientIp,
+        userAgent: getUserAgent(request),
+        severity: "warning",
+      });
+      return getRateLimitResponse(rateLimit.resetIn);
+    }
+
+    const body = await request.json();
+    const params = discoverSchema.parse(body);
+    
+    // Sanitize keyword inputs
+    const sanitizedPrimary = params.primaryKeywords.map(k => sanitizeString(k));
+    const sanitizedSecondary = params.secondaryKeywords?.map(k => sanitizeString(k));
+
+    console.log(`[Discover] Filters: H-index ${params.minHIndex}-${params.maxHIndex}, Pubs ${params.minPublications}-${params.maxPublications}, Years ${params.yearsActive}, Senior=${params.requireSeniorAuthor}, LLM=${params.useLLM}`);
+
+    // Parse manuscript authors to exclude
+    const parsedAuthors = params.manuscriptAuthors 
+      ? parseAuthorList(params.manuscriptAuthors) 
+      : [];
+    const excludeNames = parsedAuthors.map(a => a.fullName);
+
+    const candidates: ReviewerCandidate[] = [];
+    let llmUsed = false;
+    let searchStrategy = "";
+    let caveats: string[] = [];
+
+    // STEP 1: Use Claude as PRIMARY source to suggest reviewers
+    if (params.useLLM) {
+      console.log("[Discover] Using Claude as PRIMARY source for reviewer suggestions...");
+      
+      const llmResult = await suggestReviewersWithLLM(
+        params.primaryKeywords,
+        params.secondaryKeywords,
+        excludeNames,
+        params.maxResults + 5, // Get a few extra in case some can't be verified
+        {
+          requireSenior: params.requireSeniorAuthor,
+          diversifyGeography: params.diversifyGeo,
+          diversifyInstitutions: params.avoidSameInstitution,
+        }
+      );
+
+      if (llmResult && llmResult.reviewers.length > 0) {
+        llmUsed = true;
+        searchStrategy = llmResult.searchStrategy;
+        caveats = llmResult.caveats || [];
+        
+        console.log(`[Discover] Claude suggested ${llmResult.reviewers.length} reviewers, verifying...`);
+
+        // STEP 2: Verify each suggested reviewer with PubMed + enrich with Semantic Scholar/OpenAlex
+        for (const suggested of llmResult.reviewers) {
+          if (candidates.length >= params.maxResults) break;
+
+          try {
+            // Search PubMed for this author
+            const currentYear = new Date().getFullYear();
+            const startYear = currentYear - params.yearsActive;
+            
+            // Try each search term until we find results
+            let articles: PubMedArticle[] = [];
+            let usedSearchTerm = "";
+            
+            for (const searchTerm of suggested.searchTerms) {
+              const query = `${searchTerm} AND ${startYear}:${currentYear}[Date - Publication]`;
+              const pmids = await searchPubMed(query, 50);
+              
+              if (pmids.length > 0) {
+                articles = await fetchPubMedArticles(pmids);
+                usedSearchTerm = searchTerm;
+                break;
+              }
+            }
+
+            // If no articles found with search terms, try the name directly
+            if (articles.length === 0) {
+              const directQuery = `${suggested.name}[Author] AND ${startYear}:${currentYear}[Date - Publication]`;
+              const pmids = await searchPubMed(directQuery, 50);
+              if (pmids.length > 0) {
+                articles = await fetchPubMedArticles(pmids);
+                usedSearchTerm = `${suggested.name}[Author]`;
+              }
+            }
+
+            if (articles.length === 0) {
+              console.log(`[Discover] Could not verify ${suggested.name} in PubMed, skipping`);
+              continue;
+            }
+
+            console.log(`[Discover] Verified ${suggested.name}: ${articles.length} articles found`);
+
+            // Calculate author metrics from PubMed data
+            let firstAuthorCount = 0;
+            let lastAuthorCount = 0;
+            const nameParts = suggested.name.split(" ");
+            const lastName = nameParts[nameParts.length - 1].toLowerCase();
+
+            for (const article of articles) {
+              const authorIndex = article.authors.findIndex(a => 
+                a.fullName.toLowerCase().includes(lastName) ||
+                a.lastName.toLowerCase() === lastName
+              );
+              
+              if (authorIndex === 0) {
+                firstAuthorCount++;
+              } else if (authorIndex === article.authors.length - 1 && article.authors.length > 1) {
+                lastAuthorCount++;
+              }
+            }
+
+            const seniorCount = firstAuthorCount + lastAuthorCount;
+
+            // Skip if requiring senior and none found
+            if (params.requireSeniorAuthor && seniorCount === 0 && articles.length < 3) {
+              console.log(`[Discover] ${suggested.name} has no senior author papers, skipping`);
+              continue;
+            }
+
+            // STEP 3: Enrich with H-index from Semantic Scholar and OpenAlex
+            let hIndexSS: number | null = null;
+            let hIndexOA: number | null = null;
+            let citationCount: number | null = null;
+            const sources: ("PubMed" | "SemanticScholar" | "OpenAlex")[] = ["PubMed"];
+            let semanticScholarUrl: string | undefined;
+            let openAlexUrl: string | undefined;
+
+            // Try Semantic Scholar
+            try {
+              const ssAuthor = await searchSemanticScholar(suggested.name);
+              if (ssAuthor && ssAuthor.hIndex > 0) {
+                hIndexSS = ssAuthor.hIndex;
+                citationCount = ssAuthor.citationCount;
+                semanticScholarUrl = ssAuthor.url;
+                sources.push("SemanticScholar");
+                console.log(`[Discover] SemanticScholar: ${suggested.name} H-index=${hIndexSS}`);
+              }
+              await delay(200); // Rate limit
+            } catch (error) {
+              console.log(`[Discover] SemanticScholar lookup failed for ${suggested.name}`);
+            }
+
+            // Try OpenAlex (often more reliable for author matching)
+            try {
+              const oaAuthor = await openAlex.findAuthorByName(suggested.name);
+              if (oaAuthor) {
+                if (oaAuthor.summary_stats?.h_index) {
+                  hIndexOA = oaAuthor.summary_stats.h_index;
+                }
+                if (citationCount === null || oaAuthor.cited_by_count > (citationCount || 0)) {
+                  citationCount = oaAuthor.cited_by_count;
+                }
+                openAlexUrl = oaAuthor.id; // OpenAlex URL
+                sources.push("OpenAlex");
+                console.log(`[Discover] OpenAlex: ${suggested.name} H-index=${hIndexOA}`);
+              }
+              await delay(100); // Rate limit
+            } catch (error) {
+              console.log(`[Discover] OpenAlex lookup failed for ${suggested.name}`);
+            }
+
+            // Use the HIGHER H-index from either source (Semantic Scholar often matches wrong author)
+            let hIndex: number | null = null;
+            if (hIndexSS !== null && hIndexOA !== null) {
+              hIndex = Math.max(hIndexSS, hIndexOA);
+              if (hIndexSS !== hIndexOA) {
+                console.log(`[Discover] Using higher H-index for ${suggested.name}: ${hIndex} (SS=${hIndexSS}, OA=${hIndexOA})`);
+              }
+            } else {
+              hIndex = hIndexOA ?? hIndexSS;
+            }
+
+            // Apply H-index filter if specified
+            if (hIndex !== null) {
+              if (params.minHIndex > 0 && hIndex < params.minHIndex) {
+                console.log(`[Discover] ${suggested.name} H-index ${hIndex} below minimum ${params.minHIndex}, skipping`);
+                continue;
+              }
+              if (params.maxHIndex < 100 && hIndex > params.maxHIndex) {
+                console.log(`[Discover] ${suggested.name} H-index ${hIndex} above maximum ${params.maxHIndex}, skipping`);
+                continue;
+              }
+            }
+
+            // Build recent articles list
+            const recentArticles = articles.slice(0, 5).map(article => {
+              const authorIndex = article.authors.findIndex(a => 
+                a.lastName.toLowerCase() === lastName
+              );
+              let position: "first" | "last" | "middle" = "middle";
+              if (authorIndex === 0) position = "first";
+              else if (authorIndex === article.authors.length - 1) position = "last";
+
+              return {
+                title: article.title,
+                journal: article.journal,
+                year: article.pubDate,
+                pmid: article.pmid,
+                position,
+              };
+            });
+
+            const candidate: ReviewerCandidate = {
+              id: `llm_${suggested.name.toLowerCase().replace(/\s+/g, "_")}`,
+              name: suggested.name,
+              firstName: nameParts.slice(0, -1).join(" "),
+              lastName: nameParts[nameParts.length - 1],
+              affiliation: suggested.affiliation,
+              country: suggested.country,
+              hIndex,
+              citationCount,
+              publicationCount: articles.length,
+              firstAuthorCount,
+              lastAuthorCount,
+              correspondingCount: lastAuthorCount,
+              seniorAuthorCount: seniorCount,
+              recentArticles,
+              sources,
+              verificationUrls: {
+                pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(usedSearchTerm || suggested.name + "[Author]")}`,
+                googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(suggested.name)}"`,
+                institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(suggested.name)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`,
+                semanticScholarUrl,
+                openAlexUrl,
+              },
+              llmAnalysis: {
+                relevanceScore: 85, // High score since Claude suggested them
+                reasoning: suggested.reasoning,
+                topicalMatch: "excellent",
+                seniorityAssessment: suggested.estimatedSeniority === "senior" 
+                  ? "Established senior researcher" 
+                  : suggested.estimatedSeniority === "mid-career"
+                  ? "Mid-career researcher with growing impact"
+                  : "Early-career researcher",
+                recommendation: "highly_recommended",
+                expertise: suggested.expertise,
+              },
+            };
+
+            candidates.push(candidate);
+          } catch (error) {
+            console.error(`[Discover] Error verifying ${suggested.name}:`, error);
+          }
+        }
+      }
+    }
+
+    // STEP 4: Fallback to direct database search if LLM didn't provide results
+    if (candidates.length === 0) {
+      console.log("[Discover] Falling back to OpenAlex + PubMed search...");
+      
+      try {
+        // Use OpenAlex for initial discovery (has H-index filtering)
+        const oaResult = await openAlex.discoverReviewers({
+          primaryKeywords: params.primaryKeywords,
+          secondaryKeywords: params.secondaryKeywords,
+          minHIndex: params.minHIndex,
+          maxHIndex: params.maxHIndex,
+          minWorksCount: params.minPublications,
+          yearsActive: params.yearsActive,
+          requireCorresponding: params.requireSeniorAuthor,
+          maxResults: params.maxResults * 2,
+          excludeNames,
+        });
+
+        console.log(`[Discover] OpenAlex returned ${oaResult.authors.length} authors`);
+
+        for (const oaAuthor of oaResult.authors) {
+          if (candidates.length >= params.maxResults) break;
+
+          const nameParts = oaAuthor.display_name.split(" ");
+          const lastName = nameParts[nameParts.length - 1];
+          const affiliation = oaAuthor.last_known_institutions?.[0]?.display_name || "Unknown";
+          const country = oaAuthor.last_known_institutions?.[0]?.country_code || "Unknown";
+
+          // Try to get Semantic Scholar H-index as well
+          let hIndex = oaAuthor.summary_stats?.h_index || null;
+          let semanticScholarUrl: string | undefined;
+
+          try {
+            const ssAuthor = await searchSemanticScholar(oaAuthor.display_name);
+            if (ssAuthor) {
+              if (!hIndex || ssAuthor.hIndex > hIndex) {
+                hIndex = ssAuthor.hIndex;
+              }
+              semanticScholarUrl = ssAuthor.url;
+            }
+            await delay(200);
+          } catch {
+            // Ignore errors
+          }
+
+          // Apply H-index filter
+          if (hIndex !== null) {
+            if (params.minHIndex > 0 && hIndex < params.minHIndex) continue;
+            if (params.maxHIndex < 100 && hIndex > params.maxHIndex) continue;
+          }
+
+          candidates.push({
+            id: oaAuthor.id,
+            name: oaAuthor.display_name,
+            firstName: nameParts.slice(0, -1).join(" "),
+            lastName,
+            affiliation,
+            country,
+            hIndex,
+            citationCount: oaAuthor.cited_by_count,
+            publicationCount: oaAuthor.works_count,
+            firstAuthorCount: 0,
+            lastAuthorCount: 0,
+            correspondingCount: 0,
+            seniorAuthorCount: 0,
+            recentArticles: [],
+            sources: ["OpenAlex"],
+            verificationUrls: {
+              pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(oaAuthor.display_name)}[Author]`,
+              googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(oaAuthor.display_name)}"`,
+              institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(oaAuthor.display_name)}"`,
+              semanticScholarUrl,
+              openAlexUrl: oaAuthor.id,
+            },
+          });
+        }
+      } catch (error) {
+        console.error("[Discover] OpenAlex fallback failed:", error);
+        
+        // Ultimate fallback: PubMed only
+        const currentYear = new Date().getFullYear();
+        const startYear = currentYear - params.yearsActive;
+        const keywordQuery = [...params.primaryKeywords, ...(params.secondaryKeywords || [])]
+          .map(k => `"${k}"[Title/Abstract]`)
+          .join(" OR ");
+        const query = `(${keywordQuery}) AND ${startYear}:${currentYear}[Date - Publication]`;
+        
+        const pmids = await searchPubMed(query, 200);
+        if (pmids.length > 0) {
+          const articles = await fetchPubMedArticles(pmids);
+          
+          // Extract unique authors
+          const authorStats = new Map<string, {
+            name: string;
+            firstName: string;
+            lastName: string;
+            articles: PubMedArticle[];
+            firstAuthorCount: number;
+            lastAuthorCount: number;
+            affiliations: Set<string>;
+          }>();
+
+          const excludeSet = new Set(excludeNames.map(n => n.toLowerCase()));
+
+          for (const article of articles) {
+            article.authors.forEach((author, index) => {
+              if (excludeSet.has(author.fullName.toLowerCase())) return;
+              
+              const key = `${author.lastName.toLowerCase()}_${author.foreName?.toLowerCase() || ""}`;
+              let stats = authorStats.get(key);
+              
+              if (!stats) {
+                stats = {
+                  name: author.fullName,
+                  firstName: author.foreName,
+                  lastName: author.lastName,
+                  articles: [],
+                  firstAuthorCount: 0,
+                  lastAuthorCount: 0,
+                  affiliations: new Set(),
+                };
+                authorStats.set(key, stats);
+              }
+              
+              stats.articles.push(article);
+              if (index === 0) stats.firstAuthorCount++;
+              else if (index === article.authors.length - 1) stats.lastAuthorCount++;
+              if (author.affiliation) stats.affiliations.add(author.affiliation);
+            });
+          }
+
+          // Convert to candidates
+          for (const [, stats] of authorStats) {
+            if (candidates.length >= params.maxResults) break;
+            
+            const pubCount = stats.articles.length;
+            const seniorCount = stats.firstAuthorCount + stats.lastAuthorCount;
+            
+            if (pubCount < params.minPublications) continue;
+            if (params.requireSeniorAuthor && seniorCount === 0) continue;
+            
+            const affiliation = Array.from(stats.affiliations)[0] || "Unknown";
+            const country = extractCountry(affiliation);
+            
+            candidates.push({
+              id: `pubmed_${stats.lastName}_${stats.firstName}`.toLowerCase(),
+              name: stats.name,
+              firstName: stats.firstName,
+              lastName: stats.lastName,
+              affiliation,
+              country,
+              hIndex: null,
+              citationCount: null,
+              publicationCount: pubCount,
+              firstAuthorCount: stats.firstAuthorCount,
+              lastAuthorCount: stats.lastAuthorCount,
+              correspondingCount: stats.lastAuthorCount,
+              seniorAuthorCount: seniorCount,
+              recentArticles: stats.articles.slice(0, 3).map(a => ({
+                title: a.title,
+                journal: a.journal,
+                year: a.pubDate,
+                pmid: a.pmid,
+                position: "middle" as const,
+              })),
+              sources: ["PubMed"],
+              verificationUrls: {
+                pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(stats.name)}[Author]`,
+                googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(stats.name)}"`,
+                institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(stats.name)}"`,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // Build summary
+    const countries = Array.from(new Set(candidates.map(c => c.country).filter(c => c !== "Unknown")));
+    const avgPubs = candidates.length > 0
+      ? Math.round(candidates.reduce((sum, c) => sum + c.publicationCount, 0) / candidates.length)
+      : 0;
+    const avgSenior = candidates.length > 0
+      ? Math.round(candidates.reduce((sum, c) => sum + c.seniorAuthorCount, 0) / candidates.length)
+      : 0;
+    const candidatesWithHIndex = candidates.filter(c => c.hIndex !== null);
+    const avgHIndex = candidatesWithHIndex.length > 0
+      ? Math.round(candidatesWithHIndex.reduce((sum, c) => sum + (c.hIndex || 0), 0) / candidatesWithHIndex.length)
+      : null;
+
+    return NextResponse.json({
+      reviewers: candidates,
+      summary: {
+        totalFound: candidates.length,
+        returned: candidates.length,
+        criteria: {
+          minHIndex: params.minHIndex,
+          maxHIndex: params.maxHIndex,
+          minPublications: params.minPublications,
+          maxPublications: params.maxPublications,
+          yearsActive: params.yearsActive,
+          requireSeniorAuthor: params.requireSeniorAuthor,
+        },
+        diversity: {
+          countries,
+          countryCount: countries.length,
+        },
+        avgPublications: avgPubs,
+        avgSeniorAuthorships: avgSenior,
+        avgHIndex,
+        llmEnhanced: llmUsed,
+        searchStrategy: searchStrategy || undefined,
+        caveats: caveats.length > 0 ? caveats : undefined,
+        dataSources: {
+          semanticScholar: candidates.filter(c => c.sources.includes("SemanticScholar")).length,
+          openAlex: candidates.filter(c => c.sources.includes("OpenAlex")).length,
+          pubMed: candidates.filter(c => c.sources.includes("PubMed")).length,
+        },
+      },
+      disclaimer: llmUsed 
+        ? `Claude AI suggested these ${candidates.length} reviewers based on its knowledge of the research field, then verified each against PubMed, Semantic Scholar, and OpenAlex. All require independent verification before invitation.`
+        : `These are automated suggestions from database search. All ${candidates.length} candidates require independent verification.`,
+      selectionCriteria: {
+        method: llmUsed ? "Claude AI suggested experts, verified with PubMed + enriched with Semantic Scholar/OpenAlex" : "OpenAlex/PubMed keyword search",
+        hIndexRange: params.minHIndex > 0 || params.maxHIndex < 100 
+          ? `H-index ${params.minHIndex}-${params.maxHIndex}` 
+          : "No H-index filter",
+        publications: `Verified ${params.yearsActive}-year publication history`,
+        seniorAuthor: params.requireSeniorAuthor ? "Senior author papers required" : "Not required",
+        verification: "PubMed, Semantic Scholar, OpenAlex, and Google Scholar links provided",
+      },
+    });
+  } catch (error) {
+    console.error("Error discovering reviewers:", error);
+    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: "Invalid parameters", details: error.errors },
+        { status: 400 }
+      );
+    }
+    
+    return NextResponse.json(
+      { error: "Failed to discover reviewers" },
+      { status: 500 }
+    );
+  }
+}
+
+function extractCountry(affiliation: string): string {
+  const aff = affiliation.toLowerCase();
+  
+  const countryPatterns: [RegExp, string][] = [
+    [/\busa\b|\bunited states\b|\bu\.s\.a?\b/, "United States"],
+    [/\buk\b|\bunited kingdom\b|\bengland\b|\bscotland\b|\bwales\b/, "United Kingdom"],
+    [/\bgermany\b|\bdeutschland\b/, "Germany"],
+    [/\bfrance\b/, "France"],
+    [/\bitaly\b|\bitalia\b/, "Italy"],
+    [/\bspain\b|\bespaña\b/, "Spain"],
+    [/\bcanada\b/, "Canada"],
+    [/\baustralia\b/, "Australia"],
+    [/\bjapan\b/, "Japan"],
+    [/\bchina\b|\bbeijing\b|\bshanghai\b/, "China"],
+    [/\bsouth korea\b|\bkorea\b|\bseoul\b/, "South Korea"],
+    [/\bnetherlands\b|\bholland\b/, "Netherlands"],
+    [/\bswitzerland\b|\bschweiz\b/, "Switzerland"],
+    [/\bsweden\b/, "Sweden"],
+    [/\bdenmark\b/, "Denmark"],
+    [/\bnorway\b/, "Norway"],
+    [/\bfinland\b/, "Finland"],
+    [/\bbelgium\b/, "Belgium"],
+    [/\baustria\b/, "Austria"],
+    [/\bportugal\b/, "Portugal"],
+    [/\bpoland\b/, "Poland"],
+    [/\bireland\b/, "Ireland"],
+    [/\bisrael\b/, "Israel"],
+    [/\bsingapore\b/, "Singapore"],
+    [/\bindia\b/, "India"],
+    [/\bbrazil\b/, "Brazil"],
+    [/\bmexico\b/, "Mexico"],
+    [/\bargentina\b/, "Argentina"],
+    [/\bsouth africa\b/, "South Africa"],
+    [/\bnew zealand\b/, "New Zealand"],
+    [/\brussia\b/, "Russia"],
+    [/\bturkey\b/, "Turkey"],
+    [/\bgreece\b/, "Greece"],
+    [/\btaiwan\b/, "Taiwan"],
+    [/\bhong kong\b/, "Hong Kong"],
+  ];
+  
+  for (const [pattern, country] of countryPatterns) {
+    if (pattern.test(aff)) {
+      return country;
+    }
+  }
+  
+  return "Unknown";
+}

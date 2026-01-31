@@ -1,0 +1,657 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ============================================================
+// NextAuth.js models
+// ============================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// User model (extended for manuscript features)
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  orcid         String?   @unique
+  institution   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Auth relations
+  accounts Account[]
+  sessions Session[]
+
+  // Journal relations
+  journalMemberships JournalMember[]
+  reviewAssignments  ReviewAssignment[]
+
+  // Publisher relations
+  publisherMemberships PublisherMember[]
+
+  // Manuscript relations
+  uploadedManuscripts   Manuscript[]           @relation("UploadedManuscripts")
+  manuscriptPermissions ManuscriptPermission[] @relation("ManuscriptPermissions")
+  grantedPermissions    ManuscriptPermission[] @relation("GrantedPermissions")
+}
+
+// ============================================================
+// Publisher (Organization) - Top-level tenant
+// ============================================================
+
+model Publisher {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  website   String?
+  settings  Json? // Publisher-specific settings
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  journals    Journal[]
+  members     PublisherMember[]
+  manuscripts Manuscript[]
+}
+
+model PublisherMember {
+  id        String        @id @default(cuid())
+  role      PublisherRole @default(MEMBER)
+  createdAt DateTime      @default(now())
+
+  userId      String
+  publisherId String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publisher   Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, publisherId])
+  @@index([publisherId])
+}
+
+enum PublisherRole {
+  OWNER // Full control
+  ADMIN // Manage journals and users
+  MEMBER // View access
+}
+
+// ============================================================
+// Journal (updated with Publisher link)
+// ============================================================
+
+model Journal {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Publisher relation (optional for backward compatibility)
+  publisherId String?
+  publisher   Publisher? @relation(fields: [publisherId], references: [id])
+
+  // Existing relations
+  members          JournalMember[]
+  submissions      Submission[]
+  formatGuidelines FormatGuideline?
+
+  // Manuscript relation
+  manuscripts Manuscript[]
+
+  @@index([publisherId])
+}
+
+model JournalMember {
+  id        String     @id @default(cuid())
+  role      MemberRole @default(REVIEWER)
+  createdAt DateTime   @default(now())
+
+  userId    String
+  journalId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  journal   Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, journalId])
+}
+
+enum MemberRole {
+  ADMIN
+  EDITOR
+  REVIEWER
+}
+
+// ============================================================
+// Existing Submission models (unchanged)
+// ============================================================
+
+model Submission {
+  id        String           @id @default(cuid())
+  title     String
+  abstract  String?          @db.Text
+  pdfUrl    String?
+  status    SubmissionStatus @default(DRAFT)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  journalId String
+  journal   Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  authors           Author[]
+  reviewAssignments ReviewAssignment[]
+  formatReport      FormatReport?
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  REVISION_REQUESTED
+  ACCEPTED
+  REJECTED
+}
+
+model Author {
+  id          String  @id @default(cuid())
+  name        String
+  email       String?
+  orcid       String?
+  affiliation String?
+  order       Int     @default(0)
+
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+}
+
+model ReviewAssignment {
+  id         String          @id @default(cuid())
+  status     ReviewStatus    @default(PENDING)
+  coiCleared Boolean         @default(false)
+  coiReport  Json?
+  comments   String?         @db.Text
+  decision   ReviewDecision?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  reviewerId   String
+  submissionId String
+  reviewer     User       @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewerId, submissionId])
+}
+
+enum ReviewStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ReviewDecision {
+  ACCEPT
+  MINOR_REVISION
+  MAJOR_REVISION
+  REJECT
+}
+
+model FormatGuideline {
+  id        String   @id @default(cuid())
+  rules     Json // JSON schema for format rules
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  journalId String  @unique
+  journal   Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+}
+
+model FormatReport {
+  id        String   @id @default(cuid())
+  passed    Boolean
+  issues    Json // Array of format issues found
+  checkedAt DateTime @default(now())
+
+  submissionId String     @unique
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// MANUSCRIPT - Core document entity
+// ============================================================
+
+enum ManuscriptStatus {
+  UPLOADED // File received, awaiting processing
+  EXTRACTING // Text extraction in progress
+  EXTRACTED // Text extracted successfully
+  PROCESSING // LLM extracting metadata
+  EMBEDDING // Generating vector embeddings
+  READY // Fully processed, ready for use
+  ERROR // Processing failed
+}
+
+model Manuscript {
+  id String @id @default(cuid())
+
+  // === OWNERSHIP (Multi-tenancy) ===
+  publisherId String // Required: Publisher isolation
+  journalId   String? // Optional: May be unassigned initially
+  uploaderId  String // Required: User who uploaded
+
+  // === FILE INFO ===
+  fileName     String
+  fileType     String // pdf, docx, tex
+  fileMimeType String
+  fileSize     Int // bytes
+  filePath     String // Storage path (local/S3/R2)
+  fileHash     String? // SHA-256 for dedup detection
+
+  // === PROCESSING STATUS ===
+  status            ManuscriptStatus @default(UPLOADED)
+  statusMessage     String? // Error message if failed
+  processingStarted DateTime?
+  processingEnded   DateTime?
+
+  // === EXTRACTED TEXT ===
+  extractedText        String? @db.Text // Full document text
+  textExtractionMethod String? // pdf-parse, mammoth, etc.
+
+  // === LLM EXTRACTED METADATA ===
+  title          String?
+  abstract       String?  @db.Text
+  keywords       String[]
+  manuscriptType String? // Original Research, Review, etc.
+  language       String? // Detected language
+
+  // === DECLARATIONS ===
+  fundingStatement String? @db.Text
+  coiStatement     String? @db.Text
+  dataAvailability String? @db.Text
+  ethicsStatement  String? @db.Text
+  authorContribs   String? @db.Text
+
+  // === STATISTICS ===
+  wordCount      Int?
+  pageCount      Int?
+  figureCount    Int?
+  tableCount     Int?
+  referenceCount Int?
+
+  // === RAG ===
+  chunkCount     Int?
+  embeddingModel String? // Model used for embeddings
+  embeddedAt     DateTime?
+
+  // === VERSION CONTROL ===
+  version   Int          @default(1)
+  parentId  String? // Previous version
+  parent    Manuscript?  @relation("ManuscriptVersions", fields: [parentId], references: [id])
+  revisions Manuscript[] @relation("ManuscriptVersions")
+
+  // === TIMESTAMPS ===
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // === RELATIONSHIPS ===
+  publisher   Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  journal     Journal?  @relation(fields: [journalId], references: [id], onDelete: SetNull)
+  uploader    User      @relation("UploadedManuscripts", fields: [uploaderId], references: [id], onDelete: Cascade)
+  
+  authors       ManuscriptAuthor[]
+  affiliations  ManuscriptAffiliation[]
+  references    ManuscriptReference[]
+  chunks        DocumentChunk[]
+  permissions   ManuscriptPermission[]
+  processingJobs ProcessingJob[]
+
+  // === INDEXES ===
+  @@index([publisherId])
+  @@index([journalId])
+  @@index([uploaderId])
+  @@index([status])
+  @@index([publisherId, journalId])
+  @@index([fileHash])
+}
+
+// ============================================================
+// MANUSCRIPT PERMISSIONS - Explicit sharing
+// ============================================================
+
+enum PermissionLevel {
+  VIEW // Read only
+  COMMENT // View + add comments
+  EDIT // Full edit access
+}
+
+model ManuscriptPermission {
+  id String @id @default(cuid())
+
+  manuscriptId String
+  userId       String
+  grantedById  String // Who granted the permission
+
+  permission PermissionLevel @default(VIEW)
+  expiresAt  DateTime? // Optional expiry
+
+  createdAt DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  user       User       @relation("ManuscriptPermissions", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy  User       @relation("GrantedPermissions", fields: [grantedById], references: [id], onDelete: Cascade)
+
+  @@unique([manuscriptId, userId])
+  @@index([userId])
+  @@index([manuscriptId])
+}
+
+// ============================================================
+// MANUSCRIPT AUTHORS
+// ============================================================
+
+model ManuscriptAuthor {
+  id String @id @default(cuid())
+
+  // Ownership
+  manuscriptId String
+  publisherId  String // Denormalized for query efficiency
+
+  // Author info
+  fullName  String
+  firstName String?
+  lastName  String?
+  email     String?
+  orcid     String?
+
+  // Role & order
+  authorOrder     Int // 1 = first, n = last (scientific convention)
+  isCorresponding Boolean @default(false)
+  equalContrib    Boolean @default(false) // Equal contribution marker
+
+  // Affiliation references (numbers from paper, e.g., 1,2)
+  affiliationNums Int[]
+
+  // Validation
+  orcidVerified Boolean @default(false)
+  orcidData     Json? // Cached ORCID profile data
+  emailValid    Boolean?
+
+  createdAt DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([publisherId])
+  @@index([orcid])
+  @@index([email])
+}
+
+// ============================================================
+// MANUSCRIPT AFFILIATIONS
+// ============================================================
+
+model ManuscriptAffiliation {
+  id String @id @default(cuid())
+
+  // Ownership
+  manuscriptId String
+  publisherId  String // Denormalized for query efficiency
+
+  // Affiliation as written in paper
+  affiliationNumber Int // 1, 2, 3... (superscript in paper)
+  rawText           String // Original text from paper
+
+  // Parsed fields
+  institutionName String?
+  department      String?
+  city            String?
+  state           String?
+  country         String?
+  postalCode      String?
+
+  // Normalization
+  institutionId String? // Link to canonical Institution
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  rorId         String? // Research Organization Registry ID
+  rorVerified   Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([publisherId])
+  @@index([institutionId])
+}
+
+// ============================================================
+// INSTITUTION (Canonical, shared across publishers)
+// ============================================================
+
+model Institution {
+  id String @id @default(cuid())
+
+  // Core info
+  name        String
+  displayName String? // Preferred display name
+  aliases     String[] // Alternative names
+
+  // Location
+  city        String?
+  state       String?
+  country     String?
+  countryCode String? // ISO 3166-1 alpha-2
+
+  // External IDs
+  rorId  String? @unique // Research Organization Registry
+  gridId String? // Legacy GRID ID
+  isniId String? // ISNI
+
+  // Classification
+  type String? // University, Hospital, Company, Government, etc.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  affiliations ManuscriptAffiliation[]
+
+  @@index([name])
+  @@index([country])
+}
+
+// ============================================================
+// MANUSCRIPT REFERENCES
+// ============================================================
+
+model ManuscriptReference {
+  id String @id @default(cuid())
+
+  // Ownership
+  manuscriptId String
+  publisherId  String // Denormalized for query efficiency
+
+  // Reference as written
+  refNumber Int // [1], [2], etc.
+  rawText   String @db.Text // Original reference text
+
+  // Parsed fields (LLM extracted)
+  authors String?
+  title   String?
+  journal String?
+  year    Int?
+  volume  String?
+  issue   String?
+  pages   String?
+
+  // External IDs
+  doi     String?
+  pmid    String?
+  pmcid   String?
+  arxivId String?
+  url     String?
+
+  // Reference type
+  refType String? // journal, book, conference, thesis, website, etc.
+
+  // Validation
+  validated     Boolean?
+  validationMsg String?
+  validatedAt   DateTime?
+  doiValid      Boolean?
+  pmidValid     Boolean?
+
+  // In-text citation context
+  citationCount Int? // How many times cited in text
+
+  createdAt DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([publisherId])
+  @@index([doi])
+  @@index([pmid])
+}
+
+// ============================================================
+// DOCUMENT CHUNKS (for RAG with pgvector)
+// ============================================================
+
+model DocumentChunk {
+  id String @id @default(cuid())
+
+  // Ownership
+  manuscriptId String
+  publisherId  String // Denormalized for query efficiency
+
+  // Chunk content
+  content    String @db.Text
+  chunkIndex Int // Order in document
+
+  // Position in original
+  charStart  Int?
+  charEnd    Int?
+  pageNumber Int?
+
+  // Section context
+  section    String? // Introduction, Methods, Results, Discussion, etc.
+  subsection String?
+
+  // Token count for the chunk
+  tokenCount Int?
+
+  // Embedding vector - using pgvector (384 dims for all-MiniLM-L6-v2)
+  embedding Unsupported("vector(384)")?
+
+  createdAt DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([publisherId])
+  @@index([section])
+}
+
+// ============================================================
+// PROCESSING QUEUE (for async jobs)
+// ============================================================
+
+enum JobType {
+  EXTRACT_TEXT
+  EXTRACT_METADATA
+  GENERATE_EMBEDDINGS
+  VALIDATE_REFERENCES
+  VALIDATE_ORCIDS
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ProcessingJob {
+  id String @id @default(cuid())
+
+  // What to process
+  manuscriptId String
+  jobType      JobType
+
+  // Status
+  status   JobStatus @default(PENDING)
+  progress Int       @default(0) // 0-100
+
+  // Execution
+  startedAt   DateTime?
+  completedAt DateTime?
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+
+  // Error handling
+  error      String? @db.Text
+  errorStack String? @db.Text
+
+  // Metadata
+  inputData  Json? // Job-specific input
+  outputData Json? // Job result
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([status])
+  @@index([jobType, status])
+}

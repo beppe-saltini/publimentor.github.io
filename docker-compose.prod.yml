@@ -1,0 +1,103 @@
+# Production Docker Compose Configuration
+# DO NOT use this file directly - secrets must be injected via environment or secrets manager
+
+services:
+  # PostgreSQL Database with pgvector extension
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: publimentor-db
+    restart: always
+    environment:
+      # SECURITY: Use secrets in production
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-publimentor}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # SECURITY: Don't expose database port in production
+    # ports:
+    #   - "5432:5432"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # Next.js Application (Production)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: publimentor-app
+    restart: always
+    environment:
+      # Database
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+      
+      # SECURITY: These MUST be set via environment or secrets manager
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?NEXTAUTH_SECRET required}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:?NEXTAUTH_URL required}
+      
+      # OAuth (optional)
+      - ORCID_CLIENT_ID=${ORCID_CLIENT_ID:-}
+      - ORCID_CLIENT_SECRET=${ORCID_CLIENT_SECRET:-}
+      
+      # External APIs
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENALEX_EMAIL=${OPENALEX_EMAIL:-}
+      
+      # Storage (S3/R2 for production)
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER:-s3}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      
+      # Security
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    volumes:
+      # Only mount uploads in local storage mode
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - external
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # Nginx Reverse Proxy (optional - for SSL termination)
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on:
+  #     - app
+  #   networks:
+  #     - external
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  internal:
+    driver: bridge
+  external:
+    driver: bridge
