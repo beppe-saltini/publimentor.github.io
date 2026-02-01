@@ -5,6 +5,7 @@ import { parseAuthorList } from "@/lib/author-parser";
 import { suggestReviewersWithLLM } from "@/lib/llm";
 import { searchAuthor as searchSemanticScholar } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
+import { coiDetector, type ReviewerConflict, type ReviewerCOISummary, type ConflictSeverity } from "@/lib/coi-detector";
 import { z } from "zod";
 import {
   checkRateLimit,
@@ -35,6 +36,7 @@ const discoverSchema = z.object({
   diversifyGeo: z.boolean().default(true),
   avoidSameInstitution: z.boolean().default(true),
   useLLM: z.boolean().default(true),
+  checkCOI: z.boolean().default(true),  // Check for conflicts of interest
 });
 
 interface ReviewerCandidate {
@@ -73,6 +75,13 @@ interface ReviewerCandidate {
     seniorityAssessment: string;
     recommendation: "highly_recommended" | "recommended" | "consider" | "not_recommended";
     expertise: string[];
+  };
+  // COI check results
+  coiSummary?: {
+    hasConflict: boolean;
+    worstSeverity: ConflictSeverity | null;
+    conflictCount: number;
+    conflicts: ReviewerConflict[];
   };
 }
 
@@ -520,6 +529,51 @@ export async function POST(request: Request) {
             });
           }
         }
+      }
+    }
+
+    // STEP 5: Run COI checks if authors are provided and checkCOI is enabled
+    if (params.checkCOI && parsedAuthors.length > 0 && candidates.length > 0) {
+      console.log(`[Discover] Running COI checks for ${candidates.length} reviewers against ${parsedAuthors.length} authors...`);
+      
+      try {
+        // Prepare authors with roles (based on position)
+        const authorsWithRoles = parsedAuthors.map((a, index) => {
+          let role: "first" | "last" | "middle_early" | "middle_late" = "middle_late";
+          if (index === 0) role = "first";
+          else if (index === parsedAuthors.length - 1) role = "last";
+          else if (index <= 2) role = "middle_early";
+          
+          return {
+            name: a.fullName,
+            role,
+          };
+        });
+
+        // Batch check all reviewers
+        const coiResults = await coiDetector.batchCheckReviewerConflicts(
+          authorsWithRoles,
+          candidates.map(c => ({ name: c.name }))
+        );
+
+        // Add COI summary to each candidate
+        for (const candidate of candidates) {
+          const coiSummary = coiResults.get(candidate.name);
+          if (coiSummary) {
+            candidate.coiSummary = {
+              hasConflict: coiSummary.hasConflict,
+              worstSeverity: coiSummary.worstSeverity,
+              conflictCount: coiSummary.conflictCount,
+              conflicts: coiSummary.conflicts,
+            };
+          }
+        }
+
+        const conflictCount = candidates.filter(c => c.coiSummary?.hasConflict).length;
+        console.log(`[Discover] COI check complete: ${conflictCount} reviewers have potential conflicts`);
+      } catch (error) {
+        console.error("[Discover] COI check failed:", error);
+        // Continue without COI data rather than failing the whole request
       }
     }
 

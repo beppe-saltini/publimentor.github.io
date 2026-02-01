@@ -6,12 +6,117 @@ interface AuthorInfo {
   name: string;
   orcid?: string | null;
   openAlexId?: string;
+  role?: "corresponding" | "first" | "last" | "middle_early" | "middle_late";
 }
 
 interface ReviewerInfo {
   name: string;
   orcid?: string | null;
   openAlexId?: string;
+}
+
+// Severity levels including the minimal level for very old conflicts
+export type ConflictSeverity = "critical" | "high" | "medium" | "low" | "minimal";
+
+// Conflict details for a reviewer
+export interface ReviewerConflict {
+  authorName: string;
+  authorRole: string;
+  type: "coauthorship" | "affiliation";
+  baseSeverity: ConflictSeverity;  // Based on author role
+  adjustedSeverity: ConflictSeverity;  // Time-adjusted
+  yearsSince?: number;  // Years since conflict (for coauthorship)
+  details: {
+    title?: string;
+    year?: number;
+    institutionName?: string;
+    affiliationType?: "current_both" | "current_one" | "historical";
+  };
+}
+
+// Summary of conflicts for a reviewer
+export interface ReviewerCOISummary {
+  hasConflict: boolean;
+  worstSeverity: ConflictSeverity | null;
+  conflictCount: number;
+  conflicts: ReviewerConflict[];
+  checkedAt: string;
+}
+
+/**
+ * Get base severity from author role
+ */
+function getBaseSeverity(role?: string): ConflictSeverity {
+  switch (role) {
+    case "last":
+    case "first":
+    case "corresponding":
+      return "critical";
+    case "middle_early":
+      return "high";
+    case "middle_late":
+      return "medium";
+    default:
+      return "medium"; // Default for unknown roles
+  }
+}
+
+/**
+ * Calculate time-adjusted severity based on years since conflict
+ * 
+ * | Base Severity | 0-2 years | 3-5 years | 6-10 years | 10+ years |
+ * |--------------|-----------|-----------|------------|-----------|
+ * | Critical     | critical  | high      | medium     | low       |
+ * | High         | high      | medium    | low        | minimal   |
+ * | Medium       | medium    | low       | minimal    | minimal   |
+ * | Low          | low       | minimal   | minimal    | minimal   |
+ */
+export function adjustSeverityByTime(
+  baseSeverity: ConflictSeverity,
+  yearsSince?: number
+): ConflictSeverity {
+  // If no year info, return base severity
+  if (yearsSince === undefined || yearsSince < 0) {
+    return baseSeverity;
+  }
+
+  const severityLevels: ConflictSeverity[] = ["critical", "high", "medium", "low", "minimal"];
+  const baseIndex = severityLevels.indexOf(baseSeverity);
+
+  // Calculate downgrade steps based on years
+  let downgradeSteps = 0;
+  if (yearsSince <= 2) {
+    downgradeSteps = 0;
+  } else if (yearsSince <= 5) {
+    downgradeSteps = 1;
+  } else if (yearsSince <= 10) {
+    downgradeSteps = 2;
+  } else {
+    downgradeSteps = 3;
+  }
+
+  // Calculate new index, capped at "minimal"
+  const newIndex = Math.min(baseIndex + downgradeSteps, severityLevels.length - 1);
+  return severityLevels[newIndex];
+}
+
+/**
+ * Get the worst (most severe) severity from a list
+ */
+export function getWorstSeverity(severities: ConflictSeverity[]): ConflictSeverity | null {
+  if (severities.length === 0) return null;
+  
+  const order: ConflictSeverity[] = ["critical", "high", "medium", "low", "minimal"];
+  let worstIndex = order.length;
+  
+  for (const severity of severities) {
+    const index = order.indexOf(severity);
+    if (index < worstIndex) {
+      worstIndex = index;
+    }
+  }
+  
+  return order[worstIndex];
 }
 
 /**
@@ -339,6 +444,167 @@ export const coiDetector = {
   async hasConflict(authors: AuthorInfo[], reviewer: ReviewerInfo): Promise<boolean> {
     const report = await this.generateReport(authors, reviewer);
     return report.hasConflict;
+  },
+
+  /**
+   * Check conflicts for a single reviewer against manuscript authors
+   * Returns a summary with time-adjusted severity
+   */
+  async checkReviewerConflicts(
+    authors: AuthorInfo[],
+    reviewer: ReviewerInfo,
+    fromYear?: number
+  ): Promise<ReviewerCOISummary> {
+    const currentYear = new Date().getFullYear();
+    const conflicts: ReviewerConflict[] = [];
+
+    // Resolve reviewer's OpenAlex ID
+    const reviewerOpenAlexId = await this.resolveAuthorId(reviewer);
+
+    if (!reviewerOpenAlexId) {
+      return {
+        hasConflict: false,
+        worstSeverity: null,
+        conflictCount: 0,
+        conflicts: [],
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    // Calculate years for affiliation check
+    const affiliationWithinYears = fromYear ? currentYear - fromYear + 1 : 10;
+
+    // Check each author against the reviewer
+    for (const author of authors) {
+      const authorOpenAlexId = await this.resolveAuthorId(author);
+      if (!authorOpenAlexId) continue;
+
+      const baseSeverity = getBaseSeverity(author.role);
+
+      // Check co-authorship
+      try {
+        const coauthoredWorks = await this.checkCoauthorship(
+          authorOpenAlexId,
+          reviewerOpenAlexId,
+          fromYear
+        );
+
+        for (const work of coauthoredWorks) {
+          const yearsSince = currentYear - work.publication_year;
+          const adjustedSeverity = adjustSeverityByTime(baseSeverity, yearsSince);
+
+          conflicts.push({
+            authorName: author.name,
+            authorRole: author.role || "unknown",
+            type: "coauthorship",
+            baseSeverity,
+            adjustedSeverity,
+            yearsSince,
+            details: {
+              title: work.title,
+              year: work.publication_year,
+            },
+          });
+        }
+      } catch (error) {
+        console.error(`[COI] Error checking coauthorship for ${author.name}:`, error);
+      }
+
+      // Check shared affiliations
+      try {
+        const sharedInstitutions = await this.checkSharedInstitutions(
+          authorOpenAlexId,
+          reviewerOpenAlexId,
+          affiliationWithinYears
+        );
+
+        for (const inst of sharedInstitutions) {
+          // Affiliation conflicts are generally less severe than coauthorship
+          // Downgrade base severity by one level for affiliations
+          const severityLevels: ConflictSeverity[] = ["critical", "high", "medium", "low", "minimal"];
+          const baseIndex = severityLevels.indexOf(baseSeverity);
+          const affiliationBaseSeverity = severityLevels[Math.min(baseIndex + 1, severityLevels.length - 1)];
+
+          // For current affiliations, no time adjustment
+          // For historical, we don't have exact year so use minimal downgrade
+          let adjustedSeverity = affiliationBaseSeverity;
+          if (inst.type === "historical") {
+            adjustedSeverity = severityLevels[Math.min(severityLevels.indexOf(affiliationBaseSeverity) + 1, severityLevels.length - 1)];
+          }
+
+          conflicts.push({
+            authorName: author.name,
+            authorRole: author.role || "unknown",
+            type: "affiliation",
+            baseSeverity: affiliationBaseSeverity,
+            adjustedSeverity,
+            details: {
+              institutionName: inst.name,
+              affiliationType: inst.type,
+            },
+          });
+        }
+      } catch (error) {
+        console.error(`[COI] Error checking affiliations for ${author.name}:`, error);
+      }
+    }
+
+    // Remove duplicate conflicts (same author-type combination)
+    const uniqueConflicts = conflicts.filter(
+      (conflict, index, self) =>
+        index === self.findIndex((c) =>
+          c.authorName === conflict.authorName &&
+          c.type === conflict.type &&
+          c.details.title === conflict.details.title &&
+          c.details.institutionName === conflict.details.institutionName
+        )
+    );
+
+    // Sort by adjusted severity (worst first)
+    const severityOrder: ConflictSeverity[] = ["critical", "high", "medium", "low", "minimal"];
+    uniqueConflicts.sort((a, b) =>
+      severityOrder.indexOf(a.adjustedSeverity) - severityOrder.indexOf(b.adjustedSeverity)
+    );
+
+    const worstSeverity = getWorstSeverity(uniqueConflicts.map(c => c.adjustedSeverity));
+
+    return {
+      hasConflict: uniqueConflicts.length > 0,
+      worstSeverity,
+      conflictCount: uniqueConflicts.length,
+      conflicts: uniqueConflicts,
+      checkedAt: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Batch check conflicts for multiple reviewers against manuscript authors
+   * Returns a map of reviewer name to COI summary
+   */
+  async batchCheckReviewerConflicts(
+    authors: AuthorInfo[],
+    reviewers: ReviewerInfo[],
+    fromYear?: number
+  ): Promise<Map<string, ReviewerCOISummary>> {
+    const results = new Map<string, ReviewerCOISummary>();
+
+    // Process in parallel with concurrency limit to avoid rate limiting
+    const BATCH_SIZE = 3;
+    for (let i = 0; i < reviewers.length; i += BATCH_SIZE) {
+      const batch = reviewers.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (reviewer) => {
+          const summary = await this.checkReviewerConflicts(authors, reviewer, fromYear);
+          return { name: reviewer.name, summary };
+        })
+      );
+
+      for (const { name, summary } of batchResults) {
+        results.set(name, summary);
+      }
+    }
+
+    return results;
   },
 };
 

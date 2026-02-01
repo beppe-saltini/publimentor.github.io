@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
+import { COIBadge, COIDetails, getCardBorderClass, type ReviewerConflict, type ConflictSeverity } from "@/components/reviewers";
 
 interface ParsedAuthor {
   fullName: string;
@@ -49,6 +50,12 @@ interface ReviewerCandidate {
   orcid?: string;
   coauthorCount?: number;
   topics?: string[];
+  coiSummary?: {
+    hasConflict: boolean;
+    worstSeverity: ConflictSeverity | null;
+    conflictCount: number;
+    conflicts: ReviewerConflict[];
+  };
 }
 
 interface CoauthorWarning {
@@ -113,6 +120,13 @@ interface AdvancedReviewer {
     seniorityAssessment: string;
     recommendation: "highly_recommended" | "recommended" | "consider" | "not_recommended";
     expertise?: string[];
+  };
+  // COI check results
+  coiSummary?: {
+    hasConflict: boolean;
+    worstSeverity: ConflictSeverity | null;
+    conflictCount: number;
+    conflicts: ReviewerConflict[];
   };
 }
 
@@ -867,7 +881,14 @@ function ReviewerSearchContent() {
               {/* Reviewer Cards */}
               <div className="grid gap-4 md:grid-cols-2">
                 {discoveryResult.reviewers.map((reviewer, index) => (
-                  <Card key={reviewer.id} className="hover:shadow-md transition-shadow">
+                  <Card 
+                    key={reviewer.id} 
+                    className={`hover:shadow-md transition-shadow ${
+                      reviewer.coiSummary?.hasConflict 
+                        ? getCardBorderClass(reviewer.coiSummary.worstSeverity, true)
+                        : ""
+                    }`}
+                  >
                     <CardContent className="pt-4">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-start gap-3">
@@ -886,24 +907,32 @@ function ReviewerSearchContent() {
                             </p>
                           </div>
                         </div>
-                        {reviewer.llmAnalysis ? (
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${
-                              reviewer.llmAnalysis.recommendation === "highly_recommended" 
-                                ? "bg-green-100 text-green-800 border-green-300"
-                                : reviewer.llmAnalysis.recommendation === "recommended"
-                                ? "bg-blue-100 text-blue-800 border-blue-300"
-                                : "bg-amber-100 text-amber-800 border-amber-300"
-                            }`}
-                          >
-                            {reviewer.llmAnalysis.relevanceScore}% match
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 text-xs">
-                            PubMed
-                          </Badge>
-                        )}
+                        <div className="flex flex-col items-end gap-1">
+                          {reviewer.llmAnalysis ? (
+                            <Badge 
+                              variant="outline" 
+                              className={`text-xs ${
+                                reviewer.llmAnalysis.recommendation === "highly_recommended" 
+                                  ? "bg-green-100 text-green-800 border-green-300"
+                                  : reviewer.llmAnalysis.recommendation === "recommended"
+                                  ? "bg-blue-100 text-blue-800 border-blue-300"
+                                  : "bg-amber-100 text-amber-800 border-amber-300"
+                              }`}
+                            >
+                              {reviewer.llmAnalysis.relevanceScore}% match
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 text-xs">
+                              PubMed
+                            </Badge>
+                          )}
+                          {/* COI Badge */}
+                          <COIBadge 
+                            severity={reviewer.coiSummary?.worstSeverity || null}
+                            conflictCount={reviewer.coiSummary?.conflictCount || 0}
+                            size="sm"
+                          />
+                        </div>
                       </div>
 
                       {/* AI Analysis */}
@@ -1005,6 +1034,15 @@ function ReviewerSearchContent() {
                             ))}
                           </div>
                         </div>
+                      )}
+
+                      {/* COI Details */}
+                      {reviewer.coiSummary && reviewer.coiSummary.conflicts.length > 0 && (
+                        <COIDetails 
+                          conflicts={reviewer.coiSummary.conflicts}
+                          worstSeverity={reviewer.coiSummary.worstSeverity}
+                          className="mb-3"
+                        />
                       )}
 
                       <Separator className="my-3" />
@@ -1218,11 +1256,18 @@ function ReviewerSearchContent() {
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {candidateReviewers.map((reviewer) => {
                   const coauthorCount = isCoauthor(reviewer.name);
+                  const hasCoiConflict = reviewer.coiSummary?.hasConflict;
                   
                   return (
                     <Card 
                       key={reviewer.id} 
-                      className={coauthorCount ? "border-amber-300 bg-amber-50" : ""}
+                      className={`${
+                        hasCoiConflict 
+                          ? getCardBorderClass(reviewer.coiSummary?.worstSeverity || null, true)
+                          : coauthorCount 
+                          ? "border-amber-300 bg-amber-50" 
+                          : ""
+                      }`}
                     >
                       <CardContent className="pt-4">
                         <div className="flex items-start justify-between mb-2">
@@ -1240,12 +1285,23 @@ function ReviewerSearchContent() {
                               )}
                             </div>
                           </div>
-                          {coauthorCount && (
-                            <Badge variant="outline" className="border-amber-400 text-amber-700 text-xs" title="Potential overlap - verify independence">
-                              <AlertTriangle className="h-3 w-3 mr-1" />
-                              Review
-                            </Badge>
-                          )}
+                          <div className="flex flex-col items-end gap-1">
+                            {/* COI Badge from detailed check */}
+                            {reviewer.coiSummary && (
+                              <COIBadge 
+                                severity={reviewer.coiSummary.worstSeverity}
+                                conflictCount={reviewer.coiSummary.conflictCount}
+                                size="sm"
+                              />
+                            )}
+                            {/* Legacy coauthor warning */}
+                            {!reviewer.coiSummary && coauthorCount && (
+                              <Badge variant="outline" className="border-amber-400 text-amber-700 text-xs" title="Potential overlap - verify independence">
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                Review
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
                         <div className="flex flex-wrap gap-1 mb-3">
@@ -1282,6 +1338,15 @@ function ReviewerSearchContent() {
                               </Badge>
                             ))}
                           </div>
+                        )}
+
+                        {/* COI Details */}
+                        {reviewer.coiSummary && reviewer.coiSummary.conflicts.length > 0 && (
+                          <COIDetails 
+                            conflicts={reviewer.coiSummary.conflicts}
+                            worstSeverity={reviewer.coiSummary.worstSeverity}
+                            className="mt-3"
+                          />
                         )}
 
                         {reviewer.orcid && (

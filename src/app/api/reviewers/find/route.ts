@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { parseAuthorList } from "@/lib/author-parser";
 import { findReviewersByTopic, findCoAuthors, PubMedAuthor } from "@/lib/pubmed";
 import { openAlex } from "@/lib/openalex";
+import { coiDetector, type ReviewerConflict, type ConflictSeverity } from "@/lib/coi-detector";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,13 @@ interface ReviewerCandidate {
   orcid?: string;
   coauthorCount?: number;
   topics?: string[];
+  // COI check results
+  coiSummary?: {
+    hasConflict: boolean;
+    worstSeverity: ConflictSeverity | null;
+    conflictCount: number;
+    conflicts: ReviewerConflict[];
+  };
 }
 
 export async function POST(request: Request) {
@@ -30,7 +38,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { authorList, keywords, excludeAuthors } = body;
+    const { authorList, keywords, excludeAuthors, checkCOI = true } = body;
 
     if (!authorList && !keywords) {
       return NextResponse.json(
@@ -168,6 +176,51 @@ export async function POST(request: Request) {
         return bCitations - aCitations;
       })
       .slice(0, 50);
+
+    // Run COI checks if authors are provided and checkCOI is enabled
+    if (checkCOI && parsedAuthors.length > 0 && reviewers.length > 0) {
+      console.log(`[Find] Running COI checks for ${reviewers.length} reviewers against ${parsedAuthors.length} authors...`);
+      
+      try {
+        // Prepare authors with roles (based on position)
+        const authorsWithRoles = parsedAuthors.map((a, index) => {
+          let role: "first" | "last" | "middle_early" | "middle_late" = "middle_late";
+          if (index === 0) role = "first";
+          else if (index === parsedAuthors.length - 1) role = "last";
+          else if (index <= 2) role = "middle_early";
+          
+          return {
+            name: a.fullName,
+            role,
+          };
+        });
+
+        // Batch check all reviewers
+        const coiResults = await coiDetector.batchCheckReviewerConflicts(
+          authorsWithRoles,
+          reviewers.map(r => ({ name: r.name }))
+        );
+
+        // Add COI summary to each reviewer
+        for (const reviewer of reviewers) {
+          const coiSummary = coiResults.get(reviewer.name);
+          if (coiSummary) {
+            reviewer.coiSummary = {
+              hasConflict: coiSummary.hasConflict,
+              worstSeverity: coiSummary.worstSeverity,
+              conflictCount: coiSummary.conflictCount,
+              conflicts: coiSummary.conflicts,
+            };
+          }
+        }
+
+        const conflictCount = reviewers.filter(r => r.coiSummary?.hasConflict).length;
+        console.log(`[Find] COI check complete: ${conflictCount} reviewers have potential conflicts`);
+      } catch (error) {
+        console.error("[Find] COI check failed:", error);
+        // Continue without COI data rather than failing the whole request
+      }
+    }
 
     return NextResponse.json({
       reviewers,
