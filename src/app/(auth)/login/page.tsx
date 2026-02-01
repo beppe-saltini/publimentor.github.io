@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 
 function LoginForm() {
   const router = useRouter();
@@ -45,10 +44,6 @@ function LoginForm() {
     }
   };
 
-  const handleOrcidLogin = () => {
-    signIn("orcid", { callbackUrl });
-  };
-
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
@@ -58,27 +53,6 @@ function LoginForm() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={handleOrcidLogin}
-          disabled={isLoading}
-        >
-          <svg className="mr-2 h-4 w-4" viewBox="0 0 256 256" fill="currentColor">
-            <path d="M128 0C57.307 0 0 57.307 0 128s57.307 128 128 128 128-57.307 128-128S198.693 0 128 0zm-13.941 189.645h-20.47V66.355h20.47v123.29zm60.412 0h-20.47V111.03h20.47v78.615zm0-92.355h-20.47V76.82h20.47v20.47z" />
-          </svg>
-          Sign in with ORCID
-        </Button>
-
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <Separator className="w-full" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-white px-2 text-gray-500">Or continue with</span>
-          </div>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="bg-red-50 text-red-600 text-sm p-3 rounded-md">
