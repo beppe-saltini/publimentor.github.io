@@ -406,7 +406,21 @@ function IntegrityCheckContent() {
                   orcid: "",
                   affiliation: a.affiliation || "",
                 })));
-                toast.success(`Loaded ${data.authors.length} authors from manuscript`);
+              }
+              // Populate references for validation
+              if (data.references && data.references.length > 0) {
+                const refText = data.references
+                  .map(r => r.rawText)
+                  .join("\n\n");
+                setReferenceText(refText);
+              }
+              // Summary notification
+              const parts = [];
+              if (data.authors.length > 0) parts.push(`${data.authors.length} authors`);
+              if (data.references && data.references.length > 0) parts.push(`${data.references.length} references`);
+              if (data.abstract) parts.push("abstract");
+              if (parts.length > 0) {
+                toast.success(`Loaded ${parts.join(", ")} from manuscript`);
               }
             }}
             placeholder="Select manuscript for integrity screening"

@@ -1101,6 +1101,32 @@ function ReviewerSearchContent() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Manuscript Source */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Load from Manuscript (optional)
+                </Label>
+                <ManuscriptSelector
+                  value={selectedManuscriptId || undefined}
+                  onChange={(m) => setSelectedManuscriptId(m?.id || null)}
+                  onManuscriptData={(data) => {
+                    // Auto-populate keywords from manuscript
+                    if (data.keywords.length > 0) {
+                      setKeywords(data.keywords.join(", "));
+                    }
+                    // Auto-populate author list for COI checking
+                    if (data.authors.length > 0) {
+                      setAuthorList(data.authors.map(a => a.name).join(", "));
+                    }
+                    toast.success(`Loaded ${data.keywords.length} keywords and ${data.authors.length} authors from manuscript`);
+                  }}
+                  placeholder="Select manuscript to extract keywords"
+                />
+              </div>
+
+              <Separator />
+
               <div className="space-y-2">
                 <Label htmlFor="keywords">Research Keywords (comma-separated)</Label>
                 <Input

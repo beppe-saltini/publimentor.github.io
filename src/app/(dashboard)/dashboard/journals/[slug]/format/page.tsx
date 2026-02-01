@@ -25,6 +25,7 @@ import {
   ListChecks
 } from "lucide-react";
 import { toast } from "sonner";
+import { ManuscriptSelector } from "@/components/manuscript";
 
 interface FormatIssue {
   ruleId: string;
@@ -86,6 +87,11 @@ function FormatCheckContent() {
   const [isChecking, setIsChecking] = useState(false);
   const [result, setResult] = useState<FormatResult | null>(null);
   const [pdfInfo, setPdfInfo] = useState<PDFInfo | null>(null);
+
+  // Manuscript selector state
+  const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [manuscriptFilePath, setManuscriptFilePath] = useState<string | null>(null);
+  const [isLoadingManuscript, setIsLoadingManuscript] = useState(false);
 
   // Checklist state
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
@@ -208,48 +214,128 @@ function FormatCheckContent() {
         </TabsList>
 
         <TabsContent value="format" className="space-y-4">
+          {/* Manuscript Selector */}
           <Card>
-        <CardHeader>
-          <CardTitle>Upload PDF</CardTitle>
-          <CardDescription>
-            Select a PDF file to check against the journal&apos;s format requirements
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-4">
-            <Input
-              id="pdf"
-              type="file"
-              accept=".pdf"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <Button
-              variant="outline"
-              onClick={() => document.getElementById("pdf")?.click()}
-              disabled={isChecking}
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              {file ? file.name : "Choose PDF"}
-            </Button>
-            {file && (
-              <>
-                <span className="text-sm text-gray-500">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </span>
-                <Button onClick={handleCheck} disabled={isChecking}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Select Manuscript
+              </CardTitle>
+              <CardDescription>
+                Choose an uploaded manuscript to check its format, or upload a new PDF below
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ManuscriptSelector
+                value={selectedManuscriptId || undefined}
+                onChange={(m) => {
+                  setSelectedManuscriptId(m?.id || null);
+                  if (!m) {
+                    setManuscriptFilePath(null);
+                  }
+                }}
+                onManuscriptData={(data) => {
+                  if (data.filePath) {
+                    setManuscriptFilePath(data.filePath);
+                    setFile(null); // Clear manual file selection
+                    toast.success("Manuscript selected - click 'Check Format' to analyze");
+                  }
+                }}
+                placeholder="Select an uploaded manuscript"
+              />
+              {manuscriptFilePath && (
+                <Button 
+                  onClick={async () => {
+                    if (!selectedManuscriptId) return;
+                    
+                    setIsChecking(true);
+                    try {
+                      const response = await fetch(`/api/format/check-manuscript`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          manuscriptId: selectedManuscriptId,
+                          journalSlug: slug,
+                        }),
+                      });
+
+                      const data = await response.json();
+
+                      if (!response.ok) {
+                        throw new Error(data.error || "Format check failed");
+                      }
+
+                      setResult(data.result);
+                      setPdfInfo(data.pdfInfo);
+
+                      if (data.result.passed) {
+                        toast.success("Format check passed!");
+                      } else {
+                        toast.warning(`Found ${data.result.issues.length} issue(s)`);
+                      }
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Format check failed");
+                    } finally {
+                      setIsChecking(false);
+                    }
+                  }} 
+                  disabled={isChecking}
+                  className="w-full"
+                >
                   {isChecking ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
                     <FileText className="h-4 w-4 mr-2" />
                   )}
-                  Check Format
+                  Check Manuscript Format
                 </Button>
-              </>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Or upload a new PDF */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Or Upload New PDF</CardTitle>
+              <CardDescription>
+                Upload a PDF file directly to check against the journal&apos;s format requirements
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-4">
+                <Input
+                  id="pdf"
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => document.getElementById("pdf")?.click()}
+                  disabled={isChecking}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  {file ? file.name : "Choose PDF"}
+                </Button>
+                {file && (
+                  <>
+                    <span className="text-sm text-gray-500">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                    <Button onClick={handleCheck} disabled={isChecking}>
+                      {isChecking ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-4 w-4 mr-2" />
+                      )}
+                      Check Format
+                    </Button>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
       {result && pdfInfo && (
         <>

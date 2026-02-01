@@ -25,6 +25,17 @@ interface ManuscriptSummary {
   createdAt: string;
 }
 
+interface ManuscriptReference {
+  refNumber: number;
+  rawText: string;
+  doi?: string | null;
+  pmid?: string | null;
+  title?: string | null;
+  authors?: string | null;
+  journal?: string | null;
+  year?: number | null;
+}
+
 interface ManuscriptSelectorProps {
   value?: string;
   onChange: (manuscript: ManuscriptSummary | null) => void;
@@ -33,6 +44,8 @@ interface ManuscriptSelectorProps {
     abstract: string;
     keywords: string[];
     authors: Array<{ name: string; email?: string; affiliation?: string }>;
+    references: ManuscriptReference[];
+    filePath?: string;
   }) => void;
   placeholder?: string;
   disabled?: boolean;
@@ -110,6 +123,17 @@ export function ManuscriptSelector({
                 a.affiliationNums?.includes(aff.affiliationNumber)
               )?.rawText,
             })) || [],
+            references: m.references?.map((r: any) => ({
+              refNumber: r.refNumber,
+              rawText: r.rawText,
+              doi: r.doi,
+              pmid: r.pmid,
+              title: r.title,
+              authors: r.authors,
+              journal: r.journal,
+              year: r.year,
+            })) || [],
+            filePath: m.filePath,
           });
         }
       }
