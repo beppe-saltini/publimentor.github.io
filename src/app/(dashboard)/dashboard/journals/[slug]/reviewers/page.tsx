@@ -192,6 +192,23 @@ function ReviewerSearchContent() {
 
   // Manuscript source state
   const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
+
+  // Fetch default publisher for uploads
+  useEffect(() => {
+    const fetchDefaultPublisher = async () => {
+      try {
+        const response = await fetch("/api/publishers");
+        const data = await response.json();
+        if (response.ok && data.publishers?.length > 0) {
+          setDefaultPublisherId(data.publishers[0].id);
+        }
+      } catch (error) {
+        console.error("Error fetching publisher:", error);
+      }
+    };
+    fetchDefaultPublisher();
+  }, []);
 
   // Advanced discovery state
   const [primaryKeywords, setPrimaryKeywords] = useState("");
@@ -571,7 +588,8 @@ function ReviewerSearchContent() {
                       setAuthorList(data.authors.map(a => a.name).join(", "));
                     }
                   }}
-                  placeholder="Select manuscript to extract keywords"
+                  placeholder="Select or upload manuscript"
+                  publisherId={defaultPublisherId || undefined}
                 />
                 <p className="text-xs text-gray-500">
                   Keywords and authors will be extracted automatically
@@ -1159,7 +1177,8 @@ function ReviewerSearchContent() {
                     }
                     toast.success(`Loaded ${data.keywords.length} keywords and ${data.authors.length} authors from manuscript`);
                   }}
-                  placeholder="Select manuscript to extract keywords"
+                  placeholder="Select or upload manuscript"
+                  publisherId={defaultPublisherId || undefined}
                 />
               </div>
 
