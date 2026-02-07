@@ -50,6 +50,14 @@ The system context diagram shows PubliMentor and its interactions with users and
 │  │ metrics      │    │              │    │              │                      │
 │  └──────────────┘    └──────────────┘    └──────────────┘                      │
 │                                                                                 │
+│  ┌──────────────┐                                                              │
+│  │    DBLP      │                                                              │
+│  │              │                                                              │
+│  │ CS biblio-   │                                                              │
+│  │ graphic      │                                                              │
+│  │ database     │                                                              │
+│  └──────────────┘                                                              │
+│                                                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -162,6 +170,7 @@ The container diagram shows the major technical building blocks.
 │  │  │ • Verify identity│  │ • Check access   │  │ • Log events     │       │   │
 │  │  │ • Validate refs  │  │ • Grant/revoke   │  │ • Query logs     │       │   │
 │  │  │ • Check phrases  │  │                  │  │                  │       │   │
+│  │  │ • Full report    │  │                  │  │                  │       │   │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────┘       │   │
 │  │                                                                          │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
@@ -203,6 +212,7 @@ The container diagram shows the major technical building blocks.
 │  │  │ • AuditLog     │ │ • R2           │ │ • Semantic Sch │               │   │
 │  │  └────────────────┘ └────────────────┘ │ • Claude       │               │   │
 │  │                                        │ • HuggingFace  │               │   │
+│  │                                        │ • DBLP         │               │   │
 │  │  ┌────────────────┐ ┌────────────────┐ │ • ORCID        │               │   │
 │  │  │    Security    │ │   Observability│ └────────────────┘               │   │
 │  │  │                │ │                │                                   │   │
@@ -239,10 +249,19 @@ The container diagram shows the major technical building blocks.
 | `lib/pubmed.ts` | PubMed API client |
 | `lib/openalex.ts` | OpenAlex API client |
 | `lib/semantic-scholar.ts` | Semantic Scholar API client |
+| `lib/dblp.ts` | DBLP bibliographic API client (CS-focused COI) |
 | `lib/storage.ts` | File storage abstraction |
 | `lib/security.ts` | Security utilities |
 | `lib/logger/*` | Structured logging |
 | `lib/metrics/*` | Prometheus metrics |
+
+### Presentation Layer (Responsive)
+| Module | Purpose |
+|--------|---------|
+| `components/dashboard/dashboard-shell.tsx` | Responsive layout orchestrator (desktop sidebar + mobile drawer) |
+| `components/dashboard/sidebar.tsx` | Desktop sidebar + Mobile slide-over sidebar |
+| `components/dashboard/header.tsx` | Top header with hamburger menu toggle on mobile |
+| `components/dashboard/onboarding.tsx` | Multi-step onboarding wizard for first-time users |
 
 ## Data Flow Diagrams
 
@@ -426,3 +445,4 @@ The container diagram shows the major technical building blocks.
 - [ADR-0002: PostgreSQL with Prisma](decisions/0002-postgresql-prisma.md)
 - [ADR-0003: Multi-Tenancy Model](decisions/0003-multi-tenancy-model.md)
 - [ADR-0006: Security Architecture](decisions/0006-security-architecture.md)
+- [ADR-0007: Sprint 2 Feature Additions](decisions/0007-sprint-2-feature-additions.md)

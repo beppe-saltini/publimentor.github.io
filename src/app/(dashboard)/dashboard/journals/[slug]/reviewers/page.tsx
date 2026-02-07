@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,28 +14,13 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { 
   Search, User, Building, BookOpen, Award, Globe, Loader2, 
-  ExternalLink, Copy, CheckCircle, FileText, Wand2, AlertTriangle,
+  ExternalLink, CheckCircle, FileText, AlertTriangle,
   Users, Sparkles, Mail, MapPin, GraduationCap, FlaskConical,
-  Download, Info
+  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star
 } from "lucide-react";
 import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
 import { COIBadge, COIDetails, getCardBorderClass, type ReviewerConflict, type ConflictSeverity } from "@/components/reviewers";
-
-interface ParsedAuthor {
-  fullName: string;
-  surname: string;
-  firstName: string;
-  pubmedFormat: string;
-  scholarFormat: string;
-}
-
-interface SearchStrings {
-  parsedAuthors: ParsedAuthor[];
-  pubmed: { searchString: string; url: string };
-  googleScholar: { searchString: string; url: string };
-  openAlex: { queries: string[] };
-}
 
 interface ReviewerCandidate {
   id: string;
@@ -61,25 +46,6 @@ interface ReviewerCandidate {
 interface CoauthorWarning {
   name: string;
   coauthorCount: number;
-}
-
-interface Reviewer {
-  id: string;
-  name: string;
-  orcid: string | null;
-  worksCount: number;
-  citedByCount: number;
-  hIndex: number | null;
-  institution: string | null;
-  country: string | null;
-  topics: string[];
-}
-
-interface SearchMeta {
-  count: number;
-  page: number;
-  perPage: number;
-  totalPages: number;
 }
 
 // Advanced discovery types
@@ -166,33 +132,25 @@ interface DiscoveryResult {
 function ReviewerSearchContent() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const slug = params.slug as string;
   const submissionId = searchParams.get("submissionId");
+  const manuscriptIdParam = searchParams.get("manuscriptId");
 
-  // Search string generator state
+  // Manuscript author list (used for exclusion and COI export)
   const [authorList, setAuthorList] = useState("");
+  // Quick find keywords state
   const [keywords, setKeywords] = useState("");
-  const [reviewerName, setReviewerName] = useState("");
-  const [searchStrings, setSearchStrings] = useState<SearchStrings | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Auto-populated reviewers state
   const [candidateReviewers, setCandidateReviewers] = useState<ReviewerCandidate[]>([]);
   const [coauthorWarnings, setCoauthorWarnings] = useState<CoauthorWarning[]>([]);
   const [isFindingReviewers, setIsFindingReviewers] = useState(false);
 
-  // OpenAlex search state
-  const [query, setQuery] = useState("");
-  const [minWorks, setMinWorks] = useState("10");
-  const [minCitations, setMinCitations] = useState("50");
-  const [reviewers, setReviewers] = useState<Reviewer[]>([]);
-  const [meta, setMeta] = useState<SearchMeta | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
-
   // Manuscript source state
   const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
   const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
+  const [manuscriptAutoLoaded, setManuscriptAutoLoaded] = useState(false);
 
   // Fetch default publisher for uploads
   useEffect(() => {
@@ -210,9 +168,49 @@ function ReviewerSearchContent() {
     fetchDefaultPublisher();
   }, []);
 
+  // Auto-load manuscript from URL query parameter (e.g., from "Find Reviewers" button on manuscript page)
+  useEffect(() => {
+    if (manuscriptIdParam && !manuscriptAutoLoaded) {
+      setManuscriptAutoLoaded(true);
+      setSelectedManuscriptId(manuscriptIdParam);
+
+      // Fetch manuscript details and auto-populate keywords + authors
+      const fetchManuscriptData = async () => {
+        try {
+          const response = await fetch(`/api/manuscripts/${manuscriptIdParam}`);
+          const data = await response.json();
+          if (response.ok && data.manuscript) {
+            const ms = data.manuscript;
+            // Auto-populate keywords from manuscript
+            if (ms.keywords && ms.keywords.length > 0) {
+              setPrimaryKeywords(ms.keywords.slice(0, 3).join(", "));
+              if (ms.keywords.length > 3) {
+                setSecondaryKeywords(ms.keywords.slice(3).join(", "));
+              }
+              setKeywords(ms.keywords.join(", "));
+            }
+            // Auto-populate author list for COI checking
+            if (ms.authors && ms.authors.length > 0) {
+              setAuthorList(ms.authors.map((a: { fullName: string }) => a.fullName).join(", "));
+            }
+            toast.success(
+              `Loaded manuscript: ${ms.title || ms.fileName}` +
+              (ms.keywords?.length ? ` (${ms.keywords.length} keywords, ${ms.authors?.length || 0} authors)` : "")
+            );
+          }
+        } catch (error) {
+          console.error("Error loading manuscript from URL:", error);
+          toast.error("Could not auto-load manuscript. Please select it manually.");
+        }
+      };
+      fetchManuscriptData();
+    }
+  }, [manuscriptIdParam, manuscriptAutoLoaded]);
+
   // Advanced discovery state
   const [primaryKeywords, setPrimaryKeywords] = useState("");
   const [secondaryKeywords, setSecondaryKeywords] = useState("");
+  const [keywordOperator, setKeywordOperator] = useState<"AND" | "OR">("AND");
   const [minHIndex, setMinHIndex] = useState(0);
   const [maxHIndex, setMaxHIndex] = useState(100);
   const [minPublications, setMinPublications] = useState(3);
@@ -225,6 +223,90 @@ function ReviewerSearchContent() {
   const [useLLM, setUseLLM] = useState(true); // Use AI ranking
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
+
+  // Thumbs up/down flagging state
+  const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | "down" | null>>({});
+
+  // Reviewer responsiveness scoring (persisted in localStorage)
+  const [reviewerScores, setReviewerScores] = useState<Record<string, { score: 1 | 2 | 3 | 4 | 5; note?: string }>>({});
+
+  // Load reviewer scores from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("publimentor_reviewer_scores");
+      if (stored) {
+        setReviewerScores(JSON.parse(stored));
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, []);
+
+  const setReviewerScore = (reviewerName: string, score: 1 | 2 | 3 | 4 | 5, note?: string) => {
+    setReviewerScores(prev => {
+      const updated = { 
+        ...prev, 
+        [reviewerName]: { score, note: note || prev[reviewerName]?.note } 
+      };
+      localStorage.setItem("publimentor_reviewer_scores", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const toggleFlag = (reviewerId: string, direction: "up" | "down") => {
+    setFlaggedReviewers(prev => ({
+      ...prev,
+      [reviewerId]: prev[reviewerId] === direction ? null : direction,
+    }));
+  };
+
+  // Export flagged reviewers as CSV
+  const exportFlaggedReviewers = () => {
+    const allReviewers = [
+      ...(discoveryResult?.reviewers || []).map(r => ({
+        name: r.name,
+        affiliation: r.affiliation || "",
+        country: r.country || "",
+        hIndex: r.hIndex ?? "",
+        publications: r.publicationCount,
+        flag: flaggedReviewers[r.id] || "none",
+        coiStatus: r.coiSummary?.worstSeverity || "clear",
+        responsiveness: reviewerScores[r.name]?.score || "",
+      })),
+      ...(candidateReviewers || []).map(r => ({
+        name: r.name,
+        affiliation: r.affiliation || "",
+        country: "",
+        hIndex: r.hIndex ?? "",
+        publications: r.worksCount || 0,
+        flag: flaggedReviewers[r.id] || "none",
+        coiStatus: r.coiSummary?.worstSeverity || "clear",
+        responsiveness: reviewerScores[r.name]?.score || "",
+      })),
+    ];
+
+    const flaggedOnly = allReviewers.filter(r => r.flag !== "none");
+    const rows = (flaggedOnly.length > 0 ? flaggedOnly : allReviewers);
+
+    const csv = [
+      "Name,Affiliation,Country,h-Index,Publications,Flag,COI Status,Responsiveness Score",
+      ...rows.map(r => 
+        `"${r.name}","${r.affiliation}","${r.country}","${r.hIndex}","${r.publications}","${r.flag}","${r.coiStatus}","${r.responsiveness}"`
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reviewers-${flaggedOnly.length > 0 ? "flagged-" : ""}${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(flaggedOnly.length > 0 
+      ? `Exported ${flaggedOnly.length} flagged reviewers` 
+      : `Exported ${allReviewers.length} reviewers`
+    );
+  };
 
   // Submission state
   const [submission, setSubmission] = useState<{
@@ -251,39 +333,6 @@ function ReviewerSearchContent() {
     }
   }, [slug, submissionId]);
 
-  // Generate search strings
-  const handleGenerateStrings = async () => {
-    if (!authorList.trim()) {
-      toast.error("Please enter an author list");
-      return;
-    }
-
-    setIsGenerating(true);
-    try {
-      const response = await fetch("/api/search-string", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          authorList: authorList.trim(),
-          reviewerName: reviewerName.trim() || undefined,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to generate search strings");
-      }
-
-      setSearchStrings(data);
-      toast.success(`Parsed ${data.parsedAuthors.length} authors`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Generation failed");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
   // Find reviewers automatically from PubMed and OpenAlex
   const handleFindReviewers = async () => {
     if (!keywords.trim()) {
@@ -301,7 +350,7 @@ function ReviewerSearchContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           authorList: authorList.trim() || undefined,
-          keywords: keywords.split(",").map(k => k.trim()).filter(Boolean),
+          keywords: keywords.split(",").map((k: string) => k.trim()).filter(Boolean),
         }),
       });
 
@@ -343,6 +392,7 @@ function ReviewerSearchContent() {
           secondaryKeywords: secondaryKeywords 
             ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean) 
             : undefined,
+          keywordOperator,
           minHIndex,
           maxHIndex,
           minPublications,
@@ -431,48 +481,6 @@ function ReviewerSearchContent() {
     toast.success("Results exported");
   };
 
-  // Copy to clipboard
-  const copyToClipboard = async (text: string, field: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    toast.success("Copied to clipboard");
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  // OpenAlex search
-  const handleSearch = async (page = 1) => {
-    if (!query.trim()) {
-      toast.error("Please enter a search query");
-      return;
-    }
-
-    setIsSearching(true);
-
-    try {
-      const params = new URLSearchParams({
-        query: query.trim(),
-        page: String(page),
-        perPage: "20",
-        minWorks,
-        minCitations,
-      });
-
-      const response = await fetch(`/api/reviewers/search?${params}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Search failed");
-      }
-
-      setReviewers(data.reviewers);
-      setMeta(data.meta);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Search failed");
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
   // Check if a name is a known co-author (potential COI)
   const isCoauthor = (name: string): number | undefined => {
     const warning = coauthorWarnings.find(
@@ -498,11 +506,19 @@ function ReviewerSearchContent() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Reviewer Recommendations</h1>
-        <p className="text-gray-500">
-          Discover potential reviewers from PubMed and OpenAlex databases for editorial consideration
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Reviewer Recommendations</h1>
+          <p className="text-gray-500">
+            Discover potential reviewers from PubMed and OpenAlex databases for editorial consideration
+          </p>
+        </div>
+        {(discoveryResult?.reviewers.length || candidateReviewers.length > 0) && (
+          <Button variant="outline" onClick={exportFlaggedReviewers}>
+            <FileDown className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+        )}
       </div>
 
       {/* Automated Screening Notice */}
@@ -533,7 +549,7 @@ function ReviewerSearchContent() {
       )}
 
       <Tabs defaultValue="advanced" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="advanced">
             <FlaskConical className="h-4 w-4 mr-2" />
             Advanced Discovery
@@ -541,14 +557,6 @@ function ReviewerSearchContent() {
           <TabsTrigger value="auto-find">
             <Sparkles className="h-4 w-4 mr-2" />
             Quick Find
-          </TabsTrigger>
-          <TabsTrigger value="generator">
-            <Wand2 className="h-4 w-4 mr-2" />
-            Search Strings
-          </TabsTrigger>
-          <TabsTrigger value="openalex">
-            <Search className="h-4 w-4 mr-2" />
-            Manual Search
           </TabsTrigger>
         </TabsList>
 
@@ -599,30 +607,64 @@ function ReviewerSearchContent() {
               <Separator />
 
               {/* Keywords Section */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="primaryKeywords">Primary Expertise (required)</Label>
-                  <Input
-                    id="primaryKeywords"
-                    placeholder="e.g., tuberculosis epidemiology"
-                    value={primaryKeywords}
-                    onChange={(e) => setPrimaryKeywords(e.target.value)}
-                  />
-                  <p className="text-xs text-gray-500">
-                    Main research area (comma-separated for multiple)
-                  </p>
+              <div className="space-y-3">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="primaryKeywords">Primary Expertise (required)</Label>
+                    <Input
+                      id="primaryKeywords"
+                      placeholder="e.g., tuberculosis epidemiology"
+                      value={primaryKeywords}
+                      onChange={(e) => setPrimaryKeywords(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500">
+                      Main research area (comma-separated for multiple)
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="secondaryKeywords">Secondary Expertise (optional)</Label>
+                    <Input
+                      id="secondaryKeywords"
+                      placeholder="e.g., mathematical modelling, transmission dynamics"
+                      value={secondaryKeywords}
+                      onChange={(e) => setSecondaryKeywords(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500">
+                      Additional desired skills
+                    </p>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="secondaryKeywords">Secondary Expertise (optional)</Label>
-                  <Input
-                    id="secondaryKeywords"
-                    placeholder="e.g., mathematical modelling, transmission dynamics"
-                    value={secondaryKeywords}
-                    onChange={(e) => setSecondaryKeywords(e.target.value)}
-                  />
-                  <p className="text-xs text-gray-500">
-                    Additional desired skills
-                  </p>
+                <div className="flex items-center gap-3">
+                  <Label className="text-xs text-gray-500">Keyword matching:</Label>
+                  <div className="flex rounded-md border overflow-hidden">
+                    <button
+                      type="button"
+                      className={`px-3 py-1 text-xs font-medium transition-colors ${
+                        keywordOperator === "AND" 
+                          ? "bg-blue-600 text-white" 
+                          : "bg-white text-gray-600 hover:bg-gray-50"
+                      }`}
+                      onClick={() => setKeywordOperator("AND")}
+                    >
+                      AND
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-1 text-xs font-medium transition-colors border-l ${
+                        keywordOperator === "OR" 
+                          ? "bg-blue-600 text-white" 
+                          : "bg-white text-gray-600 hover:bg-gray-50"
+                      }`}
+                      onClick={() => setKeywordOperator("OR")}
+                    >
+                      OR
+                    </button>
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {keywordOperator === "AND" 
+                      ? "Reviewer must match all keywords" 
+                      : "Reviewer can match any keyword"}
+                  </span>
                 </div>
               </div>
 
@@ -867,10 +909,29 @@ function ReviewerSearchContent() {
                         </p>
                       )}
                     </div>
-                    <Button variant="outline" onClick={exportDiscoveryResults}>
-                      <Download className="h-4 w-4 mr-2" />
-                      Export List
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={exportDiscoveryResults}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Export List
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        onClick={() => {
+                          if (!discoveryResult) return;
+                          const reviewerNames = discoveryResult.reviewers.map(r => r.name).join("\n");
+                          // Store in sessionStorage and navigate to COI page
+                          sessionStorage.setItem("coi_reviewers_import", reviewerNames);
+                          if (authorList) {
+                            sessionStorage.setItem("coi_authors_import", authorList);
+                          }
+                          router.push(`/dashboard/journals/${slug}/coi`);
+                          toast.success(`${discoveryResult.reviewers.length} reviewers sent to COI check`);
+                        }}
+                      >
+                        <AlertTriangle className="h-4 w-4 mr-2" />
+                        COI Check All
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -950,6 +1011,47 @@ function ReviewerSearchContent() {
                             conflictCount={reviewer.coiSummary?.conflictCount || 0}
                             size="sm"
                           />
+                          {/* Thumbs up/down */}
+                          <div className="flex gap-1">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
+                              className={`p-1 rounded transition-colors ${
+                                flaggedReviewers[reviewer.id] === "up"
+                                  ? "bg-green-100 text-green-700"
+                                  : "text-gray-300 hover:text-green-500 hover:bg-green-50"
+                              }`}
+                              title="Approve reviewer"
+                            >
+                              <ThumbsUp className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
+                              className={`p-1 rounded transition-colors ${
+                                flaggedReviewers[reviewer.id] === "down"
+                                  ? "bg-red-100 text-red-700"
+                                  : "text-gray-300 hover:text-red-500 hover:bg-red-50"
+                              }`}
+                              title="Reject reviewer"
+                            >
+                              <ThumbsDown className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          {/* Responsiveness score */}
+                          <div className="flex gap-0.5" title="Rate reviewer responsiveness">
+                            {[1, 2, 3, 4, 5].map(s => (
+                              <button
+                                key={s}
+                                onClick={(e) => { e.stopPropagation(); setReviewerScore(reviewer.name, s as 1|2|3|4|5); }}
+                                className="p-0 transition-colors"
+                              >
+                                <Star className={`h-3 w-3 ${
+                                  (reviewerScores[reviewer.name]?.score || 0) >= s
+                                    ? "text-amber-400 fill-amber-400"
+                                    : "text-gray-200"
+                                }`} />
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
@@ -1320,6 +1422,47 @@ function ReviewerSearchContent() {
                                 Review
                               </Badge>
                             )}
+                            {/* Thumbs up/down */}
+                            <div className="flex gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
+                                className={`p-1 rounded transition-colors ${
+                                  flaggedReviewers[reviewer.id] === "up"
+                                    ? "bg-green-100 text-green-700"
+                                    : "text-gray-300 hover:text-green-500 hover:bg-green-50"
+                                }`}
+                                title="Approve reviewer"
+                              >
+                                <ThumbsUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
+                                className={`p-1 rounded transition-colors ${
+                                  flaggedReviewers[reviewer.id] === "down"
+                                    ? "bg-red-100 text-red-700"
+                                    : "text-gray-300 hover:text-red-500 hover:bg-red-50"
+                                }`}
+                                title="Reject reviewer"
+                              >
+                                <ThumbsDown className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            {/* Responsiveness score */}
+                            <div className="flex gap-0.5" title="Rate reviewer responsiveness">
+                              {[1, 2, 3, 4, 5].map(s => (
+                                <button
+                                  key={s}
+                                  onClick={(e) => { e.stopPropagation(); setReviewerScore(reviewer.name, s as 1|2|3|4|5); }}
+                                  className="p-0 transition-colors"
+                                >
+                                  <Star className={`h-3 w-3 ${
+                                    (reviewerScores[reviewer.name]?.score || 0) >= s
+                                      ? "text-amber-400 fill-amber-400"
+                                      : "text-gray-200"
+                                  }`} />
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
 
@@ -1382,319 +1525,7 @@ function ReviewerSearchContent() {
           )}
         </TabsContent>
 
-        {/* Search String Generator Tab */}
-        <TabsContent value="generator" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Author List Input</CardTitle>
-              <CardDescription>
-                Paste the author list from the manuscript. The tool will parse names and generate search strings for PubMed and Google Scholar.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="authorList">Author List (from manuscript)</Label>
-                <Textarea
-                  id="authorList"
-                  placeholder="e.g., Alan Bronson1, Lady Carina D. Elephant2, Sir Felix Gerald Horton Jr.3, Prof. Pedro Quesadilla-Rodríguez PhD"
-                  value={authorList}
-                  onChange={(e) => setAuthorList(e.target.value)}
-                  rows={4}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-gray-500">
-                  Supports various formats: titles (Dr., Prof.), suffixes (Jr., PhD), affiliations (superscript numbers), and special characters
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="reviewerName">Reviewer Name (optional)</Label>
-                <Input
-                  id="reviewerName"
-                  placeholder="e.g., John Smith"
-                  value={reviewerName}
-                  onChange={(e) => setReviewerName(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">
-                  Enter a specific reviewer name to check for co-authorship
-                </p>
-              </div>
-
-              <Button onClick={handleGenerateStrings} disabled={isGenerating}>
-                {isGenerating ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Wand2 className="h-4 w-4 mr-2" />
-                )}
-                Generate Search Strings
-              </Button>
-            </CardContent>
-          </Card>
-
-          {searchStrings && (
-            <>
-              {/* Parsed Authors */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Parsed Authors ({searchStrings.parsedAuthors.length})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-2">
-                    {searchStrings.parsedAuthors.map((author, i) => (
-                      <Badge key={i} variant="secondary" className="py-1">
-                        {author.fullName} → {author.pubmedFormat.replace("[au]", "")}
-                      </Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* PubMed */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="h-5 w-5" />
-                      PubMed Search
-                    </CardTitle>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(searchStrings.pubmed.searchString, "pubmed")}
-                      >
-                        {copiedField === "pubmed" ? (
-                          <CheckCircle className="h-4 w-4 mr-1 text-green-600" />
-                        ) : (
-                          <Copy className="h-4 w-4 mr-1" />
-                        )}
-                        Copy
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                      >
-                        <a href={searchStrings.pubmed.url} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          Open
-                        </a>
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <pre className="bg-gray-100 p-3 rounded-md text-sm overflow-x-auto whitespace-pre-wrap">
-                    {searchStrings.pubmed.searchString}
-                  </pre>
-                </CardContent>
-              </Card>
-
-              {/* Google Scholar */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <BookOpen className="h-5 w-5" />
-                      Google Scholar Search
-                    </CardTitle>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(searchStrings.googleScholar.searchString, "scholar")}
-                      >
-                        {copiedField === "scholar" ? (
-                          <CheckCircle className="h-4 w-4 mr-1 text-green-600" />
-                        ) : (
-                          <Copy className="h-4 w-4 mr-1" />
-                        )}
-                        Copy
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                      >
-                        <a href={searchStrings.googleScholar.url} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          Open
-                        </a>
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <pre className="bg-gray-100 p-3 rounded-md text-sm overflow-x-auto whitespace-pre-wrap">
-                    {searchStrings.googleScholar.searchString}
-                  </pre>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </TabsContent>
-
-        {/* Manual OpenAlex Search Tab */}
-        <TabsContent value="openalex" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>OpenAlex Academic Search</CardTitle>
-              <CardDescription>
-                Search for potential reviewers by research topic, keywords, or author name
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <Label htmlFor="query">Search Query</Label>
-                    <Input
-                      id="query"
-                      placeholder="e.g., machine learning, cancer research, quantum computing"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <div>
-                    <Label htmlFor="minWorks">Min. Publications</Label>
-                    <Input
-                      id="minWorks"
-                      type="number"
-                      value={minWorks}
-                      onChange={(e) => setMinWorks(e.target.value)}
-                      className="w-32"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="minCitations">Min. Citations</Label>
-                    <Input
-                      id="minCitations"
-                      type="number"
-                      value={minCitations}
-                      onChange={(e) => setMinCitations(e.target.value)}
-                      className="w-32"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={() => handleSearch()} disabled={isSearching}>
-                      {isSearching ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Search className="h-4 w-4 mr-2" />
-                      )}
-                      Search
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {meta && (
-            <p className="text-sm text-gray-500">
-              Found {meta.count.toLocaleString()} potential reviewers
-            </p>
-          )}
-
-          {reviewers.length > 0 && (
-            <div className="grid gap-4 md:grid-cols-2">
-              {reviewers.map((reviewer) => (
-                <Card key={reviewer.id}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3">
-                        <div className="bg-gray-100 rounded-full p-2">
-                          <User className="h-5 w-5 text-gray-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold">{reviewer.name}</h3>
-                          {reviewer.institution && (
-                            <p className="text-sm text-gray-500 flex items-center gap-1">
-                              <Building className="h-3 w-3" />
-                              {reviewer.institution}
-                              {reviewer.country && ` (${reviewer.country})`}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <Separator className="my-4" />
-
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <div className="flex items-center justify-center gap-1 text-gray-500">
-                          <BookOpen className="h-4 w-4" />
-                        </div>
-                        <p className="font-semibold">{reviewer.worksCount}</p>
-                        <p className="text-xs text-gray-500">Publications</p>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-center gap-1 text-gray-500">
-                          <Globe className="h-4 w-4" />
-                        </div>
-                        <p className="font-semibold">{reviewer.citedByCount.toLocaleString()}</p>
-                        <p className="text-xs text-gray-500">Citations</p>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-center gap-1 text-gray-500">
-                          <Award className="h-4 w-4" />
-                        </div>
-                        <p className="font-semibold">{reviewer.hIndex || "N/A"}</p>
-                        <p className="text-xs text-gray-500">h-index</p>
-                      </div>
-                    </div>
-
-                    {reviewer.topics.length > 0 && (
-                      <div className="mt-4">
-                        <p className="text-xs text-gray-500 mb-2">Research Topics</p>
-                        <div className="flex flex-wrap gap-1">
-                          {reviewer.topics.map((topic, i) => (
-                            <Badge key={i} variant="secondary" className="text-xs">
-                              {topic}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {reviewer.orcid && (
-                      <p className="mt-3 text-xs text-gray-500">
-                        ORCID: {reviewer.orcid.replace("https://orcid.org/", "")}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-
-          {meta && meta.totalPages > 1 && (
-            <div className="flex justify-center gap-2">
-              <Button
-                variant="outline"
-                disabled={meta.page <= 1 || isSearching}
-                onClick={() => handleSearch(meta.page - 1)}
-              >
-                Previous
-              </Button>
-              <span className="flex items-center px-4 text-sm text-gray-500">
-                Page {meta.page} of {meta.totalPages}
-              </span>
-              <Button
-                variant="outline"
-                disabled={meta.page >= meta.totalPages || isSearching}
-                onClick={() => handleSearch(meta.page + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          )}
-        </TabsContent>
+        {/* Search Strings and Manual Search tabs removed per editorial feedback */}
       </Tabs>
     </div>
   );

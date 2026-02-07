@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -17,6 +18,11 @@ export default function RegisterPage() {
     password: "",
     confirmPassword: "",
     institution: "",
+    orcid: "",
+    role: "",
+    gender: "",
+    primaryExpertise: "",
+    secondaryExpertise: "",
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -25,6 +31,13 @@ export default function RegisterPage() {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
+    }));
+  };
+
+  const handleSelectChange = (name: string, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
     }));
   };
 
@@ -48,6 +61,11 @@ export default function RegisterPage() {
           email: formData.email,
           password: formData.password,
           institution: formData.institution || undefined,
+          orcid: formData.orcid || undefined,
+          role: formData.role || undefined,
+          gender: formData.gender || undefined,
+          primaryExpertise: formData.primaryExpertise || undefined,
+          secondaryExpertise: formData.secondaryExpertise || undefined,
         }),
       });
 
@@ -120,6 +138,45 @@ export default function RegisterPage() {
               />
             </div>
 
+            {/* Role Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="role">I am a...</Label>
+              <Select
+                value={formData.role}
+                onValueChange={(value) => handleSelectChange("role", value)}
+                disabled={isLoading}
+              >
+                <SelectTrigger id="role">
+                  <SelectValue placeholder="Select your primary role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AUTHOR">Author</SelectItem>
+                  <SelectItem value="EDITOR">Editor</SelectItem>
+                  <SelectItem value="PUBLISHER">Publisher</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Gender */}
+            <div className="space-y-2">
+              <Label htmlFor="gender">Gender</Label>
+              <Select
+                value={formData.gender}
+                onValueChange={(value) => handleSelectChange("gender", value)}
+                disabled={isLoading}
+              >
+                <SelectTrigger id="gender">
+                  <SelectValue placeholder="Select gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="FEMALE">Female</SelectItem>
+                  <SelectItem value="MALE">Male</SelectItem>
+                  <SelectItem value="NON_BINARY">Non-binary</SelectItem>
+                  <SelectItem value="PREFER_NOT_TO_SAY">Prefer not to say</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="institution">Institution (optional)</Label>
               <Input
@@ -128,6 +185,46 @@ export default function RegisterPage() {
                 type="text"
                 placeholder="University of Science"
                 value={formData.institution}
+                onChange={handleChange}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="orcid">ORCID (optional)</Label>
+              <Input
+                id="orcid"
+                name="orcid"
+                type="text"
+                placeholder="0000-0002-1234-5678"
+                value={formData.orcid}
+                onChange={handleChange}
+                disabled={isLoading}
+              />
+            </div>
+
+            {/* Expertise fields */}
+            <div className="space-y-2">
+              <Label htmlFor="primaryExpertise">Primary Expertise (optional)</Label>
+              <Input
+                id="primaryExpertise"
+                name="primaryExpertise"
+                type="text"
+                placeholder="e.g., Infectious Disease Epidemiology"
+                value={formData.primaryExpertise}
+                onChange={handleChange}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="secondaryExpertise">Secondary Expertise (optional)</Label>
+              <Input
+                id="secondaryExpertise"
+                name="secondaryExpertise"
+                type="text"
+                placeholder="e.g., Mathematical Modelling"
+                value={formData.secondaryExpertise}
                 onChange={handleChange}
                 disabled={isLoading}
               />
@@ -145,7 +242,7 @@ export default function RegisterPage() {
                 disabled={isLoading}
                 minLength={8}
               />
-              <p className="text-xs text-gray-500">Must be at least 8 characters</p>
+              <p className="text-xs text-gray-500">Must be at least 10 characters with uppercase, lowercase, number, and special character</p>
             </div>
 
             <div className="space-y-2">

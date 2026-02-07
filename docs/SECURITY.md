@@ -95,6 +95,32 @@ Security-relevant actions are logged with structured data:
 - Rate limiting on endpoints that call external APIs
 - Error messages don't expose API errors to users
 
+### 9. DBLP API Integration Security (Sprint 2)
+
+- **Base URL hardcoded**: `https://dblp.org/search` - no user-controlled URL construction
+- **No API key required**: DBLP is a free, open API (no secrets to manage)
+- **Client-side rate throttle**: 1.1s minimum between requests (enforced in `src/lib/dblp.ts`)
+- **User-Agent identification**: Requests include `PubliMentor/1.0` identifier per DBLP fair-use policy
+- **Response validation**: API responses are parsed and typed; unexpected shapes handled gracefully
+- **Error isolation**: DBLP failures do not cascade to other COI checks; supplementary data source only
+
+### 10. Full Integrity Report Security (Sprint 2)
+
+- **Rate limiting**: `POST /api/integrity/full-report` limited to **5 requests per minute per user** (expensive composite operation)
+- **Authentication required**: Session-based auth check before any processing
+- **Input validation**: Zod schema validation on all inputs with max lengths (text, authors, references)
+- **Fault isolation**: `Promise.allSettled` ensures individual check failures don't expose internal errors
+- **No data persistence**: Reports are generated on-the-fly and not stored server-side
+- **Error message sanitization**: Internal errors are caught and replaced with generic user-facing messages
+
+### 11. Onboarding Flow Security (Sprint 2)
+
+- **Server-side redirect guard**: Onboarding redirect is computed server-side via database query; cannot be spoofed client-side
+- **Authenticated access**: Onboarding page requires valid session (inherits from dashboard layout)
+- **Publisher/Journal creation**: Uses existing API endpoints which have their own rate limiting, input validation, and authorization checks
+- **No privilege escalation**: Onboarding creates standard resources; user role is determined by existing RBAC system
+- **Redirect loop prevention**: Users with existing publisher memberships are not redirected to onboarding
+
 ## Deployment Checklist
 
 ### Required Before Production
@@ -181,6 +207,33 @@ S3_REGION=us-east-1
 3. **No 2FA yet** - planned for future release
 4. **No account lockout** - mitigated by rate limiting
 
+## Penetration Testing Checklist - Sprint 2 Features
+
+### DBLP Integration (`src/lib/dblp.ts`)
+- [ ] **SSRF**: Verify no user input reaches URL construction (base URL is hardcoded)
+- [ ] **DoS via DBLP**: Confirm rate throttle (1.1s/req) cannot be bypassed
+- [ ] **Error leakage**: Ensure DBLP API errors (500, timeout) don't leak internal details to client
+- [ ] **Injection**: Verify author name input is URL-encoded before DBLP query construction
+
+### Full Integrity Report (`/api/integrity/full-report`)
+- [ ] **Rate limit bypass**: Attempt > 5 requests/min with same user session; verify 429 response
+- [ ] **Auth bypass**: Attempt POST without session cookie; verify 401
+- [ ] **Input validation**: Send text < 100 chars, > 20 authors, malformed author objects; verify 400
+- [ ] **Partial failure information disclosure**: Trigger individual check failures; verify no stack traces or internal paths in response
+- [ ] **Resource exhaustion**: Send maximum-size inputs (20 authors, 100 references, long text) simultaneously; verify server remains responsive
+- [ ] **XSS via report fields**: Inject `<script>` tags in author names, reference text; verify sanitization in response
+
+### Responsive Layout (`src/components/dashboard/*`)
+- [ ] **Mobile clickjacking**: Verify X-Frame-Options: DENY is enforced on mobile viewports
+- [ ] **Touch event injection**: Test that backdrop/drawer close handlers don't expose state manipulation
+
+### Onboarding Flow (`/dashboard/onboarding`)
+- [ ] **Auth bypass**: Access `/dashboard/onboarding` without session; verify redirect to login
+- [ ] **Forced redirect bypass**: Manipulate onboarding completion (e.g., directly POST to `/api/publishers` then `/api/journals`); verify no security implications
+- [ ] **Publisher/Journal creation IDOR**: Attempt to create resources under another user's publisher; verify authorization rejection
+- [ ] **CSRF on create endpoints**: Verify CSRF protection on `POST /api/publishers` and `POST /api/journals`
+- [ ] **XSS in slug/name fields**: Inject script tags in publisher name, journal name, slug; verify sanitization
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability, please email security@[your-domain].com.
@@ -192,3 +245,4 @@ Do NOT open a public GitHub issue for security vulnerabilities.
 | Date | Version | Description |
 |------|---------|-------------|
 | 2026-01-31 | 0.2.0 | Added comprehensive security hardening |
+| 2026-02-06 | 0.3.0 | Sprint 2: DBLP integration security, full integrity report rate limiting, onboarding auth guards, pen test checklist |

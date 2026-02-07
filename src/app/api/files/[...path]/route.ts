@@ -3,12 +3,84 @@ import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { isPathWithinBase, sanitizeFileName, auditLog, getClientIp, getUserAgent } from "@/lib/security";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
 // Allowed file extensions for serving
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".docx"]);
+
+/**
+ * Check if user has access to a file by resolving the manuscript it belongs to.
+ *
+ * Storage paths follow the pattern: <publisherId>/<manuscriptId>/filename
+ * We extract the publisherId and manuscriptId from the sanitized segments and
+ * verify the user has legitimate access (uploader, publisher member, explicit
+ * permission, or journal editor/admin).
+ */
+async function checkFileAccess(
+  userId: string,
+  pathSegments: string[]
+): Promise<boolean> {
+  // Paths must have at least: publisherId / manuscriptId / filename
+  if (pathSegments.length < 3) return false;
+
+  const [publisherId, manuscriptId] = pathSegments;
+
+  // Look up the manuscript to confirm it actually exists at this path
+  const manuscript = await prisma.manuscript.findFirst({
+    where: {
+      id: manuscriptId,
+      publisherId,
+    },
+    select: {
+      id: true,
+      uploaderId: true,
+      publisherId: true,
+      journalId: true,
+    },
+  });
+
+  if (!manuscript) return false;
+
+  // 1. User is the uploader
+  if (userId === manuscript.uploaderId) return true;
+
+  // 2. User is a publisher member
+  const publisherMember = await prisma.publisherMember.findUnique({
+    where: {
+      userId_publisherId: { userId, publisherId: manuscript.publisherId },
+    },
+  });
+  if (publisherMember) return true;
+
+  // 3. User has explicit permission for this manuscript
+  const permission = await prisma.manuscriptPermission.findUnique({
+    where: {
+      manuscriptId_userId: { manuscriptId: manuscript.id, userId },
+    },
+  });
+  if (permission) {
+    if (!permission.expiresAt || permission.expiresAt > new Date()) {
+      return true;
+    }
+  }
+
+  // 4. User is a journal editor/admin
+  if (manuscript.journalId) {
+    const journalMember = await prisma.journalMember.findFirst({
+      where: {
+        userId,
+        journalId: manuscript.journalId,
+        role: { in: ["ADMIN", "EDITOR"] },
+      },
+    });
+    if (journalMember) return true;
+  }
+
+  return false;
+}
 
 export async function GET(
   request: Request,
@@ -62,9 +134,22 @@ export async function GET(
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 
-    // TODO: In production, verify user has access to this specific file
-    // by checking manuscript ownership/permissions
-    // This requires parsing the path to extract manuscriptId and checking DB
+    // SECURITY: Verify user has access to this specific file
+    const hasAccess = await checkFileAccess(session.user.id, sanitizedSegments);
+    if (!hasAccess) {
+      auditLog({
+        userId: session.user.id,
+        action: "UNAUTHORIZED_FILE_ACCESS_ATTEMPT",
+        resource: "files",
+        resourceId: targetPath,
+        ip: getClientIp(request),
+        userAgent: getUserAgent(request),
+        severity: "warning",
+        details: { originalPath: pathSegments.join("/") },
+      });
+
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
 
     const file = await readFile(fullPath);
     const filename = sanitizedSegments[sanitizedSegments.length - 1];

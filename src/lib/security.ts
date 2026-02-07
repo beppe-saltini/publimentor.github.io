@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 
 // ============================================================
-// Rate Limiting (In-Memory - use Redis in production)
+// Rate Limiting (In-Memory with Redis adapter support)
 // ============================================================
 
 interface RateLimitEntry {
@@ -15,6 +15,7 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
+/** In-memory store — replaced by Redis in production via REDIS_URL */
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 export interface RateLimitConfig {
@@ -37,16 +38,123 @@ const AUTH_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 5,  // 5 attempts per 15 minutes
 };
 
+/**
+ * Rate limit store interface — implemented by in-memory and Redis adapters.
+ */
+interface RateLimitStore {
+  check(key: string, config: RateLimitConfig): Promise<{ allowed: boolean; remaining: number; resetIn: number }>;
+}
+
+/** In-memory rate limit store (single-instance only) */
+class InMemoryRateLimitStore implements RateLimitStore {
+  private store = new Map<string, RateLimitEntry>();
+  // Periodic cleanup to prevent memory leaks
+  private cleanupInterval: ReturnType<typeof setInterval>;
+
+  constructor() {
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60_000);
+    // Don't prevent process exit
+    if (this.cleanupInterval.unref) this.cleanupInterval.unref();
+  }
+
+  async check(key: string, config: RateLimitConfig) {
+    const now = Date.now();
+    const entry = this.store.get(key);
+
+    if (!entry || now > entry.resetTime) {
+      this.store.set(key, { count: 1, resetTime: now + config.windowMs });
+      return { allowed: true, remaining: config.maxRequests - 1, resetIn: config.windowMs };
+    }
+
+    if (entry.count >= config.maxRequests) {
+      return { allowed: false, remaining: 0, resetIn: entry.resetTime - now };
+    }
+
+    entry.count++;
+    return { allowed: true, remaining: config.maxRequests - entry.count, resetIn: entry.resetTime - now };
+  }
+
+  private cleanup() {
+    const now = Date.now();
+    for (const [key, entry] of this.store) {
+      if (now > entry.resetTime) this.store.delete(key);
+    }
+  }
+}
+
+/**
+ * Redis-backed rate limit store (works across instances, survives restarts).
+ * Uses a simple sliding window counter with Redis INCR + EXPIRE.
+ */
+class RedisRateLimitStore implements RateLimitStore {
+  private redisUrl: string;
+  /** In-memory fallback used when Redis is unreachable (fail-closed) */
+  private fallbackStore = new InMemoryRateLimitStore();
+
+  constructor(redisUrl: string) {
+    this.redisUrl = redisUrl;
+  }
+
+  async check(key: string, config: RateLimitConfig): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
+    // Dynamic import to avoid requiring ioredis when not using Redis
+    try {
+      const { default: Redis } = await import("ioredis");
+      const redis = new Redis(this.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
+      await redis.connect();
+
+      const redisKey = `rl:${key}`;
+      const windowSecs = Math.ceil(config.windowMs / 1000);
+
+      const count = await redis.incr(redisKey);
+      if (count === 1) {
+        await redis.expire(redisKey, windowSecs);
+      }
+
+      const ttl = await redis.ttl(redisKey);
+      await redis.quit();
+
+      const allowed = count <= config.maxRequests;
+      return {
+        allowed,
+        remaining: Math.max(0, config.maxRequests - count),
+        resetIn: ttl > 0 ? ttl * 1000 : config.windowMs,
+      };
+    } catch {
+      // SECURITY: Fall back to in-memory rate limiting instead of allowing
+      // all requests. This prevents brute-force attacks when Redis is down.
+      console.warn("[RateLimit] Redis unavailable, falling back to in-memory rate limiter");
+      return this.fallbackStore.check(key, config);
+    }
+  }
+}
+
+/** Singleton rate limit store — uses Redis if REDIS_URL is set */
+let _rateLimitStore: RateLimitStore | null = null;
+
+function getRateLimitStore(): RateLimitStore {
+  if (!_rateLimitStore) {
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      console.log("[RateLimit] Using Redis-backed rate limiting");
+      _rateLimitStore = new RedisRateLimitStore(redisUrl);
+    } else {
+      console.log("[RateLimit] Using in-memory rate limiting (single instance only)");
+      _rateLimitStore = new InMemoryRateLimitStore();
+    }
+  }
+  return _rateLimitStore;
+}
+
 export function checkRateLimit(
   identifier: string,
   config: RateLimitConfig = DEFAULT_RATE_LIMIT
 ): { allowed: boolean; remaining: number; resetIn: number } {
+  // Synchronous wrapper using in-memory store for backward compatibility
   const now = Date.now();
   const key = `${identifier}`;
   const entry = rateLimitStore.get(key);
 
   if (!entry || now > entry.resetTime) {
-    // First request or window expired
     rateLimitStore.set(key, {
       count: 1,
       resetTime: now + config.windowMs,
@@ -70,6 +178,17 @@ export function checkRateLimit(
   };
 }
 
+/**
+ * Async rate limit check — uses Redis when available.
+ * Prefer this over `checkRateLimit` for new code.
+ */
+export async function checkRateLimitAsync(
+  identifier: string,
+  config: RateLimitConfig = DEFAULT_RATE_LIMIT
+): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
+  return getRateLimitStore().check(identifier, config);
+}
+
 export function getRateLimitResponse(resetIn: number): NextResponse {
   return NextResponse.json(
     { error: "Too many requests. Please try again later." },
@@ -89,29 +208,52 @@ export { DEFAULT_RATE_LIMIT, STRICT_RATE_LIMIT, AUTH_RATE_LIMIT };
 // ============================================================
 
 /**
- * Sanitize string input to prevent XSS
- * Removes HTML tags and dangerous characters
+ * Sanitize string input to prevent XSS.
+ * Removes HTML tags, dangerous URI schemes, event handlers, and
+ * encodes residual special characters. Handles URL-encoded and
+ * entity-encoded bypass attempts.
  */
 export function sanitizeString(input: string): string {
   if (typeof input !== "string") return "";
   
-  return input
-    // Remove HTML tags
-    .replace(/<[^>]*>/g, "")
-    // Remove script-related patterns
-    .replace(/javascript:/gi, "")
-    .replace(/on\w+=/gi, "")
-    // Encode potentially dangerous characters
-    .replace(/[<>'"]/g, (char) => {
-      const entities: Record<string, string> = {
-        "<": "&lt;",
-        ">": "&gt;",
-        "'": "&#39;",
-        '"': "&quot;",
-      };
-      return entities[char] || char;
-    })
-    .trim();
+  let sanitized = input;
+
+  // Decode common URL-encoded characters that could bypass later filters
+  // e.g. java%73cript: → javascript:
+  sanitized = sanitized.replace(/%([0-9A-Fa-f]{2})/g, (_match, hex) => {
+    const charCode = parseInt(hex, 16);
+    // Only decode printable ASCII to avoid introducing control chars
+    if (charCode >= 0x20 && charCode <= 0x7E) {
+      return String.fromCharCode(charCode);
+    }
+    return "";
+  });
+
+  // Remove null bytes (bypass technique)
+  sanitized = sanitized.replace(/\0/g, "");
+
+  // Remove HTML tags (including malformed / unclosed tags)
+  sanitized = sanitized.replace(/<[^>]*>?/g, "");
+
+  // Remove dangerous URI schemes (case-insensitive, with optional whitespace)
+  sanitized = sanitized.replace(/\b(javascript|vbscript|data)\s*:/gi, "");
+
+  // Remove event handler attributes (onclick=, onerror=, etc.)
+  sanitized = sanitized.replace(/on[a-z]+\s*=/gi, "");
+
+  // Encode potentially dangerous characters
+  sanitized = sanitized.replace(/[<>'"&]/g, (char) => {
+    const entities: Record<string, string> = {
+      "<": "&lt;",
+      ">": "&gt;",
+      "'": "&#39;",
+      '"': "&quot;",
+      "&": "&amp;",
+    };
+    return entities[char] || char;
+  });
+
+  return sanitized.trim();
 }
 
 /**
@@ -270,20 +412,37 @@ export function validatePassword(password: string): PasswordValidation {
 // Security Headers
 // ============================================================
 
-export const SECURITY_HEADERS = {
+/**
+ * Single source of truth for security headers.
+ *
+ * NOTE: Next.js App Router requires 'unsafe-inline' for script-src
+ * and style-src at runtime due to inline hydration scripts.
+ * For stricter CSP, configure nonce-based CSP via next.config.ts headers
+ * or use a custom server. See: https://nextjs.org/docs/app/guides/content-security-policy
+ *
+ * The 'unsafe-eval' has been removed — it is NOT required by Next.js
+ * in production builds. If you see CSP errors during development with
+ * Turbopack, those are dev-only.
+ */
+export const SECURITY_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "X-XSS-Protection": "1; mode=block",
   "Referrer-Policy": "strict-origin-when-cross-origin",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",  // Needed for Next.js
+    // Next.js production: 'unsafe-inline' needed for hydration; 'unsafe-eval' removed
+    process.env.NODE_ENV === "development"
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" // Dev only (Turbopack)
+      : "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self'",
-    "connect-src 'self' https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov",
+    "connect-src 'self' https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org",
     "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
   ].join("; "),
 };
 

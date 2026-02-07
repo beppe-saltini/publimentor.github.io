@@ -25,6 +25,7 @@ const discoverSchema = z.object({
   // Limit keyword lengths to prevent abuse
   primaryKeywords: z.array(z.string().max(200)).min(1).max(10),
   secondaryKeywords: z.array(z.string().max(200)).max(10).optional(),
+  keywordOperator: z.enum(["AND", "OR"]).default("AND"),
   minHIndex: z.number().min(0).default(0),
   maxHIndex: z.number().min(0).default(100),
   minPublications: z.number().min(1).default(1),
@@ -149,6 +150,7 @@ export async function POST(request: Request) {
           requireSenior: params.requireSeniorAuthor,
           diversifyGeography: params.diversifyGeo,
           diversifyInstitutions: params.avoidSameInstitution,
+          keywordOperator: params.keywordOperator,
         }
       );
 
@@ -437,9 +439,10 @@ export async function POST(request: Request) {
         // Ultimate fallback: PubMed only
         const currentYear = new Date().getFullYear();
         const startYear = currentYear - params.yearsActive;
+        const joiner = params.keywordOperator === "AND" ? " AND " : " OR ";
         const keywordQuery = [...params.primaryKeywords, ...(params.secondaryKeywords || [])]
           .map(k => `"${k}"[Title/Abstract]`)
-          .join(" OR ");
+          .join(joiner);
         const query = `(${keywordQuery}) AND ${startYear}:${currentYear}[Date - Publication]`;
         
         const pmids = await searchPubMed(query, 200);

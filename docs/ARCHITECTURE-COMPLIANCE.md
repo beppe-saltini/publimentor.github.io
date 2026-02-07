@@ -28,6 +28,7 @@ This document summarizes PubliMentor's compliance with enterprise web applicatio
   - ADR-0004: Authentication Strategy
   - ADR-0005: LLM Integration Strategy
   - ADR-0006: Security Architecture
+  - ADR-0007: Sprint 2 Feature Additions (DBLP, Integrity Report, Responsive UI, Onboarding)
 
 ### Architecture Principles ✅
 - Defense in Depth: Multiple security layers
@@ -160,6 +161,7 @@ This document summarizes PubliMentor's compliance with enterprise web applicatio
 - Claude (Anthropic) API
 - ORCID API
 - Hugging Face API
+- DBLP API (Sprint 2 - CS-focused COI detection)
 
 ---
 

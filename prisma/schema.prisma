@@ -56,6 +56,19 @@ model VerificationToken {
 // User model (extended for manuscript features)
 // ============================================================
 
+enum UserRole {
+  AUTHOR
+  EDITOR
+  PUBLISHER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String?
@@ -67,6 +80,12 @@ model User {
   institution   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // Profile fields
+  role               UserRole?  // Primary role: author, editor, publisher
+  gender             Gender?
+  primaryExpertise   String?    // Primary research area
+  secondaryExpertise String?    // Secondary research area
 
   // Auth relations
   accounts Account[]
@@ -182,6 +201,7 @@ model Submission {
   abstract  String?          @db.Text
   pdfUrl    String?
   status    SubmissionStatus @default(DRAFT)
+  deletedAt DateTime?        // Soft delete for compliance
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
@@ -339,6 +359,10 @@ model Manuscript {
   parent    Manuscript?  @relation("ManuscriptVersions", fields: [parentId], references: [id])
   revisions Manuscript[] @relation("ManuscriptVersions")
 
+  // === SOFT DELETE (compliance: retain records for audit trail) ===
+  deletedAt DateTime? // null = active, set = soft-deleted
+  deletedBy String?   // User who deleted
+
   // === TIMESTAMPS ===
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -362,6 +386,7 @@ model Manuscript {
   @@index([status])
   @@index([publisherId, journalId])
   @@index([fileHash])
+  @@index([deletedAt]) // Efficient filtering for soft-deleted records
 }
 
 // ============================================================

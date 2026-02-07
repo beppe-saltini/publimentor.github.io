@@ -149,6 +149,37 @@ function COICheckContent() {
     }
   }, [slug, submissionId]);
 
+  // Load imported reviewers/authors from reviewer discovery page (via sessionStorage)
+  useEffect(() => {
+    const importedReviewers = sessionStorage.getItem("coi_reviewers_import");
+    const importedAuthors = sessionStorage.getItem("coi_authors_import");
+
+    if (importedReviewers) {
+      const names = importedReviewers.split("\n").filter(n => n.trim());
+      if (names.length > 0) {
+        setReviewers(names.map(name => ({ name: name.trim(), orcid: "" })));
+        toast.success(`Imported ${names.length} reviewers from discovery`);
+      }
+      sessionStorage.removeItem("coi_reviewers_import");
+    }
+
+    if (importedAuthors) {
+      const names = importedAuthors.split("\n").filter(n => n.trim()).map(n => n.replace(/\d+/g, "").trim());
+      if (names.length > 0) {
+        const total = names.length;
+        setAuthors(names.map((name, index) => {
+          let role: AuthorRole;
+          if (index === total - 1) role = "last";
+          else if (index === 0) role = "first";
+          else if (index <= 2) role = "middle_early";
+          else role = "middle_late";
+          return { name, orcid: "", role, position: index + 1 };
+        }));
+      }
+      sessionStorage.removeItem("coi_authors_import");
+    }
+  }, []);
+
   // Author management
   const addAuthor = () => {
     const newPosition = authors.length + 1;
@@ -395,15 +426,15 @@ function COICheckContent() {
         </Card>
       </div>
 
-      <Tabs defaultValue="individual" className="space-y-4">
+      <Tabs defaultValue="bulk" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="individual">
-            <UserCheck className="h-4 w-4 mr-2" />
-            Individual Entry
-          </TabsTrigger>
           <TabsTrigger value="bulk">
             <Users className="h-4 w-4 mr-2" />
             Bulk Import
+          </TabsTrigger>
+          <TabsTrigger value="individual">
+            <UserCheck className="h-4 w-4 mr-2" />
+            Individual Entry
           </TabsTrigger>
         </TabsList>
 

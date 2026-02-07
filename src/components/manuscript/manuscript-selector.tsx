@@ -77,9 +77,9 @@ export function ManuscriptSelector({
   onManuscriptData,
   placeholder = "Select a manuscript",
   disabled = false,
-  publisherId,
+  publisherId: publisherIdProp,
   journalId,
-  allowUpload = !!publisherId,
+  allowUpload: allowUploadProp,
 }: ManuscriptSelectorProps) {
   const [open, setOpen] = useState(false);
   const [manuscripts, setManuscripts] = useState<ManuscriptSummary[]>([]);
@@ -92,6 +92,24 @@ export function ManuscriptSelector({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  
+  // Auto-fetch publisherId if not provided
+  const [autoPublisherId, setAutoPublisherId] = useState<string | null>(null);
+  const publisherId = publisherIdProp || autoPublisherId;
+  const allowUpload = allowUploadProp !== undefined ? allowUploadProp : true; // Always allow upload by default
+
+  useEffect(() => {
+    if (!publisherIdProp) {
+      fetch("/api/publishers")
+        .then(res => res.json())
+        .then(data => {
+          if (data.publishers?.length > 0) {
+            setAutoPublisherId(data.publishers[0].id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [publisherIdProp]);
 
   // Fetch manuscripts when dialog opens
   useEffect(() => {
@@ -342,7 +360,7 @@ export function ManuscriptSelector({
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="select">Select Existing</TabsTrigger>
-                <TabsTrigger value="upload" disabled={!allowUpload}>
+                <TabsTrigger value="upload">
                   <Plus className="h-4 w-4 mr-1" />
                   Upload New
                 </TabsTrigger>
@@ -409,8 +427,20 @@ export function ManuscriptSelector({
 
               {/* Upload New Tab */}
               <TabsContent value="upload" className="mt-4">
+                {/* No publisher available */}
+                {!publisherId && !uploading && !processingStatus && (
+                  <div className="py-8 text-center">
+                    <AlertCircle className="h-12 w-12 mx-auto text-amber-400 mb-4" />
+                    <p className="text-gray-600 font-medium">Setting up upload...</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      <Loader2 className="h-4 w-4 inline animate-spin mr-1" />
+                      Loading publisher information
+                    </p>
+                  </div>
+                )}
+
                 {/* Upload error */}
-                {uploadError && (
+                {publisherId && uploadError && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-start gap-3">
                     <AlertCircle className="h-5 w-5 text-red-500 mt-0.5" />
                     <div>
@@ -429,7 +459,7 @@ export function ManuscriptSelector({
                 )}
 
                 {/* Processing status */}
-                {processingStatus && !uploadError && (
+                {publisherId && processingStatus && !uploadError && (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <div className="flex items-center gap-2 mb-2">
                       {processingStatus.isComplete ? (
@@ -468,7 +498,7 @@ export function ManuscriptSelector({
                 )}
 
                 {/* Dropzone */}
-                {!processingStatus && !uploadError && (
+                {publisherId && !processingStatus && !uploadError && (
                   <div
                     {...getRootProps()}
                     className={`

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { BookOpen, FileText, Users, Plus } from "lucide-react";
@@ -60,6 +61,21 @@ export default async function DashboardPage() {
   } catch (error) {
     console.error("Dashboard data fetch error:", error);
     // Continue with default values
+  }
+
+  // Redirect first-time users to onboarding
+  if (journalCount === 0 && submissionCount === 0 && pendingReviews === 0) {
+    // Check if user has any publisher memberships either
+    try {
+      const publisherCount = await prisma.publisherMember.count({
+        where: { userId: session?.user?.id },
+      });
+      if (publisherCount === 0) {
+        redirect("/dashboard/onboarding");
+      }
+    } catch {
+      // Continue to dashboard on error
+    }
   }
 
   return (

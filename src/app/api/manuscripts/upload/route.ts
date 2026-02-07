@@ -233,10 +233,26 @@ export async function POST(request: Request) {
       },
     });
 
-    // Start async processing (fire and forget)
+    // Start async processing with error recovery
+    // Note: In production, replace with a proper job queue (BullMQ, pg-boss).
+    // This ensures the job is tracked in the ProcessingJob table even if
+    // the process restarts mid-flight.
     processManuscriptAsync(manuscript.id, buffer, sanitizedFileName, expectedMimeType || file.type).catch(
-      (error) => {
-        console.error(`[Upload] Async processing failed:`, error);
+      async (error) => {
+        console.error(`[Upload] Async processing failed for ${manuscript.id}:`, error);
+        // Ensure manuscript is marked as errored so it can be retried
+        try {
+          await prisma.manuscript.update({
+            where: { id: manuscript.id },
+            data: {
+              status: "ERROR",
+              statusMessage: error instanceof Error ? error.message : "Async processing failed",
+              processingEnded: new Date(),
+            },
+          });
+        } catch (updateErr) {
+          console.error("[Upload] Failed to update error status:", updateErr);
+        }
       }
     );
 

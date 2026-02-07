@@ -455,6 +455,91 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /integrity/full-report:
+    post:
+      tags: [Integrity]
+      summary: Generate comprehensive integrity report
+      description: |
+        Runs all integrity checks (tortured phrases, author identity, reference validation)
+        in parallel and returns a unified report with overall risk assessment.
+        Rate limited to 5 requests per minute per user.
+      operationId: generateFullIntegrityReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  minLength: 100
+                  description: Manuscript text for tortured phrase detection
+                authors:
+                  type: array
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      email:
+                        type: string
+                      orcid:
+                        type: string
+                      affiliation:
+                        type: string
+                referenceText:
+                  type: string
+                  minLength: 50
+                  description: Raw reference list text for validation
+                checks:
+                  type: object
+                  properties:
+                    torturedPhrases:
+                      type: boolean
+                      default: true
+                    authorIdentity:
+                      type: boolean
+                      default: true
+                    references:
+                      type: boolean
+                      default: true
+      responses:
+        '200':
+          description: Full integrity report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reportId:
+                    type: string
+                  generatedAt:
+                    type: string
+                    format: date-time
+                  overallAssessment:
+                    type: object
+                    properties:
+                      riskLevel:
+                        type: string
+                        enum: [clear, review, attention]
+                      totalIndicators:
+                        type: integer
+                      checksCompleted:
+                        type: integer
+                      checksFailed:
+                        type: integer
+                  disclaimer:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
 # ============================================================
 # Components
 # ============================================================

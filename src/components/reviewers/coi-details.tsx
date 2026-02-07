@@ -11,7 +11,8 @@ import {
   Building, 
   Clock,
   User,
-  AlertTriangle 
+  AlertTriangle,
+  ExternalLink
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { COIBadge, type ConflictSeverity } from "./coi-badge";
@@ -26,6 +27,8 @@ export interface ReviewerConflict {
   details: {
     title?: string;
     year?: number;
+    doi?: string;
+    openAlexId?: string;
     institutionName?: string;
     affiliationType?: "current_both" | "current_one" | "historical";
   };
@@ -133,7 +136,18 @@ export function COIDetails({
                     
                     {conflict.details.title && (
                       <p className="text-gray-600 text-xs line-clamp-2 mb-1">
-                        {conflict.details.title}
+                        {conflict.details.doi ? (
+                          <a 
+                            href={conflict.details.doi.startsWith("http") ? conflict.details.doi : `https://doi.org/${conflict.details.doi}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            {conflict.details.title}
+                          </a>
+                        ) : (
+                          conflict.details.title
+                        )}
                       </p>
                     )}
                     
@@ -159,6 +173,37 @@ export function COIDetails({
                         <span className="text-gray-400 italic">
                           (reduced from {conflict.baseSeverity})
                         </span>
+                      )}
+                      {/* External links */}
+                      {conflict.details.doi && (
+                        <a
+                          href={conflict.details.doi.startsWith("http") ? conflict.details.doi : `https://doi.org/${conflict.details.doi}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-0.5"
+                        >
+                          DOI <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      )}
+                      {conflict.details.title && (
+                        <a
+                          href={`https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(conflict.details.title)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-0.5"
+                        >
+                          PubMed <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      )}
+                      {conflict.details.title && (
+                        <a
+                          href={`https://scholar.google.com/scholar?q=${encodeURIComponent(conflict.details.title)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-0.5"
+                        >
+                          Scholar <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
                       )}
                     </div>
                   </div>

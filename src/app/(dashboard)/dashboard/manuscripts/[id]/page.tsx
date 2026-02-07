@@ -6,9 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
 import { 
   FileText, ArrowLeft, Clock, CheckCircle, XCircle, Loader2, 
-  Users, BookOpen, Building, Mail, ExternalLink, Download
+  Users, BookOpen, Building, Mail, ExternalLink, Download, Search, AlertTriangle
 } from "lucide-react";
 
 interface Author {
@@ -83,6 +84,7 @@ export default function ManuscriptDetailPage() {
   const [manuscript, setManuscript] = useState<Manuscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [defaultJournalSlug, setDefaultJournalSlug] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchManuscript() {
@@ -102,8 +104,21 @@ export default function ManuscriptDetailPage() {
       }
     }
 
+    async function fetchDefaultJournal() {
+      try {
+        const response = await fetch("/api/journals");
+        const data = await response.json();
+        if (response.ok && data.journals?.length > 0) {
+          setDefaultJournalSlug(data.journals[0].slug);
+        }
+      } catch {
+        // Silently fail
+      }
+    }
+
     if (params.id) {
       fetchManuscript();
+      fetchDefaultJournal();
     }
   }, [params.id]);
 
@@ -186,9 +201,30 @@ export default function ManuscriptDetailPage() {
             Download
           </Button>
           <Button
-            onClick={() => router.push(`/dashboard/journals/plos/reviewers?manuscriptId=${manuscript.id}`)}
+            variant="outline"
+            onClick={() => {
+              const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
+              if (journalSlug) {
+                router.push(`/dashboard/journals/${journalSlug}/coi`);
+              } else {
+                toast.error("Please create a journal first to use COI screening");
+              }
+            }}
           >
-            <Users className="h-4 w-4 mr-2" />
+            <AlertTriangle className="h-4 w-4 mr-2" />
+            COI Check
+          </Button>
+          <Button
+            onClick={() => {
+              const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
+              if (journalSlug) {
+                router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
+              } else {
+                toast.error("Please create a journal first to find reviewers");
+              }
+            }}
+          >
+            <Search className="h-4 w-4 mr-2" />
             Find Reviewers
           </Button>
         </div>

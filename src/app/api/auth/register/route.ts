@@ -18,6 +18,11 @@ const registerSchema = z.object({
   email: z.string().email("Invalid email address").max(254),
   password: z.string().min(10, "Password must be at least 10 characters").max(128),
   institution: z.string().max(200).optional(),
+  orcid: z.string().max(50).optional(),
+  role: z.enum(["AUTHOR", "EDITOR", "PUBLISHER"]).optional(),
+  gender: z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"]).optional(),
+  primaryExpertise: z.string().max(200).optional(),
+  secondaryExpertise: z.string().max(200).optional(),
 });
 
 export async function POST(request: Request) {
@@ -50,7 +55,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, email, password, institution } = result.data;
+    const { name, email, password, institution, orcid, role, gender, primaryExpertise, secondaryExpertise } = result.data;
 
     // Validate password strength
     const passwordValidation = validatePassword(password);
@@ -98,6 +103,11 @@ export async function POST(request: Request) {
     // Hash password with strong settings (cost factor 12)
     const hashedPassword = await hash(password, 12);
 
+    // Sanitize optional profile fields
+    const sanitizedPrimaryExpertise = primaryExpertise ? sanitizeString(primaryExpertise) : undefined;
+    const sanitizedSecondaryExpertise = secondaryExpertise ? sanitizeString(secondaryExpertise) : undefined;
+    const sanitizedOrcid = orcid ? sanitizeString(orcid) : undefined;
+
     // Create user
     const user = await prisma.user.create({
       data: {
@@ -105,6 +115,11 @@ export async function POST(request: Request) {
         email: normalizedEmail,
         password: hashedPassword,
         institution: sanitizedInstitution,
+        orcid: sanitizedOrcid,
+        role: role || undefined,
+        gender: gender || undefined,
+        primaryExpertise: sanitizedPrimaryExpertise,
+        secondaryExpertise: sanitizedSecondaryExpertise,
       },
     });
 

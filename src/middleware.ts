@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
-
-// Security headers to add to all responses
-const SECURITY_HEADERS = {
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-  "X-XSS-Protection": "1; mode=block",
-  "Referrer-Policy": "strict-origin-when-cross-origin",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-};
+import { SECURITY_HEADERS, addSecurityHeaders } from "@/lib/security";
 
 // Routes that require authentication
 const PROTECTED_ROUTES = [
@@ -23,33 +15,68 @@ const PROTECTED_ROUTES = [
   "/api/files",
 ];
 
-// Routes that should be rate limited strictly
-const RATE_LIMITED_ROUTES = [
-  "/api/auth/register",
-  "/api/auth/callback",
-];
+/**
+ * Allowed CORS origins — only explicit, validated URLs are accepted.
+ * SECURITY: We validate that NEXTAUTH_URL is a proper origin (scheme + host)
+ * and reject wildcards or overly broad values.
+ */
+function buildCorsOrigins(): Set<string> {
+  const origins: string[] = [];
+
+  // Always allow localhost in development
+  if (process.env.NODE_ENV !== "production") {
+    origins.push("http://localhost:3000");
+  }
+
+  const nextAuthUrl = process.env.NEXTAUTH_URL;
+  if (nextAuthUrl) {
+    try {
+      const parsed = new URL(nextAuthUrl);
+      // Only allow http(s) origins; strip trailing path
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        origins.push(parsed.origin);
+      } else {
+        console.warn("[CORS] NEXTAUTH_URL has unsupported protocol, ignoring:", parsed.protocol);
+      }
+    } catch {
+      console.warn("[CORS] NEXTAUTH_URL is not a valid URL, ignoring");
+    }
+  }
+
+  return new Set(origins);
+}
+
+const CORS_ORIGINS = buildCorsOrigins();
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // Add security headers to all responses
-  const response = NextResponse.next();
-  
-  for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
-    response.headers.set(header, value);
+  // --- CORS preflight ---
+  if (request.method === "OPTIONS" && pathname.startsWith("/api/")) {
+    const origin = request.headers.get("origin") || "";
+    const response = new NextResponse(null, { status: 204 });
+    
+    if (CORS_ORIGINS.has(origin)) {
+      response.headers.set("Access-Control-Allow-Origin", origin);
+      response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-request-id");
+      response.headers.set("Access-Control-Max-Age", "86400");
+    }
+    return response;
   }
-  
-  // Add CSP header (more permissive for development)
-  const cspDirectives = [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https:",
-    "font-src 'self'",
-    "connect-src 'self' https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org",
-    "frame-ancestors 'none'",
-  ];
-  response.headers.set("Content-Security-Policy", cspDirectives.join("; "));
+
+  // Add security headers to all responses (single source of truth)
+  const response = NextResponse.next();
+  addSecurityHeaders(response);
+
+  // --- CORS headers for API responses ---
+  if (pathname.startsWith("/api/")) {
+    const origin = request.headers.get("origin") || "";
+    if (CORS_ORIGINS.has(origin)) {
+      response.headers.set("Access-Control-Allow-Origin", origin);
+      response.headers.set("Access-Control-Allow-Credentials", "true");
+    }
+  }
   
   // Check authentication for protected routes
   const isProtectedRoute = PROTECTED_ROUTES.some((route) => 

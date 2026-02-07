@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:20.18.1-alpine3.21 AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN npx prisma generate
 RUN npm run build -- --webpack
 
 # Production stage
-FROM node:20-alpine AS runner
+FROM node:20.18.1-alpine3.21 AS runner
 
 WORKDIR /app
 
@@ -44,5 +44,8 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health/live || exit 1
 
 CMD ["node", "server.js"]

@@ -29,6 +29,8 @@ export interface ReviewerConflict {
   details: {
     title?: string;
     year?: number;
+    doi?: string;
+    openAlexId?: string;
     institutionName?: string;
     affiliationType?: "current_both" | "current_one" | "historical";
   };
@@ -503,6 +505,8 @@ export const coiDetector = {
             details: {
               title: work.title,
               year: work.publication_year,
+              doi: work.doi,
+              openAlexId: work.id,
             },
           });
         }

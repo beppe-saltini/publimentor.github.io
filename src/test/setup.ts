@@ -1,17 +1,9 @@
 /**
- * Vitest Global Setup
- * Runs before all test files
+ * Vitest global test setup
  */
 
-// Suppress console output during tests unless DEBUG is set
-if (!process.env.DEBUG) {
-  const noop = () => {};
-  global.console = {
-    ...console,
-    log: noop,
-    warn: noop,
-    // Keep error and info for debugging test failures
-    error: console.error,
-    info: console.info,
-  };
-}
+// Set test environment variables
+process.env.NODE_ENV = "test";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/publimentor_test";
+process.env.NEXTAUTH_SECRET = "test-secret-at-least-16-chars-long";
+process.env.NEXTAUTH_URL = "http://localhost:3000";

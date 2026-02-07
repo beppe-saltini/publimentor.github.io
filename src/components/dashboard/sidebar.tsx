@@ -15,13 +15,16 @@ import {
   CheckSquare,
   Shield,
   Upload,
+  X,
 } from "lucide-react";
 
 interface SidebarProps {
   journalSlug?: string;
+  open?: boolean;
+  onClose?: () => void;
 }
 
-export function Sidebar({ journalSlug }: SidebarProps) {
+function SidebarContent({ journalSlug, onClose }: SidebarProps) {
   const pathname = usePathname();
 
   const mainNavItems = [
@@ -44,9 +47,9 @@ export function Sidebar({ journalSlug }: SidebarProps) {
     : [];
 
   return (
-    <aside className="w-64 bg-white border-r min-h-screen p-4">
-      <div className="mb-8">
-        <Link href="/dashboard" className="flex items-center gap-3">
+    <>
+      <div className="mb-8 flex items-center justify-between">
+        <Link href="/dashboard" className="flex items-center gap-3" onClick={onClose}>
           <Image
             src="/logo.png"
             alt="PubliMentor"
@@ -56,6 +59,16 @@ export function Sidebar({ journalSlug }: SidebarProps) {
           />
           <span className="text-lg font-bold text-[#1a3a5c]">PubliMentor</span>
         </Link>
+        {/* Close button only visible on mobile */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden p-2 rounded-md text-gray-500 hover:bg-gray-100 transition-colors"
+            aria-label="Close sidebar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <nav className="space-y-6">
@@ -68,6 +81,7 @@ export function Sidebar({ journalSlug }: SidebarProps) {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={onClose}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
                     pathname === item.href
@@ -93,6 +107,7 @@ export function Sidebar({ journalSlug }: SidebarProps) {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    onClick={onClose}
                     className={cn(
                       "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
                       pathname === item.href
@@ -109,6 +124,44 @@ export function Sidebar({ journalSlug }: SidebarProps) {
           </div>
         )}
       </nav>
+    </>
+  );
+}
+
+/**
+ * Desktop sidebar - hidden on mobile, visible on lg+
+ */
+export function Sidebar({ journalSlug }: SidebarProps) {
+  return (
+    <aside className="hidden lg:block w-64 bg-white border-r min-h-screen p-4 flex-shrink-0">
+      <SidebarContent journalSlug={journalSlug} />
     </aside>
+  );
+}
+
+/**
+ * Mobile sidebar - renders as a slide-over drawer on small screens
+ */
+export function MobileSidebar({ journalSlug, open, onClose }: SidebarProps) {
+  if (!open) return null;
+
+  return (
+    <>
+      {/* Backdrop overlay */}
+      <div
+        className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden transition-opacity"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      {/* Drawer panel */}
+      <aside
+        className="fixed inset-y-0 left-0 z-50 w-72 bg-white p-4 shadow-xl lg:hidden overflow-y-auto transition-transform"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+      >
+        <SidebarContent journalSlug={journalSlug} onClose={onClose} />
+      </aside>
+    </>
   );
 }

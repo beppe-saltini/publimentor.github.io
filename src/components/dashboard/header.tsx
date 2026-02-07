@@ -11,9 +11,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User } from "lucide-react";
+import { LogOut, User, Menu } from "lucide-react";
 
-export function Header() {
+interface HeaderProps {
+  onMenuToggle?: () => void;
+}
+
+export function Header({ onMenuToggle }: HeaderProps) {
   const { data: session } = useSession();
 
   const initials = session?.user?.name
@@ -23,8 +27,22 @@ export function Header() {
     .toUpperCase() || "U";
 
   return (
-    <header className="bg-white border-b h-16 flex items-center justify-between px-6">
-      <div className="flex-1" />
+    <header className="bg-white border-b h-16 flex items-center justify-between px-4 sm:px-6">
+      <div className="flex items-center gap-3">
+        {/* Hamburger menu button - visible only on mobile */}
+        {onMenuToggle && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden"
+            onClick={onMenuToggle}
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        )}
+        <div className="flex-1" />
+      </div>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

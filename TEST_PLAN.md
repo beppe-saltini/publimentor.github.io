@@ -69,6 +69,10 @@ Vibe testing goes beyond "does it work?" to ask "does it feel right?" It combine
 | `tortured-phrases.ts` | **High** | Unit | Paper mill detection must be accurate (false positives harm authors) |
 | `reference-validator.ts` | **High** | Unit | DOI/PMID parsing correctness |
 | `pdf-parser.ts` | **Medium** | Unit | Section extraction, reference counting |
+| `dblp.ts` | **High** | Unit + Integration | DBLP API client for CS-focused COI detection |
+| `full-report/route.ts` | **Critical** | Integration | Composite integrity report - parallel execution, fault tolerance |
+| `dashboard-shell.tsx` | **High** | Component (E2E) | Responsive layout - mobile drawer, desktop sidebar |
+| `onboarding.tsx` | **High** | Component (E2E) | Multi-step onboarding wizard flow |
 | API Health routes | **High** | Integration | System reliability indicators |
 | API Auth routes | **Critical** | Integration | Authentication correctness |
 | Domain entities | **Medium** | Unit | Business rule enforcement |
@@ -241,6 +245,66 @@ Vibe testing goes beyond "does it work?" to ask "does it feel right?" It combine
 | PP-004 | Section header length limit | header > 50 chars | not treated as header | Medium |
 | PP-005 | Case insensitive sections | "INTRODUCTION" | matched | High |
 
+### 4.9 DBLP Client (`src/lib/dblp.ts`)
+
+| TC-ID | Test Case | Input | Expected | Priority |
+|---|---|---|---|---|
+| DBLP-001 | Search author by name | "Yoshua Bengio" | Non-empty results array | Critical |
+| DBLP-002 | Search author no results | "xxxxxxnonexistent999" | Empty array | High |
+| DBLP-003 | Rate throttle (1 req/s) | 2 rapid requests | Second delayed >= 1s | Critical |
+| DBLP-004 | Find coauthored publications | Two known collaborators | Shared papers returned | Critical |
+| DBLP-005 | No coauthorship | Two unrelated authors | Empty array | High |
+| DBLP-006 | fromYear filter | fromYear=2020 | Only papers >= 2020 | High |
+| DBLP-007 | Author aliases parsed | Author with aliases | aliases array populated | Medium |
+| DBLP-008 | DOI extraction | Publication with DOI | doi field present | Medium |
+| DBLP-009 | hasCoauthorship boolean | Known collaborators | true | High |
+| DBLP-010 | API error handling | Simulated 500 | Error thrown | High |
+
+### 4.10 Full Integrity Report (`src/app/api/integrity/full-report/route.ts`)
+
+| TC-ID | Test Case | Input | Expected | Priority |
+|---|---|---|---|---|
+| FIR-001 | All three checks pass | text + authors + refs | All 3 results present | Critical |
+| FIR-002 | Only tortured phrases | text only | torturedPhrases result only | High |
+| FIR-003 | Only author identity | authors only | authorIdentity result only | High |
+| FIR-004 | Only references | referenceText only | references result only | High |
+| FIR-005 | No input provided | empty body | 400 error | Critical |
+| FIR-006 | Partial failure graceful | text + broken refs | Partial report returned | Critical |
+| FIR-007 | Risk level: clear | Clean inputs | riskLevel="clear" | High |
+| FIR-008 | Risk level: review | 1-2 indicators | riskLevel="review" | High |
+| FIR-009 | Risk level: attention | 3+ indicators | riskLevel="attention" | Critical |
+| FIR-010 | Rate limit enforced | 6 reqs in 1 min | 6th returns 429 | Critical |
+| FIR-011 | Auth required | No session | 401 Unauthorized | Critical |
+| FIR-012 | Retracted ref escalates | retracted > 0 | riskLevel="attention" | Critical |
+| FIR-013 | Disclaimer present | Any input | disclaimer non-empty | High |
+
+### 4.11 Responsive Layout (`src/components/dashboard/*`)
+
+| TC-ID | Test Case | Input | Expected | Priority |
+|---|---|---|---|---|
+| RL-001 | Desktop sidebar visible | viewport >= 1024px | Sidebar visible | Critical |
+| RL-002 | Mobile sidebar hidden | viewport < 1024px | Sidebar hidden | Critical |
+| RL-003 | Hamburger opens drawer | Click on mobile | Drawer appears | Critical |
+| RL-004 | Backdrop closes drawer | Click overlay | Drawer closes | High |
+| RL-005 | X button closes drawer | Click X | Drawer closes | High |
+| RL-006 | Nav link closes drawer | Click nav link | Closes + navigates | High |
+| RL-007 | a11y: aria-label | Mobile render | aria-label present | Medium |
+| RL-008 | a11y: aria-modal | Drawer open | aria-modal="true" | Medium |
+
+### 4.12 Onboarding Flow (`src/components/dashboard/onboarding.tsx`)
+
+| TC-ID | Test Case | Input | Expected | Priority |
+|---|---|---|---|---|
+| OB-001 | New user redirect | 0 journals, 0 publishers | Redirect to onboarding | Critical |
+| OB-002 | Existing user no redirect | >= 1 journal | Stays on dashboard | Critical |
+| OB-003 | Create publisher success | Valid name | POST called, step advances | Critical |
+| OB-004 | Create journal success | Valid journal | POST called, step advances | Critical |
+| OB-005 | Empty name rejected | Empty input | Toast error | High |
+| OB-006 | Done step actions | Complete flow | 4 action buttons | High |
+| OB-007 | Skip onboarding | Click skip | Navigates to dashboard | High |
+| OB-008 | Slug auto-generation | "My Journal" | "my-journal" | Medium |
+| OB-009 | API error handling | Server 500 | Toast error, no advance | High |
+
 ---
 
 ## 5. Test Environment
@@ -295,6 +359,10 @@ npm run test:coverage # With coverage report
 | Password bypass | Low | **Critical** | Comprehensive validation testing |
 | Rate limit bypass | Medium | **High** | Boundary testing around limits |
 | Format checker inconsistencies | Low | **Medium** | Property-based testing with various inputs |
+| DBLP API unavailability | Medium | **Medium** | Graceful degradation; DBLP is supplementary source |
+| Full report partial failure | Medium | **High** | Promise.allSettled ensures partial results |
+| Onboarding redirect loop | Low | **High** | Guard clause checks journal count before redirect |
+| Mobile sidebar state leaks | Low | **Low** | Client-side state reset on close |
 
 ---
 
