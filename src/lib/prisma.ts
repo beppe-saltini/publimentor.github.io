@@ -17,11 +17,11 @@ export const prisma =
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-// Graceful shutdown: disconnect Prisma on process exit
-const shutdownPrisma = async () => {
-  await prisma.$disconnect();
-};
-
-process.on("beforeExit", shutdownPrisma);
+// Graceful shutdown: disconnect Prisma on process exit (Node.js only, not Edge Runtime)
+if (typeof process !== "undefined" && typeof process.on === "function") {
+  process.on("beforeExit", async () => {
+    await prisma.$disconnect();
+  });
+}
 
 export default prisma;

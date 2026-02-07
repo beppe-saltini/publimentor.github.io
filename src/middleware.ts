@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
-import { SECURITY_HEADERS, addSecurityHeaders } from "@/lib/security";
+import { SECURITY_HEADERS, addSecurityHeaders } from "@/lib/security-headers";
 
 // Routes that require authentication
 const PROTECTED_ROUTES = [
