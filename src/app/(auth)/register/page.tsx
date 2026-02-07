@@ -20,7 +20,6 @@ export default function RegisterPage() {
     institution: "",
     orcid: "",
     role: "",
-    gender: "",
     primaryExpertise: "",
     secondaryExpertise: "",
   });
@@ -63,7 +62,6 @@ export default function RegisterPage() {
           institution: formData.institution || undefined,
           orcid: formData.orcid || undefined,
           role: formData.role || undefined,
-          gender: formData.gender || undefined,
           primaryExpertise: formData.primaryExpertise || undefined,
           secondaryExpertise: formData.secondaryExpertise || undefined,
         }),
@@ -153,26 +151,6 @@ export default function RegisterPage() {
                   <SelectItem value="AUTHOR">Author</SelectItem>
                   <SelectItem value="EDITOR">Editor</SelectItem>
                   <SelectItem value="PUBLISHER">Publisher</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Gender */}
-            <div className="space-y-2">
-              <Label htmlFor="gender">Gender</Label>
-              <Select
-                value={formData.gender}
-                onValueChange={(value) => handleSelectChange("gender", value)}
-                disabled={isLoading}
-              >
-                <SelectTrigger id="gender">
-                  <SelectValue placeholder="Select gender" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FEMALE">Female</SelectItem>
-                  <SelectItem value="MALE">Male</SelectItem>
-                  <SelectItem value="NON_BINARY">Non-binary</SelectItem>
-                  <SelectItem value="PREFER_NOT_TO_SAY">Prefer not to say</SelectItem>
                 </SelectContent>
               </Select>
             </div>

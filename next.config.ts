@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Inject build version and timestamp at build time
+  env: {
+    NEXT_PUBLIC_BUILD_VERSION: process.env.npm_package_version || "0.1.0",
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+  },
+
   // Enable standalone output for Docker; skip on Vercel (uses its own builder)
   output: process.env.VERCEL ? undefined : "standalone",
   

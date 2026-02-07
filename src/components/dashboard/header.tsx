@@ -13,6 +13,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, Menu } from "lucide-react";
 
+const BUILD_VERSION = process.env.NEXT_PUBLIC_BUILD_VERSION || "dev";
+const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME
+  ? new Date(process.env.NEXT_PUBLIC_BUILD_TIME).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+  : "";
+
 interface HeaderProps {
   onMenuToggle?: () => void;
 }
@@ -44,6 +56,12 @@ export function Header({ onMenuToggle }: HeaderProps) {
         <div className="flex-1" />
       </div>
 
+      <div className="flex items-center gap-4">
+        {/* Build version */}
+        <span className="hidden sm:inline text-[11px] text-gray-400 font-mono tabular-nums" title={`Built: ${BUILD_TIME}`}>
+          v{BUILD_VERSION} {BUILD_TIME && `\u00B7 ${BUILD_TIME}`}
+        </span>
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="relative h-10 w-10 rounded-full">
@@ -74,6 +92,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </header>
   );
 }
