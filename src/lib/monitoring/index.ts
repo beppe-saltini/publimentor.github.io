@@ -39,6 +39,7 @@ export async function initMonitoring(): Promise<void> {
 
   try {
     // Dynamic import to avoid bundling Sentry when not used
+    // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
 
     Sentry.init({
@@ -82,6 +83,7 @@ export async function captureException(
   if (!_sentryInitialized) return;
 
   try {
+    // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
 
     Sentry.withScope((scope) => {
@@ -118,6 +120,7 @@ export async function captureMessage(
   if (!_sentryInitialized) return;
 
   try {
+    // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
     Sentry.captureMessage(message, level);
   } catch {
@@ -132,6 +135,7 @@ export async function setUser(user: { id: string; email?: string }): Promise<voi
   if (!_sentryInitialized) return;
 
   try {
+    // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
     Sentry.setUser(user);
   } catch {
@@ -156,6 +160,7 @@ export async function startTransaction(
   }
 
   try {
+    // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
     return Sentry.startInactiveSpan({ name, op }) || { finish: () => {} };
   } catch {
