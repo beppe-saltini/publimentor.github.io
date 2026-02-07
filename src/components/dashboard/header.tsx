@@ -12,10 +12,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, Menu } from "lucide-react";
+import {
+  BUILD_VERSION,
+  BUILD_TIME as BUILD_TIME_RAW,
+} from "@/generated/build-info";
 
-const BUILD_VERSION = process.env.NEXT_PUBLIC_BUILD_VERSION || "dev";
-const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME
-  ? new Date(process.env.NEXT_PUBLIC_BUILD_TIME).toLocaleString("en-GB", {
+const BUILD_TIME = BUILD_TIME_RAW
+  ? new Date(BUILD_TIME_RAW).toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
       year: "numeric",

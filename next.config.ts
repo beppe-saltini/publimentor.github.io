@@ -1,33 +1,6 @@
 import type { NextConfig } from "next";
-import { execSync } from "child_process";
-
-function git(cmd: string): string | null {
-  try {
-    return execSync(`git ${cmd}`, { encoding: "utf-8" }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-// Resolve git SHA: explicit env → local git → Vercel env → fallback
-const GIT_SHA =
-  process.env.NEXT_PUBLIC_BUILD_VERSION ||
-  git("rev-parse --short HEAD") ||
-  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ||
-  "dev";
-
-// Resolve commit date: explicit env → local git → build time
-const GIT_DATE =
-  process.env.NEXT_PUBLIC_BUILD_TIME ||
-  git("log -1 --format=%cI") ||
-  new Date().toISOString();
 
 const nextConfig: NextConfig = {
-  // Inject git commit hash and last-commit timestamp at build time
-  env: {
-    NEXT_PUBLIC_BUILD_VERSION: GIT_SHA,
-    NEXT_PUBLIC_BUILD_TIME: GIT_DATE,
-  },
 
   // Enable standalone output for Docker; skip on Vercel (uses its own builder)
   output: process.env.VERCEL ? undefined : "standalone",
