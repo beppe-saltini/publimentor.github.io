@@ -27,6 +27,8 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  // Gender diversity
+  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 export async function POST(request: Request) {
@@ -219,6 +221,13 @@ export async function POST(request: Request) {
       } catch (error) {
         console.error("[Find] COI check failed:", error);
         // Continue without COI data rather than failing the whole request
+      }
+    }
+
+    // Infer gender diversity from first names
+    for (const r of reviewers) {
+      if (r.firstName) {
+        r.inferredGender = openAlex.inferGender(r.firstName);
       }
     }
 

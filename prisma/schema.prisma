@@ -102,6 +102,9 @@ model User {
   uploadedManuscripts   Manuscript[]           @relation("UploadedManuscripts")
   manuscriptPermissions ManuscriptPermission[] @relation("ManuscriptPermissions")
   grantedPermissions    ManuscriptPermission[] @relation("GrantedPermissions")
+
+  // Favourite journals (for authors)
+  favouriteJournals FavouriteJournal[]
 }
 
 // ============================================================
@@ -169,6 +172,9 @@ model Journal {
   // Manuscript relation
   manuscripts Manuscript[]
 
+  // Favourite journal relations (for authors)
+  favouritedBy FavouriteJournal[]
+
   @@index([publisherId])
 }
 
@@ -189,6 +195,26 @@ enum MemberRole {
   ADMIN
   EDITOR
   REVIEWER
+}
+
+// ============================================================
+// Favourite Journals (for authors to bookmark journals they submit to)
+// ============================================================
+
+model FavouriteJournal {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  journalId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  journal   Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  // Custom name/notes the author adds
+  notes String?
+
+  @@unique([userId, journalId])
+  @@index([userId])
 }
 
 // ============================================================

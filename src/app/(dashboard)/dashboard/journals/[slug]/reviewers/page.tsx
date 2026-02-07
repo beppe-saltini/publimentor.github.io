@@ -41,6 +41,7 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 interface CoauthorWarning {
@@ -94,6 +95,7 @@ interface AdvancedReviewer {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 interface DiscoverySummary {
@@ -108,6 +110,7 @@ interface DiscoverySummary {
   diversity: {
     countries: string[];
     countryCount: number;
+    gender?: { likely_female: number; likely_male: number; unknown: number };
   };
   avgPublications: number;
   avgSeniorAuthorships: number;
@@ -946,6 +949,9 @@ function ReviewerSearchContent() {
                     From {discoveryResult.summary.diversity.countryCount} countries • 
                     Avg publications: {discoveryResult.summary.avgPublications} • 
                     Avg senior authorships: {discoveryResult.summary.avgSeniorAuthorships}
+                    {discoveryResult.summary.diversity.gender && (
+                      <> • <span className="text-pink-600">{discoveryResult.summary.diversity.gender.likely_female}F</span> / <span className="text-sky-600">{discoveryResult.summary.diversity.gender.likely_male}M</span></>
+                    )}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -975,7 +981,18 @@ function ReviewerSearchContent() {
                             <span className="text-sm font-bold text-blue-700">{index + 1}</span>
                           </div>
                           <div>
-                            <h4 className="font-semibold">{reviewer.name}</h4>
+                            <h4 className="font-semibold flex items-center gap-1.5">
+                              {reviewer.name}
+                              {reviewer.inferredGender && reviewer.inferredGender !== "unknown" && (
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  reviewer.inferredGender === "likely_female"
+                                    ? "bg-pink-100 text-pink-700"
+                                    : "bg-sky-100 text-sky-700"
+                                }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
+                                  {reviewer.inferredGender === "likely_female" ? "F" : "M"}
+                                </span>
+                              )}
+                            </h4>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
                               <Building className="h-3 w-3" />
                               {reviewer.affiliation.slice(0, 60)}{reviewer.affiliation.length > 60 ? "..." : ""}
@@ -1397,7 +1414,18 @@ function ReviewerSearchContent() {
                               <User className="h-4 w-4 text-gray-600" />
                             </div>
                             <div>
-                              <h4 className="font-semibold text-sm">{reviewer.name}</h4>
+                              <h4 className="font-semibold text-sm flex items-center gap-1.5">
+                                {reviewer.name}
+                                {reviewer.inferredGender && reviewer.inferredGender !== "unknown" && (
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                    reviewer.inferredGender === "likely_female"
+                                      ? "bg-pink-100 text-pink-700"
+                                      : "bg-sky-100 text-sky-700"
+                                  }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
+                                    {reviewer.inferredGender === "likely_female" ? "F" : "M"}
+                                  </span>
+                                )}
+                              </h4>
                               {reviewer.affiliation && (
                                 <p className="text-xs text-gray-500 flex items-center gap-1">
                                   <Building className="h-3 w-3" />

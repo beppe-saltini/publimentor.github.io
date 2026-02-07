@@ -15,6 +15,10 @@ import {
   CheckCircle,
   ArrowRight,
   Loader2,
+  Heart,
+  PenTool,
+  Briefcase,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,12 +26,14 @@ interface OnboardingProps {
   userName?: string;
 }
 
-type OnboardingStep = "welcome" | "publisher" | "journal" | "done";
+type OnboardingStep = "welcome" | "role" | "publisher" | "journal" | "favourites" | "done";
+type UserRole = "AUTHOR" | "EDITOR" | "PUBLISHER";
 
 export function Onboarding({ userName }: OnboardingProps) {
   const router = useRouter();
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
 
   // Publisher form
   const [publisherName, setPublisherName] = useState("");
@@ -37,6 +43,10 @@ export function Onboarding({ userName }: OnboardingProps) {
   const [journalName, setJournalName] = useState("");
   const [journalSlug, setJournalSlug] = useState("");
   const [journalDescription, setJournalDescription] = useState("");
+
+  // Author favourite journals
+  const [favouriteInput, setFavouriteInput] = useState("");
+  const [savedFavourites, setSavedFavourites] = useState<string[]>([]);
 
   // Created IDs
   const [createdPublisherId, setCreatedPublisherId] = useState<string | null>(null);
@@ -48,6 +58,30 @@ export function Onboarding({ userName }: OnboardingProps) {
       .replace(/[^a-z0-9\s-]/g, "")
       .replace(/\s+/g, "-")
       .slice(0, 50);
+
+  const handleSelectRole = async (role: UserRole) => {
+    setSelectedRole(role);
+    setIsSubmitting(true);
+
+    try {
+      // Save role to profile
+      await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+
+      if (role === "AUTHOR") {
+        setStep("favourites");
+      } else {
+        setStep("publisher");
+      }
+    } catch {
+      toast.error("Failed to save role");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleCreatePublisher = async () => {
     if (!publisherName.trim()) {
@@ -118,20 +152,51 @@ export function Onboarding({ userName }: OnboardingProps) {
     }
   };
 
-  const steps = [
-    { id: "welcome", label: "Welcome", icon: CheckCircle },
-    { id: "publisher", label: "Organization", icon: Building },
-    { id: "journal", label: "Journal", icon: BookOpen },
-    { id: "done", label: "Ready", icon: Shield },
-  ];
+  const handleAddFavourite = async () => {
+    if (!favouriteInput.trim()) return;
 
-  const currentStepIndex = steps.findIndex((s) => s.id === step);
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/user/favourites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ journalName: favouriteInput.trim() }),
+      });
+
+      if (!res.ok) throw new Error("Failed to add favourite");
+
+      setSavedFavourites((prev) => [...prev, favouriteInput.trim()]);
+      setFavouriteInput("");
+      toast.success(`"${favouriteInput.trim()}" added`);
+    } catch {
+      toast.error("Failed to add favourite");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const roleSteps = selectedRole === "AUTHOR"
+    ? [
+        { id: "welcome", label: "Welcome", icon: CheckCircle },
+        { id: "role", label: "Profile", icon: User },
+        { id: "favourites", label: "Journals", icon: Heart },
+        { id: "done", label: "Ready", icon: Shield },
+      ]
+    : [
+        { id: "welcome", label: "Welcome", icon: CheckCircle },
+        { id: "role", label: "Profile", icon: User },
+        { id: "publisher", label: "Organization", icon: Building },
+        { id: "journal", label: "Journal", icon: BookOpen },
+        { id: "done", label: "Ready", icon: Shield },
+      ];
+
+  const currentStepIndex = roleSteps.findIndex((s) => s.id === step);
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Step Progress Bar */}
       <div className="flex items-center justify-center gap-2">
-        {steps.map((s, i) => (
+        {roleSteps.map((s, i) => (
           <div key={s.id} className="flex items-center">
             <div
               className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium transition-colors ${
@@ -146,7 +211,7 @@ export function Onboarding({ userName }: OnboardingProps) {
                 i + 1
               )}
             </div>
-            {i < steps.length - 1 && (
+            {i < roleSteps.length - 1 && (
               <div
                 className={`w-12 sm:w-20 h-0.5 mx-1 transition-colors ${
                   i < currentStepIndex ? "bg-blue-600" : "bg-gray-200"
@@ -165,53 +230,44 @@ export function Onboarding({ userName }: OnboardingProps) {
               Welcome to PubliMentor{userName ? `, ${userName}` : ""}!
             </CardTitle>
             <CardDescription className="text-base">
-              Let&apos;s set up your editorial workspace in just a few steps.
-              You&apos;ll be ready to manage submissions, find reviewers, and run
-              integrity checks in under 2 minutes.
+              Let&apos;s set up your workspace. First, tell us how you&apos;ll be using PubliMentor
+              so we can tailor the experience for you.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                <Building className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                <Upload className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Create your organization</p>
-                  <p className="text-xs text-gray-500">
-                    Set up your publishing house or research group
-                  </p>
+                  <p className="text-sm font-medium">Upload manuscripts</p>
+                  <p className="text-xs text-gray-500">Check formatting and run integrity screens</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
                 <BookOpen className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Create your first journal</p>
-                  <p className="text-xs text-gray-500">
-                    Configure your journal and invite team members
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                <Upload className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium">Upload a manuscript</p>
-                  <p className="text-xs text-gray-500">
-                    Try uploading a PDF to see automatic metadata extraction
-                  </p>
+                  <p className="text-sm font-medium">Find reviewers</p>
+                  <p className="text-xs text-gray-500">Discover expert reviewers from PubMed &amp; OpenAlex</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
                 <Shield className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Run integrity checks</p>
-                  <p className="text-xs text-gray-500">
-                    Screen for tortured phrases, validate references, and more
-                  </p>
+                  <p className="text-sm font-medium">Screen for integrity</p>
+                  <p className="text-xs text-gray-500">Tortured phrases, reference validation</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <Building className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Manage editorial workflow</p>
+                  <p className="text-xs text-gray-500">Track submissions and assign reviewers</p>
                 </div>
               </div>
             </div>
 
             <Button
-              onClick={() => setStep("publisher")}
+              onClick={() => setStep("role")}
               className="w-full"
               size="lg"
             >
@@ -229,12 +285,145 @@ export function Onboarding({ userName }: OnboardingProps) {
         </Card>
       )}
 
+      {step === "role" && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                Step 1
+              </Badge>
+            </div>
+            <CardTitle className="flex items-center gap-2">
+              <User className="h-5 w-5" />
+              How will you use PubliMentor?
+            </CardTitle>
+            <CardDescription>
+              Select your primary role. You can change this later in your profile settings.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <button
+              onClick={() => handleSelectRole("AUTHOR")}
+              disabled={isSubmitting}
+              className="w-full p-4 rounded-lg border-2 text-left hover:border-blue-300 hover:bg-blue-50 transition-colors flex items-start gap-4"
+            >
+              <div className="bg-blue-100 rounded-full p-2 flex-shrink-0">
+                <PenTool className="h-5 w-5 text-blue-700" />
+              </div>
+              <div>
+                <p className="font-semibold">Author</p>
+                <p className="text-sm text-gray-500">
+                  I write and submit manuscripts. I want to check formatting, run integrity
+                  screens, and manage my target journals.
+                </p>
+              </div>
+            </button>
+            <button
+              onClick={() => handleSelectRole("EDITOR")}
+              disabled={isSubmitting}
+              className="w-full p-4 rounded-lg border-2 text-left hover:border-green-300 hover:bg-green-50 transition-colors flex items-start gap-4"
+            >
+              <div className="bg-green-100 rounded-full p-2 flex-shrink-0">
+                <BookOpen className="h-5 w-5 text-green-700" />
+              </div>
+              <div>
+                <p className="font-semibold">Editor</p>
+                <p className="text-sm text-gray-500">
+                  I manage a journal. I need to find reviewers, screen manuscripts for
+                  integrity, and track submissions.
+                </p>
+              </div>
+            </button>
+            <button
+              onClick={() => handleSelectRole("PUBLISHER")}
+              disabled={isSubmitting}
+              className="w-full p-4 rounded-lg border-2 text-left hover:border-purple-300 hover:bg-purple-50 transition-colors flex items-start gap-4"
+            >
+              <div className="bg-purple-100 rounded-full p-2 flex-shrink-0">
+                <Briefcase className="h-5 w-5 text-purple-700" />
+              </div>
+              <div>
+                <p className="font-semibold">Publisher</p>
+                <p className="text-sm text-gray-500">
+                  I manage multiple journals and editorial teams. I need organization-level
+                  oversight across all publications.
+                </p>
+              </div>
+            </button>
+
+            <Button variant="outline" onClick={() => setStep("welcome")} className="mt-2">
+              Back
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {step === "favourites" && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                Step 2
+              </Badge>
+            </div>
+            <CardTitle className="flex items-center gap-2">
+              <Heart className="h-5 w-5 text-red-500" />
+              Add Your Target Journals
+            </CardTitle>
+            <CardDescription>
+              Which journals do you regularly submit to? Adding them here helps PubliMentor
+              match formatting guidelines automatically. You can add more later.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Input
+                placeholder="e.g., The Lancet, PLOS ONE, Nature..."
+                value={favouriteInput}
+                onChange={(e) => setFavouriteInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddFavourite()}
+              />
+              <Button
+                onClick={handleAddFavourite}
+                disabled={isSubmitting || !favouriteInput.trim()}
+              >
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+              </Button>
+            </div>
+
+            {savedFavourites.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {savedFavourites.map((name) => (
+                  <Badge key={name} variant="secondary" className="px-3 py-1">
+                    <Heart className="h-3 w-3 mr-1 text-red-400" />
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" onClick={() => setStep("role")}>
+                Back
+              </Button>
+              <Button
+                onClick={() => setStep("done")}
+                className="flex-1"
+              >
+                {savedFavourites.length > 0 ? "Continue" : "Skip for now"}
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {step === "publisher" && (
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                Step 1 of 3
+                Step 2
               </Badge>
             </div>
             <CardTitle className="flex items-center gap-2">
@@ -277,7 +466,7 @@ export function Onboarding({ userName }: OnboardingProps) {
             <div className="flex gap-3">
               <Button
                 variant="outline"
-                onClick={() => setStep("welcome")}
+                onClick={() => setStep("role")}
               >
                 Back
               </Button>
@@ -303,7 +492,7 @@ export function Onboarding({ userName }: OnboardingProps) {
           <CardHeader>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                Step 2 of 3
+                Step 3
               </Badge>
             </div>
             <CardTitle className="flex items-center gap-2">
@@ -390,68 +579,119 @@ export function Onboarding({ userName }: OnboardingProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-3">
-              <Button
-                variant="outline"
-                className="h-auto py-4 flex-col items-start text-left"
-                onClick={() =>
-                  router.push(
-                    createdJournalSlug
-                      ? `/dashboard/journals/${createdJournalSlug}/submissions/new`
-                      : "/dashboard/manuscripts"
-                  )
-                }
-              >
-                <Upload className="h-5 w-5 mb-1 text-blue-600" />
-                <span className="font-medium">Upload a Manuscript</span>
-                <span className="text-xs text-gray-500">
-                  Upload a PDF and see metadata extraction
-                </span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-auto py-4 flex-col items-start text-left"
-                onClick={() =>
-                  router.push(
-                    createdJournalSlug
-                      ? `/dashboard/journals/${createdJournalSlug}/reviewers`
-                      : "/dashboard"
-                  )
-                }
-              >
-                <BookOpen className="h-5 w-5 mb-1 text-blue-600" />
-                <span className="font-medium">Find Reviewers</span>
-                <span className="text-xs text-gray-500">
-                  Discover expert reviewers from PubMed & OpenAlex
-                </span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-auto py-4 flex-col items-start text-left"
-                onClick={() =>
-                  router.push(
-                    createdJournalSlug
-                      ? `/dashboard/journals/${createdJournalSlug}/integrity`
-                      : "/dashboard"
-                  )
-                }
-              >
-                <Shield className="h-5 w-5 mb-1 text-blue-600" />
-                <span className="font-medium">Run Integrity Check</span>
-                <span className="text-xs text-gray-500">
-                  Screen text for tortured phrases and validate references
-                </span>
-              </Button>
-              <Button
-                variant="outline"
-                className="h-auto py-4 flex-col items-start text-left"
-                onClick={() => router.push("/dashboard")}
-              >
-                <Building className="h-5 w-5 mb-1 text-blue-600" />
-                <span className="font-medium">Go to Dashboard</span>
-                <span className="text-xs text-gray-500">
-                  View your journals and manage your workspace
-                </span>
-              </Button>
+              {selectedRole === "AUTHOR" ? (
+                <>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() => router.push("/dashboard/manuscripts")}
+                  >
+                    <Upload className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Upload a Manuscript</span>
+                    <span className="text-xs text-gray-500">
+                      Upload a PDF and check formatting
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() => router.push("/dashboard/favourites")}
+                  >
+                    <Heart className="h-5 w-5 mb-1 text-red-500" />
+                    <span className="font-medium">Manage Favourites</span>
+                    <span className="text-xs text-gray-500">
+                      Add more journals you submit to
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() => router.push("/dashboard/tools/integrity")}
+                  >
+                    <Shield className="h-5 w-5 mb-1 text-purple-600" />
+                    <span className="font-medium">Integrity Check</span>
+                    <span className="text-xs text-gray-500">
+                      Screen for tortured phrases
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() => router.push("/dashboard")}
+                  >
+                    <Building className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Go to Dashboard</span>
+                    <span className="text-xs text-gray-500">
+                      View your workspace
+                    </span>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() =>
+                      router.push(
+                        createdJournalSlug
+                          ? `/dashboard/journals/${createdJournalSlug}/submissions/new`
+                          : "/dashboard/manuscripts"
+                      )
+                    }
+                  >
+                    <Upload className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Upload a Manuscript</span>
+                    <span className="text-xs text-gray-500">
+                      Upload a PDF and see metadata extraction
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() =>
+                      router.push(
+                        createdJournalSlug
+                          ? `/dashboard/journals/${createdJournalSlug}/reviewers`
+                          : "/dashboard/tools/reviewers"
+                      )
+                    }
+                  >
+                    <BookOpen className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Find Reviewers</span>
+                    <span className="text-xs text-gray-500">
+                      Discover expert reviewers from PubMed &amp; OpenAlex
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() =>
+                      router.push(
+                        createdJournalSlug
+                          ? `/dashboard/journals/${createdJournalSlug}/integrity`
+                          : "/dashboard/tools/integrity"
+                      )
+                    }
+                  >
+                    <Shield className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Run Integrity Check</span>
+                    <span className="text-xs text-gray-500">
+                      Screen text for tortured phrases and validate references
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-auto py-4 flex-col items-start text-left"
+                    onClick={() => router.push("/dashboard")}
+                  >
+                    <Building className="h-5 w-5 mb-1 text-blue-600" />
+                    <span className="font-medium">Go to Dashboard</span>
+                    <span className="text-xs text-gray-500">
+                      View your journals and manage your workspace
+                    </span>
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -16,6 +16,8 @@ import {
   Shield,
   Upload,
   X,
+  Heart,
+  Wrench,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -31,6 +33,15 @@ function SidebarContent({ journalSlug, onClose }: SidebarProps) {
     { href: "/dashboard", label: "Dashboard", icon: Home },
     { href: "/dashboard/manuscripts", label: "Manuscripts", icon: Upload },
     { href: "/dashboard/journals", label: "My Journals", icon: BookOpen },
+    { href: "/dashboard/favourites", label: "Favourite Journals", icon: Heart },
+  ];
+
+  // Standalone tools — accessible without a journal context
+  const toolNavItems = [
+    { href: "/dashboard/tools/reviewers", label: "Find Reviewers", icon: Search },
+    { href: "/dashboard/tools/coi", label: "COI Screening", icon: AlertTriangle },
+    { href: "/dashboard/tools/integrity", label: "Integrity Check", icon: Shield },
+    { href: "/dashboard/tools/format", label: "Format Check", icon: CheckSquare },
   ];
 
   const journalNavItems = journalSlug
@@ -78,6 +89,33 @@ function SidebarContent({ journalSlug, onClose }: SidebarProps) {
           </h3>
           <ul className="space-y-1">
             {mainNavItems.map((item) => (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  onClick={onClose}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                    pathname === item.href
+                      ? "bg-blue-50 text-blue-700 font-medium"
+                      : "text-gray-700 hover:bg-gray-100"
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Standalone Tools section — always visible */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            <Wrench className="h-3 w-3 inline mr-1" />
+            Tools
+          </h3>
+          <ul className="space-y-1">
+            {toolNavItems.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}

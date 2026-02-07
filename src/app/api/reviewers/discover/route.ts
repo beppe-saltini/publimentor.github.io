@@ -84,6 +84,8 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  // Gender diversity
+  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 // Helper to delay between API calls
@@ -593,6 +595,19 @@ export async function POST(request: Request) {
       ? Math.round(candidatesWithHIndex.reduce((sum, c) => sum + (c.hIndex || 0), 0) / candidatesWithHIndex.length)
       : null;
 
+    // STEP 6: Infer gender diversity from first names
+    for (const c of candidates) {
+      if (c.firstName) {
+        c.inferredGender = openAlex.inferGender(c.firstName);
+      }
+    }
+
+    // Gender diversity stats
+    const genderCounts = { likely_female: 0, likely_male: 0, unknown: 0 };
+    for (const c of candidates) {
+      genderCounts[c.inferredGender || "unknown"]++;
+    }
+
     return NextResponse.json({
       reviewers: candidates,
       summary: {
@@ -609,6 +624,7 @@ export async function POST(request: Request) {
         diversity: {
           countries,
           countryCount: countries.length,
+          gender: genderCounts,
         },
         avgPublications: avgPubs,
         avgSeniorAuthorships: avgSenior,
