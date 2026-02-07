@@ -16,7 +16,7 @@
     "db:studio": "prisma studio",
     "review:arch": "bash .github/scripts/architecture-review.sh .",
     "build:verify": "bash scripts/verify-deploy.sh",
-    "deploy": "vercel --prod"
+    "deploy": "node scripts/generate-build-info.js && vercel --prod"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
