@@ -57,7 +57,7 @@ export const createPublisherSchema = z.object({
   slug: slugSchema,
   website: z.string().url().optional(),
   logoUrl: z.string().url().optional(),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const updatePublisherSchema = createPublisherSchema.partial();
