@@ -1,29 +1,26 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { auth } from "@/lib/auth";
-import { SECURITY_HEADERS, addSecurityHeaders } from "@/lib/security-headers";
+import NextAuth from "next-auth";
+import { authConfig, PROTECTED_ROUTES } from "@/lib/auth.config";
+import { addSecurityHeaders } from "@/lib/security-headers";
 
-// Routes that require authentication
-const PROTECTED_ROUTES = [
-  "/dashboard",
-  "/api/manuscripts",
-  "/api/publishers",
-  "/api/journals",
-  "/api/reviewers",
-  "/api/coi",
-  "/api/integrity",
-  "/api/files",
-];
+/**
+ * Edge-compatible middleware.
+ *
+ * Uses authConfig (not auth.ts) to avoid pulling Node.js-only
+ * dependencies (Prisma, bcryptjs, crypto) into the Edge Runtime.
+ * The NextAuth `authorized` callback in authConfig handles the
+ * actual auth gate; this wrapper adds security headers and CORS.
+ */
+
+const { auth } = NextAuth(authConfig);
 
 /**
  * Allowed CORS origins — only explicit, validated URLs are accepted.
- * SECURITY: We validate that NEXTAUTH_URL is a proper origin (scheme + host)
- * and reject wildcards or overly broad values.
  */
 function buildCorsOrigins(): Set<string> {
   const origins: string[] = [];
 
-  // Always allow localhost in development
   if (process.env.NODE_ENV !== "production") {
     origins.push("http://localhost:3000");
   }
@@ -32,14 +29,11 @@ function buildCorsOrigins(): Set<string> {
   if (nextAuthUrl) {
     try {
       const parsed = new URL(nextAuthUrl);
-      // Only allow http(s) origins; strip trailing path
       if (parsed.protocol === "http:" || parsed.protocol === "https:") {
         origins.push(parsed.origin);
-      } else {
-        console.warn("[CORS] NEXTAUTH_URL has unsupported protocol, ignoring:", parsed.protocol);
       }
     } catch {
-      console.warn("[CORS] NEXTAUTH_URL is not a valid URL, ignoring");
+      // ignore invalid URL
     }
   }
 
@@ -48,14 +42,14 @@ function buildCorsOrigins(): Set<string> {
 
 const CORS_ORIGINS = buildCorsOrigins();
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+
   // --- CORS preflight ---
-  if (request.method === "OPTIONS" && pathname.startsWith("/api/")) {
-    const origin = request.headers.get("origin") || "";
+  if (req.method === "OPTIONS" && pathname.startsWith("/api/")) {
+    const origin = req.headers.get("origin") || "";
     const response = new NextResponse(null, { status: 204 });
-    
+
     if (CORS_ORIGINS.has(origin)) {
       response.headers.set("Access-Control-Allow-Origin", origin);
       response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -65,45 +59,25 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Add security headers to all responses (single source of truth)
+  // Build response with security headers
   const response = NextResponse.next();
   addSecurityHeaders(response);
 
   // --- CORS headers for API responses ---
   if (pathname.startsWith("/api/")) {
-    const origin = request.headers.get("origin") || "";
+    const origin = req.headers.get("origin") || "";
     if (CORS_ORIGINS.has(origin)) {
       response.headers.set("Access-Control-Allow-Origin", origin);
       response.headers.set("Access-Control-Allow-Credentials", "true");
     }
   }
-  
-  // Check authentication for protected routes
-  const isProtectedRoute = PROTECTED_ROUTES.some((route) => 
-    pathname.startsWith(route)
-  );
-  
-  if (isProtectedRoute) {
-    const session = await auth();
-    
-    if (!session?.user) {
-      // For API routes, return 401
-      if (pathname.startsWith("/api/")) {
-        return NextResponse.json(
-          { error: "Unauthorized" },
-          { status: 401, headers: response.headers }
-        );
-      }
-      
-      // For pages, redirect to login
-      const loginUrl = new URL("/login", request.url);
-      loginUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(loginUrl);
-    }
-  }
-  
+
+  // Auth gating is handled by the `authorized` callback in authConfig.
+  // If the user is not logged in on a protected route, NextAuth returns
+  // a redirect to the signIn page automatically.
+
   return response;
-}
+});
 
 export const config = {
   matcher: [

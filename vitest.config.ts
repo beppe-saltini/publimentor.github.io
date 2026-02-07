@@ -7,10 +7,26 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx"],
     exclude: ["node_modules", ".next", "dist"],
-    // Use jsdom for React component tests (.tsx)
-    environmentMatchGlobs: [
-      ["src/**/*.test.tsx", "jsdom"],
-      ["src/**/*.spec.tsx", "jsdom"],
+    // Use projects to assign jsdom environment to React component tests (.tsx)
+    projects: [
+      {
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
+          exclude: ["node_modules", ".next", "dist"],
+          setupFiles: ["./src/test/setup.ts"],
+        },
+      },
+      {
+        test: {
+          name: "jsdom",
+          environment: "jsdom",
+          include: ["src/**/*.test.tsx", "src/**/*.spec.tsx"],
+          exclude: ["node_modules", ".next", "dist"],
+          setupFiles: ["./src/test/setup.ts"],
+        },
+      },
     ],
     coverage: {
       provider: "v8",

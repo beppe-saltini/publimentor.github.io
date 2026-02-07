@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker
-  output: "standalone",
+  // Enable standalone output for Docker; skip on Vercel (uses its own builder)
+  output: process.env.VERCEL ? undefined : "standalone",
   
   // Mark pdf-parse as external to avoid bundling issues
   serverExternalPackages: ["pdf-parse"],
