@@ -98,6 +98,7 @@ class RedisRateLimitStore implements RateLimitStore {
   async check(key: string, config: RateLimitConfig): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
     // Dynamic import to avoid requiring ioredis when not using Redis
     try {
+      // @ts-expect-error - ioredis is an optional dependency, only used when REDIS_URL is configured
       const { default: Redis } = await import("ioredis");
       const redis = new Redis(this.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
       await redis.connect();

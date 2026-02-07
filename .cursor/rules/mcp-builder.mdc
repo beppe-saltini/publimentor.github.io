@@ -1,0 +1,174 @@
+---
+description: Guide for creating MCP (Model Context Protocol) servers that enable LLMs to interact with external services. Use when building MCP servers, tool integrations, or API connectors for Claude, Cursor, or other LLM clients.
+globs:
+  - "**/mcp/**"
+  - "**/mcp-server*/**"
+  - "**/*-mcp-server*"
+  - "**/*_mcp*"
+alwaysApply: false
+---
+
+# MCP Server Development Standards
+
+## Overview
+
+Create MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Quality is measured by how well the server enables LLMs to accomplish real-world tasks.
+
+## Process
+
+### Phase 1: Research & Planning
+
+1. **Understand Modern MCP Design**
+   - Balance comprehensive API coverage with specialized workflow tools
+   - Clear, descriptive tool names with consistent prefixes (e.g., `github_create_issue`)
+   - Design tools that return focused, relevant data
+   - Actionable error messages that guide agents toward solutions
+
+2. **Study MCP Protocol Documentation**
+   - Start with sitemap: `https://modelcontextprotocol.io/sitemap.xml`
+   - Fetch specific pages with `.md` suffix for markdown format
+   - Review: specification overview, transport mechanisms, tool/resource/prompt definitions
+
+3. **Recommended Stack**
+   - **Language**: TypeScript (best SDK support, AI models generate excellent TS code)
+   - **Transport**: Streamable HTTP for remote servers (stateless JSON), stdio for local servers
+   - **TypeScript SDK**: `https://raw.githubusercontent.com/modelcontextprotocol/typescript-sdk/main/README.md`
+   - **Python SDK**: `https://raw.githubusercontent.com/modelcontextprotocol/python-sdk/main/README.md`
+
+4. **Plan Implementation**
+   - Review service API docs for endpoints, auth, data models
+   - Prioritize comprehensive API coverage
+   - List endpoints starting with most common operations
+
+### Phase 2: Implementation
+
+#### Server Naming Conventions
+- **Python**: `{service}_mcp` (e.g., `slack_mcp`)
+- **TypeScript**: `{service}-mcp-server` (e.g., `slack-mcp-server`)
+
+#### Tool Naming
+- Use `snake_case` with service prefix
+- Format: `{service}_{action}_{resource}`
+- Examples: `slack_send_message`, `github_create_issue`, `jira_list_projects`
+- Be action-oriented: start with verbs (get, list, search, create, update, delete)
+
+#### Tool Implementation Requirements
+
+**Input Schema:**
+- Use Zod (TypeScript) or Pydantic (Python) for validation
+- Include constraints and clear descriptions
+- Add examples in field descriptions
+
+**Output Schema:**
+- Define `outputSchema` where possible for structured data
+- Use `structuredContent` in tool responses
+- Support both JSON and Markdown response formats
+
+**Tool Annotations (MANDATORY):**
+```typescript
+annotations: {
+  readOnlyHint: true/false,      // Tool does not modify its environment
+  destructiveHint: true/false,   // Tool may perform destructive updates
+  idempotentHint: true/false,    // Repeated calls with same args = no additional effect
+  openWorldHint: true/false,     // Tool interacts with external entities
+}
+```
+
+**Implementation Requirements:**
+- Async/await for all I/O operations
+- Proper error handling with actionable messages
+- Support pagination where applicable (default 20-50 items)
+- Return both text content and structured data
+
+#### Response Format Standards
+
+**JSON Format** (`response_format="json"`):
+- Machine-readable structured data with all fields and metadata
+- Consistent field names and types
+
+**Markdown Format** (`response_format="markdown"`, default):
+- Human-readable with headers, lists, formatting
+- Convert timestamps to human-readable format
+- Show display names with IDs in parentheses
+
+#### Pagination Standards
+- Always respect `limit` parameter
+- Return: `has_more`, `next_offset`/`next_cursor`, `total_count`
+- Default to 20-50 items
+- Never load all results into memory
+
+```json
+{
+  "total": 150,
+  "count": 20,
+  "offset": 0,
+  "items": [],
+  "has_more": true,
+  "next_offset": 20
+}
+```
+
+#### Transport Selection
+
+| Criterion | stdio | Streamable HTTP |
+|-----------|-------|-----------------|
+| Deployment | Local | Remote |
+| Clients | Single | Multiple |
+| Complexity | Low | Medium |
+| Real-time | No | Yes |
+
+- stdio: Local integrations, desktop apps, single-user. Do NOT log to stdout (use stderr)
+- Streamable HTTP: Remote servers, multi-client, cloud deployment
+
+#### Security Requirements
+- Store API keys in environment variables, NEVER in code
+- Validate keys on server startup with clear error messages
+- Sanitize file paths (prevent directory traversal)
+- Validate URLs and external identifiers
+- Check parameter sizes and ranges
+- Prevent command injection in system calls
+- Use Zod/Pydantic schema validation for ALL inputs
+- Don't expose internal errors to clients
+- For local HTTP servers: enable DNS rebinding protection, validate Origin header, bind to 127.0.0.1
+
+#### Error Handling Pattern
+```typescript
+try {
+  const result = performOperation();
+  return { content: [{ type: "text", text: result }] };
+} catch (error) {
+  return {
+    isError: true,
+    content: [{
+      type: "text",
+      text: `Error: ${error.message}. Try using filter='active_only' to reduce results.`
+    }]
+  };
+}
+```
+
+### Phase 3: Review & Test
+
+1. **Code Quality**: No duplication (DRY), consistent error handling, full type coverage, clear tool descriptions
+2. **TypeScript**: `npm run build` → test with MCP Inspector: `npx @modelcontextprotocol/inspector`
+3. **Python**: `python -m py_compile your_server.py` → test with MCP Inspector
+
+### Phase 4: Create Evaluations
+
+Create 10 evaluation questions that are:
+- Independent (not dependent on other questions)
+- Read-only (non-destructive operations only)
+- Complex (requiring multiple tool calls)
+- Realistic (real use cases humans care about)
+- Verifiable (single clear answer, string comparison)
+- Stable (answer won't change over time)
+
+Output format:
+```xml
+<evaluation>
+  <qa_pair>
+    <question>Complex, multi-step question here</question>
+    <answer>Verifiable answer</answer>
+  </qa_pair>
+</evaluation>
+```
