@@ -1,7 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 
 export default async function JournalLayout({
   children,
@@ -35,11 +34,11 @@ export default async function JournalLayout({
   }
 
   return (
-    <DashboardShell journalSlug={slug}>
+    <>
       <div className="border-b bg-white -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 py-3 mb-6">
         <h2 className="text-lg font-semibold text-gray-900">{journal.name}</h2>
       </div>
       {children}
-    </DashboardShell>
+    </>
   );
 }

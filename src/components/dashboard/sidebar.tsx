@@ -21,13 +21,20 @@ import {
 } from "lucide-react";
 
 interface SidebarProps {
-  journalSlug?: string;
   open?: boolean;
   onClose?: () => void;
 }
 
-function SidebarContent({ journalSlug, onClose }: SidebarProps) {
+/** Extract journal slug from /dashboard/journals/[slug]/... paths */
+function useJournalSlug(): string | undefined {
   const pathname = usePathname();
+  const match = pathname.match(/^\/dashboard\/journals\/([^/]+)/);
+  return match ? match[1] : undefined;
+}
+
+function SidebarContent({ onClose }: SidebarProps) {
+  const pathname = usePathname();
+  const journalSlug = useJournalSlug();
 
   const mainNavItems = [
     { href: "/dashboard", label: "Dashboard", icon: Home },
@@ -169,10 +176,10 @@ function SidebarContent({ journalSlug, onClose }: SidebarProps) {
 /**
  * Desktop sidebar - hidden on mobile, visible on lg+
  */
-export function Sidebar({ journalSlug }: SidebarProps) {
+export function Sidebar() {
   return (
     <aside className="hidden lg:block w-64 bg-white border-r min-h-screen p-4 flex-shrink-0">
-      <SidebarContent journalSlug={journalSlug} />
+      <SidebarContent />
     </aside>
   );
 }
@@ -180,7 +187,7 @@ export function Sidebar({ journalSlug }: SidebarProps) {
 /**
  * Mobile sidebar - renders as a slide-over drawer on small screens
  */
-export function MobileSidebar({ journalSlug, open, onClose }: SidebarProps) {
+export function MobileSidebar({ open, onClose }: SidebarProps) {
   if (!open) return null;
 
   return (
@@ -198,7 +205,7 @@ export function MobileSidebar({ journalSlug, open, onClose }: SidebarProps) {
         aria-modal="true"
         aria-label="Navigation menu"
       >
-        <SidebarContent journalSlug={journalSlug} onClose={onClose} />
+        <SidebarContent onClose={onClose} />
       </aside>
     </>
   );
