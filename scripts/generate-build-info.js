@@ -1,27 +1,17 @@
 /**
  * Generates src/generated/build-info.ts with git SHA and commit date.
  *
- * Priority:
- *   1. If the file already exists with a real SHA (not "dev"), keep it.
- *      This covers the Vercel deploy case where the file was generated
- *      locally and uploaded alongside the source.
- *   2. Read from local git (available on dev machines).
- *   3. Fall back to VERCEL_GIT_COMMIT_SHA env var + build time.
+ * Strategy:
+ *   - If git is available (local machine): always regenerate with fresh data.
+ *   - If git is NOT available (Vercel build): keep the pre-generated file
+ *     that was uploaded alongside the source. If no file exists, fall back
+ *     to VERCEL_GIT_COMMIT_SHA + build timestamp.
  */
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const outFile = path.join(__dirname, "..", "src", "generated", "build-info.ts");
-
-// If a pre-generated file already has a real SHA, don't overwrite it.
-if (fs.existsSync(outFile)) {
-  const existing = fs.readFileSync(outFile, "utf-8");
-  if (existing.includes('BUILD_VERSION') && !existing.includes('"dev"')) {
-    console.log("[build-info] Using pre-generated build-info.ts");
-    return;
-  }
-}
 
 function git(cmd) {
   try {
@@ -32,14 +22,24 @@ function git(cmd) {
   }
 }
 
-const sha =
-  git("rev-parse --short HEAD") ||
-  (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) ||
-  "dev";
+const hasGit = git("rev-parse --short HEAD") !== null;
 
-const commitDate =
-  git("log -1 --format=%cI") ||
-  new Date().toISOString();
+// On Vercel (no git): preserve the pre-generated file if it exists with a real SHA
+if (!hasGit && fs.existsSync(outFile)) {
+  const existing = fs.readFileSync(outFile, "utf-8");
+  if (existing.includes("BUILD_VERSION") && !existing.includes('"dev"')) {
+    console.log("[build-info] Using pre-generated build-info.ts (no git available)");
+    return;
+  }
+}
+
+const sha = hasGit
+  ? git("rev-parse --short HEAD")
+  : (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) || "dev";
+
+const commitDate = hasGit
+  ? git("log -1 --format=%cI")
+  : new Date().toISOString();
 
 const outDir = path.dirname(outFile);
 fs.mkdirSync(outDir, { recursive: true });
