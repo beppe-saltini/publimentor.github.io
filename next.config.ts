@@ -1,10 +1,22 @@
 import type { NextConfig } from "next";
+import { execSync } from "child_process";
+
+function git(cmd: string, fallback: string): string {
+  try {
+    return execSync(`git ${cmd}`, { encoding: "utf-8" }).trim();
+  } catch {
+    return fallback;
+  }
+}
+
+const GIT_SHA = git("rev-parse --short HEAD", "dev");
+const GIT_DATE = git("log -1 --format=%cI", new Date().toISOString()); // ISO 8601 commit date
 
 const nextConfig: NextConfig = {
-  // Inject build version and timestamp at build time
+  // Inject git version and last-commit timestamp at build time
   env: {
-    NEXT_PUBLIC_BUILD_VERSION: process.env.npm_package_version || "0.1.0",
-    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+    NEXT_PUBLIC_BUILD_VERSION: GIT_SHA,
+    NEXT_PUBLIC_BUILD_TIME: GIT_DATE,
   },
 
   // Enable standalone output for Docker; skip on Vercel (uses its own builder)

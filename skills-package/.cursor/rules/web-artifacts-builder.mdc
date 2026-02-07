@@ -1,0 +1,107 @@
+---
+description: Suite of tools for creating elaborate, multi-component web artifacts using React, Tailwind CSS, and shadcn/ui. Use for complex frontend applications requiring state management, routing, or component libraries - not for simple single-file HTML/JSX.
+globs:
+  - "**/artifacts/**"
+  - "**/bundle.html"
+  - "**/web-artifact*/**"
+alwaysApply: false
+---
+
+# Web Artifacts Builder
+
+Build powerful, self-contained frontend artifacts that bundle into a single HTML file.
+
+**Stack**: React 18 + TypeScript + Vite + Parcel (bundling) + Tailwind CSS 3.4.1 + shadcn/ui
+
+## Design Principles
+
+**CRITICAL**: Avoid "AI slop" aesthetics — no excessive centered layouts, purple gradients, uniform rounded corners, or Inter font. Every artifact should feel intentionally designed.
+
+## Workflow
+
+### Step 1: Initialize Project
+
+```bash
+# Create a new React project with full toolchain
+npx create-vite <project-name> --template react-ts
+cd <project-name>
+npm install
+```
+
+Configure the project with:
+- ✅ React + TypeScript (via Vite)
+- ✅ Tailwind CSS 3.4.1 with shadcn/ui theming system
+- ✅ Path aliases (`@/`) configured in tsconfig and vite.config
+- ✅ shadcn/ui components installed (`npx shadcn@latest init` then add needed components)
+- ✅ All Radix UI dependencies included
+- ✅ Parcel configured for bundling
+
+### Step 2: Develop the Artifact
+
+Build the application using React components, shadcn/ui primitives, and Tailwind CSS. Structure:
+
+```
+src/
+├── components/
+│   ├── ui/          # shadcn/ui primitives
+│   └── features/    # Feature-specific components
+├── lib/
+│   └── utils.ts     # Utility functions (cn helper, etc.)
+├── App.tsx          # Main application component
+└── main.tsx         # Entry point
+```
+
+### Step 3: Bundle to Single HTML
+
+To create a self-contained artifact with all JS, CSS, and dependencies inlined:
+
+```bash
+# Install bundling dependencies
+npm install --save-dev parcel @parcel/config-default parcel-resolver-tspaths html-inline
+
+# Create .parcelrc for path alias support
+cat > .parcelrc << 'EOF'
+{
+  "extends": "@parcel/config-default",
+  "resolvers": ["parcel-resolver-tspaths", "..."]
+}
+EOF
+
+# Build and inline
+npx parcel build index.html --no-source-maps
+npx html-inline -i dist/index.html -o bundle.html -b dist
+```
+
+This creates `bundle.html` — a self-contained artifact with everything inlined.
+
+### Step 4: Share the Artifact
+
+Present the bundled HTML file to the user or deploy it.
+
+### Step 5: Test (Optional)
+
+Use Playwright, Puppeteer, or browser dev tools to verify functionality. Avoid upfront testing unless specifically requested — present first, iterate later.
+
+## Component Reference
+
+**shadcn/ui components**: https://ui.shadcn.com/docs/components
+
+Pre-install commonly needed components:
+```bash
+npx shadcn@latest add button card dialog dropdown-menu input label select separator sheet sidebar skeleton table tabs textarea toast tooltip
+```
+
+## Key Patterns
+
+### State Management
+- Use React hooks (`useState`, `useReducer`) for component state
+- Use Zustand for global state if needed
+- Use TanStack Query for server state
+
+### Routing (if needed)
+- Use React Router for multi-page artifacts
+- Keep routing simple — hash-based routing works well for single-file bundles
+
+### Responsive Design
+- Mobile-first with Tailwind breakpoints
+- Test at common breakpoints: 375px, 768px, 1024px, 1440px
