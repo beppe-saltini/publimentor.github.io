@@ -19,6 +19,7 @@ export default function StandaloneReviewerFinderPage() {
   const [journals, setJournals] = useState<JournalOption[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [loading, setLoading] = useState(true);
+  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
     const fetchJournals = async () => {
@@ -26,6 +27,12 @@ export default function StandaloneReviewerFinderPage() {
         const res = await fetch("/api/journals");
         const data = await res.json();
         if (res.ok && data.journals) {
+          // If exactly one journal, redirect immediately without ever showing the picker
+          if (data.journals.length === 1) {
+            setRedirecting(true);
+            router.replace(`/dashboard/journals/${data.journals[0].slug}/reviewers`);
+            return;
+          }
           setJournals(data.journals);
           if (data.journals.length === 1) {
             setSelectedSlug(data.journals[0].slug);
@@ -38,7 +45,7 @@ export default function StandaloneReviewerFinderPage() {
       }
     };
     fetchJournals();
-  }, []);
+  }, [router]);
 
   const handleGo = () => {
     if (selectedSlug) {
@@ -46,12 +53,14 @@ export default function StandaloneReviewerFinderPage() {
     }
   };
 
-  // If user has exactly one journal, redirect immediately
-  useEffect(() => {
-    if (!loading && journals.length === 1) {
-      router.push(`/dashboard/journals/${journals[0].slug}/reviewers`);
-    }
-  }, [loading, journals, router]);
+  // Show only a spinner while loading or redirecting
+  if (loading || redirecting) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-xl mx-auto py-8">
@@ -67,11 +76,7 @@ export default function StandaloneReviewerFinderPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-            </div>
-          ) : journals.length === 0 ? (
+          {journals.length === 0 ? (
             <div className="text-center py-6 space-y-3">
               <BookOpen className="h-10 w-10 text-gray-400 mx-auto" />
               <p className="text-sm text-gray-600">

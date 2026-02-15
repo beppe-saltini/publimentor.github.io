@@ -258,8 +258,41 @@ function ReviewerSearchContent() {
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
 
-  // Thumbs up/down flagging state
-  const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | "down" | null>>({});
+  // Thumbs up flagging state
+  const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | null>>({});
+
+  // Rejected reviewer names — persisted per manuscript so they don't reappear on new searches
+  const [rejectedNames, setRejectedNames] = useState<Set<string>>(new Set());
+
+  // Build a localStorage key scoped to manuscript (or journal as fallback)
+  const rejectedKey = selectedManuscriptId
+    ? `publimentor_rejected_${selectedManuscriptId}`
+    : `publimentor_rejected_journal_${slug}`;
+
+  // Load rejected names from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(rejectedKey);
+      if (stored) {
+        setRejectedNames(new Set(JSON.parse(stored)));
+      } else {
+        setRejectedNames(new Set());
+      }
+    } catch {
+      setRejectedNames(new Set());
+    }
+  }, [rejectedKey]);
+
+  const addRejectedName = (name: string) => {
+    setRejectedNames(prev => {
+      const updated = new Set(prev);
+      updated.add(name.toLowerCase().trim());
+      localStorage.setItem(rejectedKey, JSON.stringify([...updated]));
+      return updated;
+    });
+  };
+
+  const isRejected = (name: string) => rejectedNames.has(name.toLowerCase().trim());
 
   // Reviewer responsiveness scoring (persisted in localStorage)
   const [reviewerScores, setReviewerScores] = useState<Record<string, { score: 1 | 2 | 3 | 4 | 5; note?: string }>>({});
@@ -287,36 +320,56 @@ function ReviewerSearchContent() {
     });
   };
 
-  const toggleFlag = (reviewerId: string, direction: "up" | "down") => {
+  const toggleFlag = (reviewerId: string, reviewerName: string, direction: "up" | "down") => {
+    if (direction === "down") {
+      // Persist the rejection by name so they won't reappear on future searches
+      addRejectedName(reviewerName);
+      // Remove the reviewer from both lists
+      setCandidateReviewers(prev => prev.filter(r => r.id !== reviewerId));
+      setDiscoveryResult(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          reviewers: prev.reviewers.filter(r => r.id !== reviewerId),
+        };
+      });
+      toast.success("Reviewer removed — won\u2019t appear again for this manuscript");
+      return;
+    }
+    // Thumbs up: toggle visual flag
     setFlaggedReviewers(prev => ({
       ...prev,
       [reviewerId]: prev[reviewerId] === direction ? null : direction,
     }));
   };
 
-  // Export flagged reviewers as CSV
+  // Export reviewers as CSV (rejected reviewers are excluded)
   const exportFlaggedReviewers = () => {
     const allReviewers = [
-      ...(discoveryResult?.reviewers || []).map(r => ({
-        name: r.name,
-        affiliation: r.affiliation || "",
-        country: r.country || "",
-        hIndex: r.hIndex ?? "",
-        publications: r.publicationCount,
-        flag: flaggedReviewers[r.id] || "none",
-        coiStatus: r.coiSummary?.worstSeverity || "clear",
-        responsiveness: reviewerScores[r.name]?.score || "",
-      })),
-      ...(candidateReviewers || []).map(r => ({
-        name: r.name,
-        affiliation: r.affiliation || "",
-        country: "",
-        hIndex: r.hIndex ?? "",
-        publications: r.worksCount || 0,
-        flag: flaggedReviewers[r.id] || "none",
-        coiStatus: r.coiSummary?.worstSeverity || "clear",
-        responsiveness: reviewerScores[r.name]?.score || "",
-      })),
+      ...(discoveryResult?.reviewers || [])
+        .filter(r => !isRejected(r.name))
+        .map(r => ({
+          name: r.name,
+          affiliation: r.affiliation || "",
+          country: r.country || "",
+          hIndex: r.hIndex ?? "",
+          publications: r.publicationCount,
+          flag: flaggedReviewers[r.id] || "none",
+          coiStatus: r.coiSummary?.worstSeverity || "clear",
+          responsiveness: reviewerScores[r.name]?.score || "",
+        })),
+      ...(candidateReviewers || [])
+        .filter(r => !isRejected(r.name))
+        .map(r => ({
+          name: r.name,
+          affiliation: r.affiliation || "",
+          country: "",
+          hIndex: r.hIndex ?? "",
+          publications: r.worksCount || 0,
+          flag: flaggedReviewers[r.id] || "none",
+          coiStatus: r.coiSummary?.worstSeverity || "clear",
+          responsiveness: reviewerScores[r.name]?.score || "",
+        })),
     ];
 
     const flaggedOnly = allReviewers.filter(r => r.flag !== "none");
@@ -375,8 +428,6 @@ function ReviewerSearchContent() {
     }
 
     setIsFindingReviewers(true);
-    setCandidateReviewers([]);
-    setCoauthorWarnings([]);
 
     try {
       const response = await fetch("/api/reviewers/find", {
@@ -394,8 +445,19 @@ function ReviewerSearchContent() {
         throw new Error(data.error || "Failed to find reviewers");
       }
 
-      setCandidateReviewers(data.reviewers);
-      setCoauthorWarnings(data.coauthors || []);
+      // Merge new reviewers into existing list (deduplicate by id, exclude rejected)
+      setCandidateReviewers(prev => {
+        const existingIds = new Set(prev.map(r => r.id));
+        const newReviewers = (data.reviewers as ReviewerCandidate[]).filter(
+          (r: ReviewerCandidate) => !existingIds.has(r.id) && !isRejected(r.name)
+        );
+        return [...prev, ...newReviewers];
+      });
+      setCoauthorWarnings(prev => {
+        const existingNames = new Set(prev.map(w => w.name));
+        const newWarnings = ((data.coauthors || []) as CoauthorWarning[]).filter((w: CoauthorWarning) => !existingNames.has(w.name));
+        return [...prev, ...newWarnings];
+      });
       
       toast.success(
         `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
@@ -415,7 +477,6 @@ function ReviewerSearchContent() {
     }
 
     setIsDiscovering(true);
-    setDiscoveryResult(null);
 
     try {
       const response = await fetch("/api/reviewers/discover", {
@@ -447,7 +508,19 @@ function ReviewerSearchContent() {
         throw new Error(data.error || "Failed to discover reviewers");
       }
 
-      setDiscoveryResult(data);
+      // Merge new reviewers into existing results (deduplicate by id, exclude rejected)
+      setDiscoveryResult(prev => {
+        const incoming = (data.reviewers as AdvancedReviewer[]).filter(
+          (r: AdvancedReviewer) => !isRejected(r.name)
+        );
+        if (!prev) return { ...data, reviewers: incoming };
+        const existingIds = new Set(prev.reviewers.map((r: AdvancedReviewer) => r.id));
+        const newReviewers = incoming.filter((r: AdvancedReviewer) => !existingIds.has(r.id));
+        return {
+          ...data,
+          reviewers: [...prev.reviewers, ...newReviewers],
+        };
+      });
       
       toast.success(
         `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
@@ -648,7 +721,7 @@ function ReviewerSearchContent() {
                     <Label htmlFor="primaryKeywords">Primary Expertise (required)</Label>
                     <Input
                       id="primaryKeywords"
-                      placeholder="e.g., tuberculosis epidemiology"
+                      placeholder="Primary research area"
                       value={primaryKeywords}
                       onChange={(e) => setPrimaryKeywords(e.target.value)}
                     />
@@ -660,7 +733,7 @@ function ReviewerSearchContent() {
                     <Label htmlFor="secondaryKeywords">Secondary Expertise (optional)</Label>
                     <Input
                       id="secondaryKeywords"
-                      placeholder="e.g., mathematical modelling, transmission dynamics"
+                      placeholder="Additional skills or methods"
                       value={secondaryKeywords}
                       onChange={(e) => setSecondaryKeywords(e.target.value)}
                     />
@@ -708,7 +781,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="authorListAdvanced">Manuscript Authors (to exclude)</Label>
                 <Textarea
                   id="authorListAdvanced"
-                  placeholder="e.g., John Smith, Jane Doe PhD, Prof. Robert Johnson"
+                  placeholder="Comma-separated author names"
                   value={authorList}
                   onChange={(e) => setAuthorList(e.target.value)}
                   rows={2}
@@ -1015,15 +1088,15 @@ function ReviewerSearchContent() {
                           <div>
                             <h4 className="font-semibold flex items-center gap-1.5">
                               {reviewer.name}
-                              {reviewer.inferredGender && reviewer.inferredGender !== "unknown" && (
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                  reviewer.inferredGender === "likely_female"
-                                    ? "bg-pink-100 text-pink-700"
-                                    : "bg-sky-100 text-sky-700"
-                                }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
-                                  {reviewer.inferredGender === "likely_female" ? "F" : "M"}
-                                </span>
-                              )}
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                reviewer.inferredGender === "likely_female"
+                                  ? "bg-pink-100 text-pink-700"
+                                  : reviewer.inferredGender === "likely_male"
+                                  ? "bg-sky-100 text-sky-700"
+                                  : "bg-gray-100 text-gray-500"
+                              }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
+                                {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
+                              </span>
                             </h4>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
                               <Building className="h-3 w-3" />
@@ -1063,7 +1136,7 @@ function ReviewerSearchContent() {
                           {/* Thumbs up/down */}
                           <div className="flex gap-1">
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "up"); }}
                               className={`p-1 rounded transition-colors ${
                                 flaggedReviewers[reviewer.id] === "up"
                                   ? "bg-green-100 text-green-700"
@@ -1074,13 +1147,9 @@ function ReviewerSearchContent() {
                               <ThumbsUp className="h-3.5 w-3.5" />
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
-                              className={`p-1 rounded transition-colors ${
-                                flaggedReviewers[reviewer.id] === "down"
-                                  ? "bg-red-100 text-red-700"
-                                  : "text-gray-300 hover:text-red-500 hover:bg-red-50"
-                              }`}
-                              title="Reject reviewer"
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "down"); }}
+                              className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
+                              title="Remove reviewer"
                             >
                               <ThumbsDown className="h-3.5 w-3.5" />
                             </button>
@@ -1340,7 +1409,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="keywords">Research Keywords (comma-separated)</Label>
                 <Input
                   id="keywords"
-                  placeholder="e.g., machine learning, neural networks, deep learning"
+                  placeholder="Comma-separated research keywords"
                   value={keywords}
                   onChange={(e) => setKeywords(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleFindReviewers()}
@@ -1354,7 +1423,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="authorListAuto">Manuscript Authors (optional - to exclude)</Label>
                 <Textarea
                   id="authorListAuto"
-                  placeholder="e.g., John Smith, Jane Doe PhD, Prof. Robert Johnson"
+                  placeholder="Comma-separated author names"
                   value={authorList}
                   onChange={(e) => setAuthorList(e.target.value)}
                   rows={2}
@@ -1449,15 +1518,15 @@ function ReviewerSearchContent() {
                             <div>
                               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                                 {reviewer.name}
-                                {reviewer.inferredGender && reviewer.inferredGender !== "unknown" && (
-                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                    reviewer.inferredGender === "likely_female"
-                                      ? "bg-pink-100 text-pink-700"
-                                      : "bg-sky-100 text-sky-700"
-                                  }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
-                                    {reviewer.inferredGender === "likely_female" ? "F" : "M"}
-                                  </span>
-                                )}
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  reviewer.inferredGender === "likely_female"
+                                    ? "bg-pink-100 text-pink-700"
+                                    : reviewer.inferredGender === "likely_male"
+                                    ? "bg-sky-100 text-sky-700"
+                                    : "bg-gray-100 text-gray-500"
+                                }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
+                                  {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
+                                </span>
                               </h4>
                               {reviewer.affiliation && (
                                 <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -1486,7 +1555,7 @@ function ReviewerSearchContent() {
                             {/* Thumbs up/down */}
                             <div className="flex gap-1">
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "up"); }}
                                 className={`p-1 rounded transition-colors ${
                                   flaggedReviewers[reviewer.id] === "up"
                                     ? "bg-green-100 text-green-700"
@@ -1497,13 +1566,9 @@ function ReviewerSearchContent() {
                                 <ThumbsUp className="h-3.5 w-3.5" />
                               </button>
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
-                                className={`p-1 rounded transition-colors ${
-                                  flaggedReviewers[reviewer.id] === "down"
-                                    ? "bg-red-100 text-red-700"
-                                    : "text-gray-300 hover:text-red-500 hover:bg-red-50"
-                                }`}
-                                title="Reject reviewer"
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "down"); }}
+                                className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
+                                title="Remove reviewer"
                               >
                                 <ThumbsDown className="h-3.5 w-3.5" />
                               </button>

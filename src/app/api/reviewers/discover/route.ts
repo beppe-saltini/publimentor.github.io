@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { searchPubMed, fetchPubMedArticles, PubMedArticle } from "@/lib/pubmed";
 import { parseAuthorList } from "@/lib/author-parser";
 import { suggestReviewersWithLLM } from "@/lib/llm";
-import { searchAuthor as searchSemanticScholar } from "@/lib/semantic-scholar";
+import { searchAuthor as searchSemanticScholar, searchAuthorByOrcid as searchSSByOrcid } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ReviewerCOISummary, type ConflictSeverity } from "@/lib/coi-detector";
 import { z } from "zod";
@@ -231,56 +231,70 @@ export async function POST(request: Request) {
               continue;
             }
 
-            // STEP 3: Enrich with H-index from Semantic Scholar and OpenAlex
+            // STEP 3: Enrich with H-index — OpenAlex first (better disambiguation),
+            // then Semantic Scholar (use ORCID when available, name+paperCount hint otherwise).
             let hIndexSS: number | null = null;
             let hIndexOA: number | null = null;
+            let oaPaperCount: number | null = null;
+            let oaOrcid: string | null = null;
             let citationCount: number | null = null;
             const sources: ("PubMed" | "SemanticScholar" | "OpenAlex")[] = ["PubMed"];
             let semanticScholarUrl: string | undefined;
             let openAlexUrl: string | undefined;
 
-            // Try Semantic Scholar
-            try {
-              const ssAuthor = await searchSemanticScholar(suggested.name);
-              if (ssAuthor && ssAuthor.hIndex > 0) {
-                hIndexSS = ssAuthor.hIndex;
-                citationCount = ssAuthor.citationCount;
-                semanticScholarUrl = ssAuthor.url;
-                sources.push("SemanticScholar");
-                console.log(`[Discover] SemanticScholar: ${suggested.name} H-index=${hIndexSS}`);
-              }
-              await delay(200); // Rate limit
-            } catch (error) {
-              console.log(`[Discover] SemanticScholar lookup failed for ${suggested.name}`);
-            }
-
-            // Try OpenAlex (often more reliable for author matching)
+            // 3a. OpenAlex FIRST — most reliable author disambiguation
             try {
               const oaAuthor = await openAlex.findAuthorByName(suggested.name);
               if (oaAuthor) {
-                if (oaAuthor.summary_stats?.h_index) {
-                  hIndexOA = oaAuthor.summary_stats.h_index;
-                }
-                if (citationCount === null || oaAuthor.cited_by_count > (citationCount || 0)) {
-                  citationCount = oaAuthor.cited_by_count;
-                }
-                openAlexUrl = oaAuthor.id; // OpenAlex URL
+                hIndexOA = oaAuthor.summary_stats?.h_index ?? null;
+                oaPaperCount = oaAuthor.works_count;
+                oaOrcid = oaAuthor.orcid?.replace("https://orcid.org/", "") || null;
+                citationCount = oaAuthor.cited_by_count;
+                openAlexUrl = oaAuthor.id;
                 sources.push("OpenAlex");
-                console.log(`[Discover] OpenAlex: ${suggested.name} H-index=${hIndexOA}`);
+                console.log(`[Discover] OpenAlex: ${suggested.name} H-index=${hIndexOA}, papers=${oaPaperCount}, ORCID=${oaOrcid || "none"}`);
               }
-              await delay(100); // Rate limit
+              await delay(100);
             } catch (error) {
               console.log(`[Discover] OpenAlex lookup failed for ${suggested.name}`);
             }
 
-            // Use the HIGHER H-index from either source (Semantic Scholar often matches wrong author)
+            // 3b. Semantic Scholar — prefer ORCID lookup, fall back to name search with paperCount hint
+            try {
+              let ssAuthor = null;
+              if (oaOrcid) {
+                ssAuthor = await searchSSByOrcid(oaOrcid);
+              }
+              if (!ssAuthor) {
+                ssAuthor = await searchSemanticScholar(suggested.name, oaPaperCount ?? undefined);
+              }
+              if (ssAuthor && ssAuthor.hIndex > 0) {
+                hIndexSS = ssAuthor.hIndex;
+                if (citationCount === null || ssAuthor.citationCount > (citationCount || 0)) {
+                  citationCount = ssAuthor.citationCount;
+                }
+                semanticScholarUrl = ssAuthor.url;
+                sources.push("SemanticScholar");
+                console.log(`[Discover] SemanticScholar: ${suggested.name} H-index=${hIndexSS}, papers=${ssAuthor.paperCount}`);
+              }
+              await delay(200);
+            } catch (error) {
+              console.log(`[Discover] SemanticScholar lookup failed for ${suggested.name}`);
+            }
+
+            // 3c. Merge H-index with cross-validation
             let hIndex: number | null = null;
-            if (hIndexSS !== null && hIndexOA !== null) {
-              hIndex = Math.max(hIndexSS, hIndexOA);
-              if (hIndexSS !== hIndexOA) {
-                console.log(`[Discover] Using higher H-index for ${suggested.name}: ${hIndex} (SS=${hIndexSS}, OA=${hIndexOA})`);
+            if (hIndexOA !== null && hIndexSS !== null) {
+              // Cross-validate: if SS h-index is less than 1/3 of OA, SS likely matched
+              // a wrong/fragmented profile — prefer OA only
+              if (hIndexSS < hIndexOA / 3) {
+                hIndex = hIndexOA;
+                console.log(`[Discover] ${suggested.name}: SS H-index ${hIndexSS} looks wrong vs OA ${hIndexOA}, using OA only`);
+              } else {
+                hIndex = Math.max(hIndexSS, hIndexOA);
               }
             } else {
+              // Prefer OA when only one is available (better disambiguation)
               hIndex = hIndexOA ?? hIndexSS;
             }
 
@@ -387,17 +401,25 @@ export async function POST(request: Request) {
           const affiliation = oaAuthor.last_known_institutions?.[0]?.display_name || "Unknown";
           const country = oaAuthor.last_known_institutions?.[0]?.country_code || "Unknown";
 
-          // Try to get Semantic Scholar H-index as well
+          // OpenAlex h-index is the primary source (reliable disambiguation)
           let hIndex = oaAuthor.summary_stats?.h_index || null;
           let semanticScholarUrl: string | undefined;
 
+          // Try Semantic Scholar — use ORCID first, then name with paperCount hint
           try {
-            const ssAuthor = await searchSemanticScholar(oaAuthor.display_name);
+            const oaOrcid = oaAuthor.orcid?.replace("https://orcid.org/", "") || null;
+            let ssAuthor = oaOrcid ? await searchSSByOrcid(oaOrcid) : null;
+            if (!ssAuthor) {
+              ssAuthor = await searchSemanticScholar(oaAuthor.display_name, oaAuthor.works_count);
+            }
             if (ssAuthor) {
-              if (!hIndex || ssAuthor.hIndex > hIndex) {
+              semanticScholarUrl = ssAuthor.url;
+              // Only use SS h-index if it's in the same ballpark as OA (cross-validate)
+              if (hIndex && ssAuthor.hIndex > 0 && ssAuthor.hIndex < hIndex / 3) {
+                console.log(`[Discover] Fallback: ${oaAuthor.display_name} SS H-index ${ssAuthor.hIndex} looks wrong vs OA ${hIndex}, ignoring SS`);
+              } else if (ssAuthor.hIndex > (hIndex || 0)) {
                 hIndex = ssAuthor.hIndex;
               }
-              semanticScholarUrl = ssAuthor.url;
             }
             await delay(200);
           } catch {

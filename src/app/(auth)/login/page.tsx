@@ -34,8 +34,10 @@ function LoginForm() {
       if (result?.error) {
         setError("Invalid email or password");
       } else {
-        router.push(callbackUrl);
-        router.refresh();
+        // Use full navigation (not client-side router.push) so the server-side
+        // smart redirect in dashboard/page.tsx runs on the first load,
+        // avoiding a visible flash of the dashboard before redirecting to the journal.
+        window.location.href = callbackUrl;
       }
     } catch {
       setError("An error occurred. Please try again.");

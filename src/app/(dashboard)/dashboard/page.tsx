@@ -142,6 +142,11 @@ export default async function DashboardPage() {
   const isEditor = userRole === "EDITOR";
   const isPublisher = userRole === "PUBLISHER";
 
+  // Direct link to reviewers page — skip the journal picker if user has exactly one journal
+  const reviewersLink = recentJournals.length === 1
+    ? `/dashboard/journals/${recentJournals[0].slug}/reviewers`
+    : "/dashboard/tools/reviewers";
+
   return (
     <div className="space-y-8">
       {/* Welcome header with role badge */}
@@ -259,7 +264,7 @@ export default async function DashboardPage() {
           ) : (
             <>
               <Button variant="outline" className="h-auto py-4 flex-col items-start text-left" asChild>
-                <Link href="/dashboard/tools/reviewers">
+                <Link href={reviewersLink}>
                   <Search className="h-5 w-5 mb-1 text-blue-600" />
                   <span className="font-medium">Find Reviewers</span>
                   <span className="text-xs text-gray-500">Discover expert reviewers</span>

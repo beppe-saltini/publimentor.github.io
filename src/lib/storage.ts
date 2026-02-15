@@ -218,7 +218,7 @@ let storageInstance: StorageProvider | null = null;
 
 export function getStorage(): StorageProvider {
   if (!storageInstance) {
-    const provider = process.env.STORAGE_PROVIDER || "local";
+    const provider = (process.env.STORAGE_PROVIDER || "local").trim();
     if (provider === "supabase") {
       storageInstance = new SupabaseStorageProvider();
     } else {
@@ -233,7 +233,7 @@ export function getStorage(): StorageProvider {
  * Get the storage provider name currently in use.
  */
 export function getStorageProviderName(): "supabase" | "local" {
-  return (process.env.STORAGE_PROVIDER === "supabase") ? "supabase" : "local";
+  return ((process.env.STORAGE_PROVIDER || "").trim() === "supabase") ? "supabase" : "local";
 }
 
 // ============================================================

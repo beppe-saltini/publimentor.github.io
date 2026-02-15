@@ -23,6 +23,7 @@ const registerSchema = z.object({
   gender: z.enum(["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"]).optional(),
   primaryExpertise: z.string().max(200).optional(),
   secondaryExpertise: z.string().max(200).optional(),
+  betaCode: z.string().min(1, "Beta access code is required"),
 });
 
 export async function POST(request: Request) {
@@ -55,7 +56,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, email, password, institution, orcid, role, gender, primaryExpertise, secondaryExpertise } = result.data;
+    const { name, email, password, institution, orcid, role, gender, primaryExpertise, secondaryExpertise, betaCode } = result.data;
+
+    // Validate beta access code against one-time-use codes in DB
+    const betaCodeRecord = await prisma.betaCode.findUnique({
+      where: { code: betaCode },
+    });
+
+    if (!betaCodeRecord || betaCodeRecord.usedAt !== null) {
+      return NextResponse.json(
+        { error: "Invalid or already used beta access code" },
+        { status: 403 }
+      );
+    }
 
     // Validate password strength
     const passwordValidation = validatePassword(password);
@@ -121,6 +134,12 @@ export async function POST(request: Request) {
         primaryExpertise: sanitizedPrimaryExpertise,
         secondaryExpertise: sanitizedSecondaryExpertise,
       },
+    });
+
+    // Consume the beta code (mark as used) now that registration succeeded
+    await prisma.betaCode.update({
+      where: { code: betaCode },
+      data: { usedAt: new Date(), usedBy: user.id },
     });
 
     auditLog({

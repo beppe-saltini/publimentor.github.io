@@ -3,7 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Users, Clock, CheckCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FileText, Clock, Download, Eye } from "lucide-react";
+import Link from "next/link";
 
 export default async function JournalOverviewPage({
   params,
@@ -20,8 +22,8 @@ export default async function JournalOverviewPage({
         where: { userId: session?.user?.id },
         select: { role: true },
       },
-      _count: {
-        select: { submissions: true, members: true },
+      publisher: {
+        select: { id: true },
       },
     },
   });
@@ -30,31 +32,30 @@ export default async function JournalOverviewPage({
     notFound();
   }
 
-  // Get submission statistics
-  const submissionStats = await prisma.submission.groupBy({
-    by: ["status"],
-    where: { journalId: journal.id },
-    _count: true,
-  });
+  // Get manuscript counts for stats
+  const [totalManuscripts, processingManuscripts] = await Promise.all([
+    prisma.manuscript.count({
+      where: { publisherId: journal.publisher?.id },
+    }),
+    prisma.manuscript.count({
+      where: {
+        publisherId: journal.publisher?.id,
+        status: { in: ["UPLOADED", "EXTRACTING", "EXTRACTED", "PROCESSING", "EMBEDDING"] },
+      },
+    }),
+  ]);
 
-  const statusCounts = submissionStats.reduce(
-    (acc, stat) => {
-      acc[stat.status] = stat._count;
-      return acc;
-    },
-    {} as Record<string, number>
-  );
-
-  const recentSubmissions = await prisma.submission.findMany({
-    where: { journalId: journal.id },
+  // Get recent manuscripts for this publisher
+  const recentManuscripts = await prisma.manuscript.findMany({
+    where: { publisherId: journal.publisher?.id },
     include: {
       authors: {
-        where: { order: 0 },
+        orderBy: { authorOrder: "asc" },
         take: 1,
       },
     },
     orderBy: { createdAt: "desc" },
-    take: 5,
+    take: 10,
   });
 
   return (
@@ -64,80 +65,81 @@ export default async function JournalOverviewPage({
         <p className="text-gray-500">{journal.description || "No description"}</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Submissions</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Manuscripts</CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{journal._count.submissions}</div>
+            <div className="text-2xl font-bold">{totalManuscripts}</div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Under Review</CardTitle>
+            <CardTitle className="text-sm font-medium">Processing</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{statusCounts["UNDER_REVIEW"] || 0}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Accepted</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{statusCounts["ACCEPTED"] || 0}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Team Members</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{journal._count.members}</div>
+            <div className="text-2xl font-bold">{processingManuscripts}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent Submissions</CardTitle>
-          <CardDescription>Latest papers submitted to the journal</CardDescription>
+          <CardTitle>Recent Manuscripts</CardTitle>
+          <CardDescription>Latest manuscripts uploaded to your organisation</CardDescription>
         </CardHeader>
         <CardContent>
-          {recentSubmissions.length === 0 ? (
-            <p className="text-sm text-gray-500">No submissions yet</p>
+          {recentManuscripts.length === 0 ? (
+            <p className="text-sm text-gray-500">No manuscripts uploaded yet</p>
           ) : (
             <div className="space-y-4">
-              {recentSubmissions.map((submission) => (
+              {recentManuscripts.map((manuscript) => (
                 <div
-                  key={submission.id}
+                  key={manuscript.id}
                   className="flex items-center justify-between border-b pb-4 last:border-0"
                 >
-                  <div>
-                    <p className="font-medium">{submission.title}</p>
+                  <div className="min-w-0 flex-1 mr-4">
+                    <p className="font-medium truncate">
+                      {manuscript.title || manuscript.fileName}
+                    </p>
                     <p className="text-sm text-gray-500">
-                      {submission.authors[0]?.name || "Unknown author"}
+                      {manuscript.authors[0]?.fullName || "Processing..."}
+                      {manuscript.wordCount
+                        ? ` · ${manuscript.wordCount.toLocaleString()} words`
+                        : ""}
                     </p>
                   </div>
-                  <Badge
-                    variant={
-                      submission.status === "ACCEPTED"
-                        ? "default"
-                        : submission.status === "REJECTED"
-                        ? "destructive"
-                        : "secondary"
-                    }
-                  >
-                    {submission.status.replace("_", " ")}
-                  </Badge>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge
+                      variant={
+                        manuscript.status === "READY"
+                          ? "default"
+                          : manuscript.status === "ERROR"
+                          ? "destructive"
+                          : "secondary"
+                      }
+                    >
+                      {manuscript.status}
+                    </Badge>
+                    <Button variant="ghost" size="icon" asChild title="View details">
+                      <Link href={`/dashboard/manuscripts/${manuscript.id}`}>
+                        <Eye className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button variant="ghost" size="icon" asChild title="Download PDF">
+                      <a
+                        href={`/api/manuscripts/${manuscript.id}/download`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>

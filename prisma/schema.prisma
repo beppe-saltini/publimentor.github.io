@@ -866,3 +866,17 @@ model DataRetentionPolicy {
 
   @@map("data_retention_policies")
 }
+
+// ============================================================
+// BETA ACCESS CODES
+// ============================================================
+
+model BetaCode {
+  id        String    @id @default(cuid())
+  code      String    @unique // 4-digit one-time-use code
+  usedAt    DateTime? // null = available, set = consumed
+  usedBy    String?   // userId of the user who redeemed it
+  createdAt DateTime  @default(now())
+
+  @@map("beta_codes")
+}

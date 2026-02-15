@@ -22,6 +22,7 @@ export default function RegisterPage() {
     role: "",
     primaryExpertise: "",
     secondaryExpertise: "",
+    betaCode: "",
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +46,12 @@ export default function RegisterPage() {
     setIsLoading(true);
     setError("");
 
+    if (!formData.betaCode.trim()) {
+      setError("Beta access code is required");
+      setIsLoading(false);
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
       setError("Passwords do not match");
       setIsLoading(false);
@@ -64,6 +71,7 @@ export default function RegisterPage() {
           role: formData.role || undefined,
           primaryExpertise: formData.primaryExpertise || undefined,
           secondaryExpertise: formData.secondaryExpertise || undefined,
+          betaCode: formData.betaCode.trim(),
         }),
       });
 
@@ -234,6 +242,23 @@ export default function RegisterPage() {
                 required
                 disabled={isLoading}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="betaCode">Beta Access Code</Label>
+              <Input
+                id="betaCode"
+                name="betaCode"
+                type="text"
+                placeholder="Enter your beta access code"
+                value={formData.betaCode}
+                onChange={handleChange}
+                required
+                disabled={isLoading}
+              />
+              <p className="text-xs text-gray-500">
+                PubliMentor is in private beta. Enter the code provided by your contact.
+              </p>
             </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
