@@ -9,7 +9,52 @@ import Link from "next/link";
 
 export default async function DashboardPage() {
   const session = await auth();
-  
+
+  // ── Smart redirect: send the user straight to their journal ──
+  const userId = session?.user?.id;
+  if (userId) {
+    let targetSlug: string | null = null;
+    try {
+      const [memberships, user] = await Promise.all([
+        prisma.journalMember.findMany({
+          where: { userId },
+          select: { journal: { select: { id: true, slug: true } }, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { lastVisitedJournalId: true },
+        }),
+      ]);
+
+      if (memberships.length === 1) {
+        targetSlug = memberships[0].journal.slug;
+      } else if (memberships.length > 1) {
+        // Try last-visited journal first
+        if (user?.lastVisitedJournalId) {
+          const match = memberships.find(
+            (m) => m.journal.id === user.lastVisitedJournalId
+          );
+          if (match) {
+            targetSlug = match.journal.slug;
+          }
+        }
+        // Fallback: most recently joined journal (already sorted desc)
+        if (!targetSlug) {
+          targetSlug = memberships[0].journal.slug;
+        }
+      }
+      // 0 memberships → fall through to existing onboarding logic below
+    } catch (e) {
+      console.error("Smart redirect error:", e);
+    }
+
+    // redirect() throws a special Next.js error, so call it outside try-catch
+    if (targetSlug) {
+      redirect(`/dashboard/journals/${targetSlug}`);
+    }
+  }
+
   // Default values in case of errors
   let journalCount = 0;
   let submissionCount = 0;

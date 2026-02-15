@@ -2,7 +2,7 @@
  * Document Text Extraction Service
  * 
  * Extracts plain text from various document formats:
- * - PDF (using pdf-parse)
+ * - PDF (using unpdf — serverless-compatible)
  * - DOCX (using mammoth)
  * - LaTeX (custom parser) - Phase 2
  */
@@ -49,40 +49,26 @@ export async function extractText(
 }
 
 /**
- * Extract text from PDF using pdf-parse v2.x
+ * Extract text from PDF using unpdf.
+ *
+ * unpdf is a serverless-compatible PDF text extraction library (by UnJS)
+ * that ships its own pre-configured build of PDF.js. It handles all
+ * worker/DOMMatrix/polyfill issues internally, unlike raw pdfjs-dist v5
+ * which fails in multiple ways on Vercel serverless.
  */
 async function extractFromPDF(buffer: Buffer): Promise<ExtractionResult> {
-  const { PDFParse } = await import("pdf-parse");
+  const { getDocumentProxy, extractText: pdfExtractText } = await import("unpdf");
 
-  // Create parser instance with buffer data
-  const parser = new PDFParse({ data: buffer });
-  
-  // Get text from all pages - returns { text: string, pages: [...], total: number }
-  // Note: load() is called internally by getText() in pdf-parse v2
-  const result = await parser.getText();
-  const text = typeof result === "string" ? result : result.text || "";
-  const pageCount = typeof result === "object" ? result.total : undefined;
+  const uint8 = new Uint8Array(buffer);
+  const doc = await getDocumentProxy(uint8);
+  const { totalPages, text } = await pdfExtractText(doc, { mergePages: true });
   const wordCount = countWords(text);
-  
-  // Get document info
-  let info: Record<string, unknown> = {};
-  
-  try {
-    const infoResult = await parser.getInfo();
-    info = infoResult as unknown as Record<string, unknown>;
-  } catch {
-    // Info may not be available for all PDFs
-  }
-
-  // Cleanup
-  parser.destroy();
 
   return {
     text,
-    pageCount,
+    pageCount: totalPages,
     wordCount,
-    method: "pdf-parse",
-    metadata: { info },
+    method: "unpdf",
   };
 }
 

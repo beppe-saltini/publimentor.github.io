@@ -105,6 +105,10 @@ model User {
 
   // Favourite journals (for authors)
   favouriteJournals FavouriteJournal[]
+
+  // Smart redirect: last journal the user visited
+  lastVisitedJournalId String?
+  lastVisitedJournal   Journal? @relation("LastVisitedJournal", fields: [lastVisitedJournalId], references: [id], onDelete: SetNull)
 }
 
 // ============================================================
@@ -174,6 +178,9 @@ model Journal {
 
   // Favourite journal relations (for authors)
   favouritedBy FavouriteJournal[]
+
+  // Users who last visited this journal
+  lastVisitedBy User[] @relation("LastVisitedJournal")
 
   @@index([publisherId])
 }
@@ -340,8 +347,12 @@ model Manuscript {
   fileType     String // pdf, docx, tex
   fileMimeType String
   fileSize     Int // bytes
-  filePath     String // Storage path (local/S3/R2)
+  filePath     String  @default("") // Storage path (local/S3/R2)
   fileHash     String? // SHA-256 for dedup detection
+
+  // === STORAGE ===
+  storagePath     String? // Path in Supabase Storage bucket
+  storageProvider String  @default("local") // "supabase" or "local"
 
   // === PROCESSING STATUS ===
   status            ManuscriptStatus @default(UPLOADED)
@@ -359,6 +370,7 @@ model Manuscript {
   keywords       String[]
   manuscriptType String? // Original Research, Review, etc.
   language       String? // Detected language
+  detectedJournal String? // Journal name detected from manuscript content by AI
 
   // === DECLARATIONS ===
   fundingStatement String? @db.Text
@@ -366,6 +378,13 @@ model Manuscript {
   dataAvailability String? @db.Text
   ethicsStatement  String? @db.Text
   authorContribs   String? @db.Text
+
+  // === EXTRACTION QUALITY ===
+  extractionConfidence Float?   // 0.0-1.0, LLM self-reported confidence
+  extractionNotes      String[] // Issues/uncertainties from extraction
+
+  // === CORRESPONDING AUTHOR ===
+  correspondingAddress String? @db.Text // Postal address of corresponding author
 
   // === STATISTICS ===
   wordCount      Int?

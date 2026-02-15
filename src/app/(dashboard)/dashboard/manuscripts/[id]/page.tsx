@@ -363,8 +363,8 @@ export default function ManuscriptDetailPage() {
                     )}
                   </div>
                   {author.orcid && (
-                    <a 
-                      href={`https://orcid.org/${author.orcid}`}
+                    <a
+                      href={`https://orcid.org/${encodeURIComponent(author.orcid)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-green-600 hover:underline text-sm flex items-center gap-1"
@@ -409,8 +409,8 @@ export default function ManuscriptDetailPage() {
                     <span className="font-medium text-gray-700">[{ref.refNumber}]</span>{" "}
                     <span className="text-gray-600">{ref.rawText}</span>
                     {ref.doi && (
-                      <a 
-                        href={`https://doi.org/${ref.doi}`}
+                      <a
+                        href={`https://doi.org/${encodeURIComponent(ref.doi)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="ml-2 text-blue-600 hover:underline"

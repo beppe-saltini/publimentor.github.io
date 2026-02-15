@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getStorage, calculateHash } from "@/lib/storage";
-import { extractText } from "@/lib/manuscript/text-extractor";
-import { extractMetadata } from "@/lib/manuscript/metadata-extractor";
+// Heavy processing deps (unpdf, mammoth, anthropic, huggingface) are
+// dynamically imported inside processManuscriptAsync() to keep the route
+// module lightweight and avoid bundling issues on Vercel.
 import { 
   validateFileType, 
   sanitizeFileName, 
@@ -16,9 +17,25 @@ import {
 } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+// Give the function enough time for text + LLM extraction on Vercel
+export const maxDuration = 60;
 
-// Max file size: 50MB
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// Vercel Serverless Functions have a 4.5 MB request body limit.
+// Use a slightly lower threshold to account for multipart overhead.
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
+
+/**
+ * Sanitize error messages before storing in the database.
+ * Strips file paths, URLs with tokens, and limits length.
+ */
+function sanitizeErrorForStorage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : "Processing failed";
+  return msg
+    .replace(/\/[^\s:]+/g, "[path]")         // Strip file paths
+    .replace(/https?:\/\/[^\s]+/g, "[url]")  // Strip URLs (may contain tokens)
+    .substring(0, 500);                       // Limit length
+}
 
 // Allowed MIME types with their extensions
 const ALLOWED_FILE_TYPES: Record<string, string[]> = {
@@ -30,6 +47,7 @@ const ALLOWED_FILE_TYPES: Record<string, string[]> = {
 const ALLOWED_EXTENSIONS = ["pdf", "docx"];
 
 export async function POST(request: Request) {
+  console.log("[Upload] POST handler reached", new Date().toISOString());
   try {
     const session = await auth();
 
@@ -48,18 +66,16 @@ export async function POST(request: Request) {
       return getRateLimitResponse(rateLimit.resetIn);
     }
 
-    // Parse multipart form data
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const publisherId = formData.get("publisherId") as string | null;
-    const journalId = formData.get("journalId") as string | null;
+    // ── Parse request ──
+    // The client sends ALL metadata as query params and the file as the
+    // raw request body (ArrayBuffer).  No custom headers are used — this
+    // avoids Safari/WebKit header-validation errors and Vercel multipart
+    // parsing failures.
+    const url = new URL(request.url);
+    const publisherId = url.searchParams.get("publisherId");
+    const rawFileName = url.searchParams.get("fileName");
 
-    if (!file) {
-      return NextResponse.json(
-        { error: "No file provided" },
-        { status: 400 }
-      );
-    }
+    console.log("[Upload] request received", { publisherId: !!publisherId, fileName: rawFileName });
 
     if (!publisherId) {
       return NextResponse.json(
@@ -68,16 +84,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate file size
-    if (file.size > MAX_FILE_SIZE) {
+    if (!rawFileName) {
       return NextResponse.json(
-        { error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB` },
+        { error: "No file name provided (fileName query param)" },
         { status: 400 }
       );
     }
 
+    const fileName = rawFileName;
+
     // Validate file extension
-    const extension = file.name.split(".").pop()?.toLowerCase();
+    const extension = fileName.split(".").pop()?.toLowerCase();
     if (!extension || !ALLOWED_EXTENSIONS.includes(extension)) {
       return NextResponse.json(
         { error: `Invalid file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}` },
@@ -85,12 +102,27 @@ export async function POST(request: Request) {
       );
     }
 
-    // Sanitize filename
-    const sanitizedFileName = sanitizeFileName(file.name);
-
-    // Read file buffer for content validation
-    const arrayBuffer = await file.arrayBuffer();
+    // Read raw body
+    const arrayBuffer = await request.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    // Validate file size
+    if (buffer.length > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: `File too large. Maximum size is ${MAX_FILE_SIZE / (1024 * 1024)} MB` },
+        { status: 400 }
+      );
+    }
+
+    if (buffer.length === 0) {
+      return NextResponse.json(
+        { error: "No file provided (empty body)" },
+        { status: 400 }
+      );
+    }
+
+    // Sanitize filename
+    const sanitizedFileName = sanitizeFileName(fileName);
 
     // SECURITY: Validate file content matches claimed MIME type
     const expectedMimeType = Object.entries(ALLOWED_FILE_TYPES)
@@ -101,13 +133,13 @@ export async function POST(request: Request) {
         userId: session.user.id,
         action: "MALICIOUS_FILE_UPLOAD_ATTEMPT",
         resource: "manuscripts",
-        resourceId: file.name,
+        resourceId: sanitizedFileName,
         ip: clientIp,
         userAgent: getUserAgent(request),
         severity: "critical",
         details: { 
           claimedExtension: extension,
-          claimedMimeType: file.type,
+          claimedMimeType: request.headers.get("content-type") || "unknown",
         },
       });
       
@@ -117,7 +149,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify user has access to the publisher
+    // Verify user has access to the publisher (direct membership)
     const publisherMember = await prisma.publisherMember.findUnique({
       where: {
         userId_publisherId: {
@@ -132,23 +164,6 @@ export async function POST(request: Request) {
         { error: "You don't have access to this publisher" },
         { status: 403 }
       );
-    }
-
-    // If journalId provided, verify it belongs to the publisher
-    if (journalId) {
-      const journal = await prisma.journal.findFirst({
-        where: {
-          id: journalId,
-          publisherId,
-        },
-      });
-
-      if (!journal) {
-        return NextResponse.json(
-          { error: "Journal not found or doesn't belong to this publisher" },
-          { status: 404 }
-        );
-      }
     }
 
     // Calculate file hash for duplicate detection (buffer already read above)
@@ -176,12 +191,11 @@ export async function POST(request: Request) {
     const manuscript = await prisma.manuscript.create({
       data: {
         publisherId,
-        journalId,
         uploaderId: session.user.id,
         fileName: sanitizedFileName,
         fileType: extension,
         fileMimeType: expectedMimeType || `application/${extension}`,
-        fileSize: file.size,
+        fileSize: buffer.length,
         filePath: "", // Will be updated after storage
         fileHash,
         status: "UPLOADED",
@@ -192,10 +206,9 @@ export async function POST(request: Request) {
     const storage = getStorage();
     const storageResult = await storage.upload(buffer, {
       publisherId,
-      journalId: journalId || undefined,
       manuscriptId: manuscript.id,
       fileName: sanitizedFileName,
-      mimeType: expectedMimeType || file.type,
+      mimeType: expectedMimeType || `application/${extension}`,
     });
 
     // Log successful upload
@@ -209,7 +222,7 @@ export async function POST(request: Request) {
       severity: "info",
       details: {
         fileName: sanitizedFileName,
-        fileSize: file.size,
+        fileSize: buffer.length,
         publisherId,
       },
     });
@@ -233,37 +246,36 @@ export async function POST(request: Request) {
       },
     });
 
-    // Start async processing with error recovery
-    // Note: In production, replace with a proper job queue (BullMQ, pg-boss).
-    // This ensures the job is tracked in the ProcessingJob table even if
-    // the process restarts mid-flight.
-    processManuscriptAsync(manuscript.id, buffer, sanitizedFileName, expectedMimeType || file.type).catch(
-      async (error) => {
+    // Fire-and-forget: kick off processing WITHOUT awaiting.
+    // The maxDuration = 60 keeps the serverless function alive long enough
+    // for processing to complete, even though the HTTP response is sent first.
+    // We intentionally do NOT await this — the response is sent immediately.
+    processManuscriptAsync(manuscript.id, buffer, sanitizedFileName, expectedMimeType || `application/${extension}`)
+      .catch(async (error) => {
         console.error(`[Upload] Async processing failed for ${manuscript.id}:`, error);
-        // Ensure manuscript is marked as errored so it can be retried
         try {
           await prisma.manuscript.update({
             where: { id: manuscript.id },
             data: {
               status: "ERROR",
-              statusMessage: error instanceof Error ? error.message : "Async processing failed",
+              statusMessage: sanitizeErrorForStorage(error),
               processingEnded: new Date(),
             },
           });
         } catch (updateErr) {
           console.error("[Upload] Failed to update error status:", updateErr);
         }
-      }
-    );
+      });
 
     return NextResponse.json({
       success: true,
       manuscriptId: manuscript.id,
       jobId: job.id,
       fileName: sanitizedFileName,
-      fileSize: file.size,
+      fileSize: buffer.length,
       status: "EXTRACTING",
       message: "File uploaded successfully. Processing started.",
+      _v: Date.now(), // deployment verification timestamp
     });
   } catch (error) {
     console.error("[Upload] Error:", error);
@@ -276,6 +288,9 @@ export async function POST(request: Request) {
 
 /**
  * Async processing pipeline
+ *
+ * Heavy dependencies (unpdf, mammoth, anthropic, huggingface) are
+ * dynamically imported here so the route module stays lightweight.
  */
 async function processManuscriptAsync(
   manuscriptId: string,
@@ -284,6 +299,11 @@ async function processManuscriptAsync(
   mimeType: string
 ): Promise<void> {
   try {
+    // Dynamic imports — keeps route module lightweight
+    const { extractText, detectSections } = await import("@/lib/manuscript/text-extractor");
+    const { extractMetadata } = await import("@/lib/manuscript/metadata-extractor");
+    const { chunkText, generateEmbeddings, getEmbeddingModelInfo } = await import("@/lib/manuscript/embeddings");
+
     // Get manuscript for publisherId
     const manuscript = await prisma.manuscript.findUnique({
       where: { id: manuscriptId },
@@ -342,6 +362,7 @@ async function processManuscriptAsync(
         keywords: metadata.keywords,
         manuscriptType: metadata.manuscriptType,
         language: metadata.language,
+        detectedJournal: metadata.detectedJournal,
         fundingStatement: metadata.declarations.funding,
         coiStatement: metadata.declarations.conflictOfInterest,
         dataAvailability: metadata.declarations.dataAvailability,
@@ -350,6 +371,9 @@ async function processManuscriptAsync(
         figureCount: metadata.statistics.figureCount,
         tableCount: metadata.statistics.tableCount,
         referenceCount: metadata.statistics.referenceCount || metadata.references.length,
+        extractionConfidence: metadata.extractionConfidence,
+        extractionNotes: metadata.extractionNotes || [],
+        correspondingAddress: metadata.correspondingAuthor?.address,
         status: "EMBEDDING",
       },
     });
@@ -407,6 +431,8 @@ async function processManuscriptAsync(
           pages: ref.pages,
           doi: ref.doi,
           pmid: ref.pmid,
+          pmcid: ref.pmcid,
+          arxivId: ref.arxivId,
           url: ref.url,
           refType: ref.refType,
         })),
@@ -419,8 +445,41 @@ async function processManuscriptAsync(
       data: { status: "COMPLETED", completedAt: new Date() },
     });
 
-    // STEP 3: Generate embeddings (TODO: implement later)
-    // For now, mark as ready
+    // STEP 3: Create document chunks for RAG
+    console.log(`[Upload] Chunking text for ${manuscriptId}...`);
+    const sections = detectSections(extractionResult.text);
+    const allChunks = chunkText(extractionResult.text, sections);
+
+    // SECURITY: Cap chunk count to prevent DoS from very large documents
+    const MAX_CHUNKS = 500;
+    const chunks = allChunks.slice(0, MAX_CHUNKS);
+    if (allChunks.length > MAX_CHUNKS) {
+      console.warn(`[Upload] Truncated chunks from ${allChunks.length} to ${MAX_CHUNKS} for ${manuscriptId}`);
+    }
+
+    if (chunks.length > 0) {
+      await prisma.documentChunk.createMany({
+        data: chunks.map((chunk) => ({
+          manuscriptId,
+          publisherId: manuscript.publisherId,
+          content: chunk.content,
+          chunkIndex: chunk.chunkIndex,
+          charStart: chunk.charStart,
+          charEnd: chunk.charEnd,
+          section: chunk.section,
+          tokenCount: chunk.tokenCount,
+        })),
+      });
+
+      await prisma.manuscript.update({
+        where: { id: manuscriptId },
+        data: { chunkCount: chunks.length },
+      });
+    }
+
+    console.log(`[Upload] Created ${chunks.length} chunks for ${manuscriptId}`);
+
+    // STEP 4: Mark manuscript as READY (embeddings are non-blocking)
     await prisma.manuscript.update({
       where: { id: manuscriptId },
       data: {
@@ -430,6 +489,12 @@ async function processManuscriptAsync(
     });
 
     console.log(`[Upload] Processing complete for ${manuscriptId}`);
+
+    // STEP 5: Generate embeddings in background (non-blocking)
+    // Manuscript is already READY; embeddings enhance RAG but are not required.
+    generateEmbeddingsAsync(manuscriptId, manuscript.publisherId).catch((error) => {
+      console.error(`[Upload] Embedding generation failed for ${manuscriptId}:`, error);
+    });
   } catch (error) {
     console.error(`[Upload] Processing error for ${manuscriptId}:`, error);
 
@@ -438,7 +503,7 @@ async function processManuscriptAsync(
       where: { id: manuscriptId },
       data: {
         status: "ERROR",
-        statusMessage: error instanceof Error ? error.message : "Processing failed",
+        statusMessage: sanitizeErrorForStorage(error),
         processingEnded: new Date(),
       },
     });
@@ -448,7 +513,124 @@ async function processManuscriptAsync(
       where: { manuscriptId, status: "RUNNING" },
       data: {
         status: "FAILED",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: sanitizeErrorForStorage(error),
+        completedAt: new Date(),
+      },
+    });
+  }
+}
+
+/**
+ * Non-blocking embedding generation.
+ * Runs after manuscript is already marked READY.
+ */
+async function generateEmbeddingsAsync(
+  manuscriptId: string,
+  publisherId: string
+): Promise<void> {
+  // Dynamic import (same reason as processManuscriptAsync)
+  const { generateEmbeddings, getEmbeddingModelInfo } = await import("@/lib/manuscript/embeddings");
+
+  // Create processing job for tracking
+  const job = await prisma.processingJob.create({
+    data: {
+      manuscriptId,
+      jobType: "GENERATE_EMBEDDINGS",
+      status: "RUNNING",
+      startedAt: new Date(),
+    },
+  });
+
+  try {
+    // Fetch the chunks we already stored (without embeddings)
+    // SECURITY: Include publisherId for multi-tenant isolation
+    const storedChunks = await prisma.documentChunk.findMany({
+      where: { manuscriptId, publisherId },
+      orderBy: { chunkIndex: "asc" },
+    });
+
+    if (storedChunks.length === 0) {
+      console.log(`[Embeddings] No chunks found for ${manuscriptId}, skipping`);
+      await prisma.processingJob.update({
+        where: { id: job.id },
+        data: { status: "COMPLETED", completedAt: new Date() },
+      });
+      return;
+    }
+
+    // Convert stored chunks to the format expected by generateEmbeddings
+    const chunksForEmbedding = storedChunks.map((c) => ({
+      content: c.content,
+      chunkIndex: c.chunkIndex,
+      charStart: c.charStart ?? 0,
+      charEnd: c.charEnd ?? c.content.length,
+      section: c.section ?? undefined,
+      tokenCount: c.tokenCount ?? undefined,
+    }));
+
+    // Generate embeddings via HuggingFace API
+    const embeddedChunks = await generateEmbeddings(chunksForEmbedding);
+    const modelInfo = getEmbeddingModelInfo();
+
+    // Persist embeddings using raw SQL (Prisma cannot write Unsupported types).
+    // SECURITY: Do NOT refactor to $executeRawUnsafe — that would enable SQL injection.
+    // The tagged template literal $executeRaw parameterizes all interpolated values.
+    for (let i = 0; i < embeddedChunks.length; i++) {
+      const ec = embeddedChunks[i];
+      const chunk = storedChunks[i];
+
+      if (ec.embedding && ec.embedding.length > 0) {
+        // Validate all embedding values are finite numbers
+        const isValid = ec.embedding.every(
+          (v: number) => typeof v === "number" && isFinite(v)
+        );
+        if (!isValid) {
+          console.warn(`[Embeddings] Skipping chunk ${chunk.id}: invalid embedding values`);
+          continue;
+        }
+        // Validate dimension matches expected model output
+        if (ec.embedding.length !== modelInfo.dimensions) {
+          console.warn(`[Embeddings] Skipping chunk ${chunk.id}: expected ${modelInfo.dimensions} dims, got ${ec.embedding.length}`);
+          continue;
+        }
+
+        const vectorStr = `[${ec.embedding.join(",")}]`;
+        await prisma.$executeRaw`
+          UPDATE "DocumentChunk"
+          SET embedding = ${vectorStr}::vector
+          WHERE id = ${chunk.id}
+        `;
+      }
+    }
+
+    // Update manuscript with embedding metadata
+    await prisma.manuscript.update({
+      where: { id: manuscriptId },
+      data: {
+        embeddingModel: modelInfo.model,
+        embeddedAt: new Date(),
+      },
+    });
+
+    // Mark job complete
+    await prisma.processingJob.update({
+      where: { id: job.id },
+      data: {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        progress: 100,
+      },
+    });
+
+    console.log(`[Embeddings] Generated ${embeddedChunks.length} embeddings for ${manuscriptId}`);
+  } catch (error) {
+    console.error(`[Embeddings] Failed for ${manuscriptId}:`, error);
+
+    await prisma.processingJob.update({
+      where: { id: job.id },
+      data: {
+        status: "FAILED",
+        error: sanitizeErrorForStorage(error),
         completedAt: new Date(),
       },
     });

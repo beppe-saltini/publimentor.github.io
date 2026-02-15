@@ -153,23 +153,54 @@ function ReviewerSearchContent() {
   // Manuscript source state
   const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
   const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
+  const [journalId, setJournalId] = useState<string | null>(null);
   const [manuscriptAutoLoaded, setManuscriptAutoLoaded] = useState(false);
 
-  // Fetch default publisher for uploads
+  // Fetch journal details (publisherId + id) for manuscript uploads.
+  // This uses the journal the user is already viewing, so even editors without
+  // a direct publisher membership can upload manuscripts.
   useEffect(() => {
-    const fetchDefaultPublisher = async () => {
+    const fetchJournalInfo = async () => {
+      let foundPublisherId: string | null = null;
+
       try {
-        const response = await fetch("/api/publishers");
-        const data = await response.json();
-        if (response.ok && data.publishers?.length > 0) {
-          setDefaultPublisherId(data.publishers[0].id);
+        const response = await fetch(`/api/journals/${slug}`);
+        const text = await response.text();
+        const data = JSON.parse(text);
+        if (response.ok && data.journal) {
+          setJournalId(data.journal.id);
+          if (data.journal.publisherId) {
+            foundPublisherId = data.journal.publisherId;
+            setDefaultPublisherId(data.journal.publisherId);
+          }
+          console.log("[Reviewers] journal info loaded, publisherId:", data.journal.publisherId || "none");
+        } else {
+          console.warn("[Reviewers] journal fetch not ok:", response.status, data);
         }
       } catch (error) {
-        console.error("Error fetching publisher:", error);
+        console.error("[Reviewers] Error fetching journal info:", error);
+      }
+
+      // Fallback: try user's own publisher membership
+      if (!foundPublisherId) {
+        try {
+          const response = await fetch("/api/publishers");
+          const text = await response.text();
+          const data = JSON.parse(text);
+          if (response.ok && data.publishers?.length > 0) {
+            foundPublisherId = data.publishers[0].id;
+            setDefaultPublisherId(data.publishers[0].id);
+            console.log("[Reviewers] publisher fallback loaded:", data.publishers[0].id);
+          } else {
+            console.warn("[Reviewers] no publishers found, upload will be unavailable");
+          }
+        } catch (err) {
+          console.error("[Reviewers] Error fetching publishers:", err);
+        }
       }
     };
-    fetchDefaultPublisher();
-  }, []);
+    fetchJournalInfo();
+  }, [slug]);
 
   // Auto-load manuscript from URL query parameter (e.g., from "Find Reviewers" button on manuscript page)
   useEffect(() => {
@@ -601,6 +632,7 @@ function ReviewerSearchContent() {
                   }}
                   placeholder="Select or upload manuscript"
                   publisherId={defaultPublisherId || undefined}
+                  journalId={journalId || undefined}
                 />
                 <p className="text-xs text-gray-500">
                   Keywords and authors will be extracted automatically
@@ -1298,6 +1330,7 @@ function ReviewerSearchContent() {
                   }}
                   placeholder="Select or upload manuscript"
                   publisherId={defaultPublisherId || undefined}
+                  journalId={journalId || undefined}
                 />
               </div>
 

@@ -5,8 +5,8 @@ const nextConfig: NextConfig = {
   // Enable standalone output for Docker; skip on Vercel (uses its own builder)
   output: process.env.VERCEL ? undefined : "standalone",
   
-  // Mark pdf-parse as external to avoid bundling issues
-  serverExternalPackages: ["pdf-parse"],
+  // Mark unpdf as external to avoid bundling issues in serverless
+  serverExternalPackages: ["unpdf"],
   
   // Empty turbopack config to silence warning
   turbopack: {},
@@ -72,17 +72,7 @@ const nextConfig: NextConfig = {
   // Powered by header (hide Next.js version)
   poweredByHeader: false,
   
-  // Ignore canvas warnings from pdf-parse
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      // Ignore optional dependencies that aren't needed
-      config.externals.push({
-        canvas: "commonjs canvas",
-        "@napi-rs/canvas": "commonjs @napi-rs/canvas",
-      });
-    }
-    return config;
-  },
+  // No custom webpack config needed — unpdf handles its own bundling
 };
 
 export default nextConfig;

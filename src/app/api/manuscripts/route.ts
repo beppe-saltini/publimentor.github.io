@@ -93,11 +93,12 @@ export async function GET(request: Request) {
       where.status = status;
     }
 
-    // Get manuscripts
+    // Get manuscripts (exclude soft-deleted)
     const [manuscripts, total] = await Promise.all([
       prisma.manuscript.findMany({
         where: {
           AND: [
+            { deletedAt: null },
             {
               OR: [
                 { uploaderId: session.user.id },
@@ -134,6 +135,7 @@ export async function GET(request: Request) {
       prisma.manuscript.count({
         where: {
           AND: [
+            { deletedAt: null },
             {
               OR: [
                 { uploaderId: session.user.id },

@@ -33,6 +33,12 @@ export default async function JournalLayout({
     redirect("/dashboard");
   }
 
+  // Track last-visited journal (fire-and-forget, non-blocking)
+  prisma.user.update({
+    where: { id: session.user.id },
+    data: { lastVisitedJournalId: journal.id },
+  }).catch(() => {});
+
   return (
     <>
       <div className="border-b bg-white -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 py-3 mb-6">

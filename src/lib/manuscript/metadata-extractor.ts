@@ -11,15 +11,37 @@ const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MAX_TEXT_LENGTH = 100000; // ~25k tokens
 
 /**
- * Sanitize string to prevent XSS when LLM output is displayed
+ * Sanitize string to prevent XSS when LLM output is displayed.
+ * Uses an allowlist approach: strips ALL HTML tags and decodes entities,
+ * leaving only plain text. This is safer than a denylist regex approach.
  */
 function sanitizeLLMOutput(input: string | undefined | null): string | undefined {
   if (!input) return undefined;
   return input
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "") // Remove script tags
-    .replace(/<[^>]*on\w+=[^>]*>/gi, "") // Remove event handlers
-    .replace(/javascript:/gi, "") // Remove javascript: URLs
+    // Decode common HTML entities first (prevents encoded bypass)
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"')
+    // Strip ALL HTML tags (allowlist: permit no tags at all)
+    .replace(/<[^>]*>/g, "")
+    // Remove any remaining javascript: / data: URI schemes (case-insensitive, whitespace-tolerant)
+    .replace(/\b(?:java\s*script|data)\s*:/gi, "")
     .trim();
+}
+
+/**
+ * Validate that a URL field contains a safe scheme (http/https only).
+ * Returns undefined for unsafe or malformed URLs.
+ */
+function sanitizeUrl(input: string | undefined | null): string | undefined {
+  if (!input) return undefined;
+  const cleaned = sanitizeLLMOutput(input);
+  if (!cleaned) return undefined;
+  // Only allow values that look like identifiers (DOIs, PMIDs) or http(s) URLs
+  if (cleaned.match(/^https?:\/\//i)) return cleaned;
+  // For non-URL identifier fields (DOI, PMID, ORCID), ensure no scheme is present
+  if (cleaned.includes(":") && !cleaned.match(/^10\./)) return undefined;
+  return cleaned;
 }
 
 export interface ExtractedAuthor {
@@ -55,6 +77,8 @@ export interface ExtractedReference {
   pages?: string;
   doi?: string;
   pmid?: string;
+  pmcid?: string;
+  arxivId?: string;
   url?: string;
   refType?: string;
 }
@@ -66,6 +90,7 @@ export interface ExtractedMetadata {
   manuscriptType?: string;
   keywords: string[];
   language?: string;
+  detectedJournal?: string; // Journal name detected from manuscript content
 
   // Authors & affiliations
   authors: ExtractedAuthor[];
@@ -139,8 +164,8 @@ export async function extractMetadata(text: string): Promise<ExtractedMetadata> 
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[MetadataExtractor] API error:", response.status, errorText);
+      // SECURITY: Don't log raw API error body (may contain sensitive data)
+      console.error("[MetadataExtractor] API error: status", response.status);
       throw new Error(`Claude API error: ${response.status}`);
     }
 
@@ -182,6 +207,7 @@ Extract and return a JSON object with the following structure. Be thorough and a
   "manuscriptType": "Original Research | Review | Case Report | Letter | Commentary | Meta-Analysis | Systematic Review | Protocol | Other",
   "keywords": ["keyword1", "keyword2", ...],
   "language": "English | Spanish | etc.",
+  "detectedJournal": "The journal this manuscript appears to be written/formatted for, if detectable from headers, footers, formatting, or explicit mentions. null if not detectable.",
   
   "authors": [
     {
@@ -242,6 +268,8 @@ Extract and return a JSON object with the following structure. Be thorough and a
       "pages": "pp-pp",
       "doi": "10.xxxx/xxxxx or null",
       "pmid": "12345678 or null",
+      "pmcid": "PMC1234567 or null",
+      "arxivId": "2301.12345 or null",
       "url": "URL if present",
       "refType": "journal | book | conference | thesis | website | preprint | other"
     }
@@ -262,6 +290,8 @@ Important extraction rules:
 8. If any field is uncertain, set it to null rather than guessing
 9. For DOIs, extract the full DOI (10.xxxx/...)
 10. For PMIDs, extract just the number
+11. For PMCIDs, extract the full PMC ID (PMC followed by digits)
+12. For arXiv IDs, extract the identifier (e.g., 2301.12345 or math/0601001)
 
 Return ONLY valid JSON, no other text.`;
 }
@@ -269,7 +299,7 @@ Return ONLY valid JSON, no other text.`;
 /**
  * Parse the extraction response from Claude
  */
-function parseExtractionResponse(content: string): ExtractedMetadata {
+export function parseExtractionResponse(content: string): ExtractedMetadata {
   // Try to extract JSON from the response
   let jsonStr = content.trim();
 
@@ -293,6 +323,7 @@ function parseExtractionResponse(content: string): ExtractedMetadata {
         ? parsed.keywords.map((k: string) => sanitizeLLMOutput(k)).filter(Boolean) as string[]
         : [],
       language: sanitizeLLMOutput(parsed.language) || "English",
+      detectedJournal: sanitizeLLMOutput(parsed.detectedJournal),
       authors: Array.isArray(parsed.authors) ? parsed.authors.map(normalizeAuthor) : [],
       affiliations: Array.isArray(parsed.affiliations) 
         ? parsed.affiliations.map(sanitizeAffiliation) 
@@ -324,7 +355,8 @@ function parseExtractionResponse(content: string): ExtractedMetadata {
     };
   } catch (error) {
     console.error("[MetadataExtractor] Failed to parse JSON:", error);
-    console.error("[MetadataExtractor] Content:", jsonStr.substring(0, 500));
+    // SECURITY: Don't log manuscript content to server logs
+    console.error("[MetadataExtractor] Content length:", jsonStr.length, "chars");
     
     // Return minimal metadata
     return {
@@ -343,14 +375,29 @@ function parseExtractionResponse(content: string): ExtractedMetadata {
 /**
  * Normalize and sanitize author data
  */
-function normalizeAuthor(author: Record<string, unknown>): ExtractedAuthor {
+export function normalizeAuthor(author: Record<string, unknown>): ExtractedAuthor {
+  const fullName = sanitizeLLMOutput(String(author.fullName || "")) || "";
+  let firstName = author.firstName ? sanitizeLLMOutput(String(author.firstName)) : undefined;
+  let lastName = author.lastName ? sanitizeLLMOutput(String(author.lastName)) : undefined;
+
+  // Fallback: if LLM returned only fullName, split into first/last
+  if (fullName && !firstName && !lastName) {
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      firstName = parts.slice(0, -1).join(" ");
+      lastName = parts[parts.length - 1];
+    } else if (parts.length === 1) {
+      lastName = parts[0];
+    }
+  }
+
   return {
-    fullName: sanitizeLLMOutput(String(author.fullName || "")) || "",
-    firstName: author.firstName ? sanitizeLLMOutput(String(author.firstName)) : undefined,
-    lastName: author.lastName ? sanitizeLLMOutput(String(author.lastName)) : undefined,
+    fullName,
+    firstName,
+    lastName,
     email: author.email ? sanitizeLLMOutput(String(author.email)) : undefined,
     orcid: normalizeOrcid(author.orcid),
-    affiliationNumbers: Array.isArray(author.affiliationNumbers) 
+    affiliationNumbers: Array.isArray(author.affiliationNumbers)
       ? author.affiliationNumbers.map(Number).filter(n => !isNaN(n) && n > 0 && n < 100)
       : [],
     isCorresponding: Boolean(author.isCorresponding),
@@ -376,7 +423,7 @@ function sanitizeAffiliation(aff: Record<string, unknown>): ExtractedAffiliation
 /**
  * Sanitize reference data
  */
-function sanitizeReference(ref: Record<string, unknown>): ExtractedReference {
+export function sanitizeReference(ref: Record<string, unknown>): ExtractedReference {
   return {
     number: typeof ref.number === "number" ? Math.max(1, Math.min(1000, ref.number)) : 0,
     rawText: sanitizeLLMOutput(String(ref.rawText || "")) || "",
@@ -389,7 +436,9 @@ function sanitizeReference(ref: Record<string, unknown>): ExtractedReference {
     pages: sanitizeLLMOutput(ref.pages as string),
     doi: sanitizeLLMOutput(ref.doi as string),
     pmid: sanitizeLLMOutput(ref.pmid as string),
-    url: sanitizeLLMOutput(ref.url as string),
+    pmcid: normalizePmcid(ref.pmcid),
+    arxivId: normalizeArxivId(ref.arxivId),
+    url: sanitizeUrl(ref.url as string),
     refType: sanitizeLLMOutput(ref.refType as string),
   };
 }
@@ -399,8 +448,35 @@ function sanitizeReference(ref: Record<string, unknown>): ExtractedReference {
  */
 function normalizeOrcid(orcid: unknown): string | undefined {
   if (!orcid || typeof orcid !== "string") return undefined;
-  
+
   // Extract ORCID pattern
   const match = orcid.match(/\d{4}-\d{4}-\d{4}-\d{3}[\dX]/i);
   return match ? match[0].toUpperCase() : undefined;
+}
+
+/**
+ * Normalize and validate PMCID format (e.g., PMC1234567)
+ */
+function normalizePmcid(pmcid: unknown): string | undefined {
+  if (!pmcid || typeof pmcid !== "string") return undefined;
+  const cleaned = sanitizeLLMOutput(pmcid);
+  if (!cleaned) return undefined;
+  const match = cleaned.match(/PMC\d{1,10}/i);
+  return match ? match[0].toUpperCase() : undefined;
+}
+
+/**
+ * Normalize and validate arXiv ID format (e.g., 2301.12345 or math/0601001)
+ */
+function normalizeArxivId(arxivId: unknown): string | undefined {
+  if (!arxivId || typeof arxivId !== "string") return undefined;
+  const cleaned = sanitizeLLMOutput(arxivId);
+  if (!cleaned) return undefined;
+  // New format: YYMM.NNNNN(vN)
+  const newFormat = cleaned.match(/\d{4}\.\d{4,5}(v\d+)?/);
+  if (newFormat) return newFormat[0];
+  // Legacy format: area/YYMMNNN
+  const legacyFormat = cleaned.match(/[a-z-]+\/\d{7}/i);
+  if (legacyFormat) return legacyFormat[0];
+  return undefined;
 }

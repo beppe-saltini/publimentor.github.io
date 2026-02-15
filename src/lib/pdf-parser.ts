@@ -14,80 +14,54 @@ export interface PDFContent {
   characterCount: number;
 }
 
-interface PDFParseResult {
-  text: string;
-  numpages: number;
-  info?: {
-    Title?: string;
-    Author?: string;
-    Subject?: string;
-    Keywords?: string;
-    Creator?: string;
+/**
+ * Helper: extract text and metadata from a Uint8Array using unpdf
+ */
+async function extractWithUnpdf(data: Uint8Array): Promise<PDFContent> {
+  const { getDocumentProxy, extractText } = await import("unpdf");
+  const doc = await getDocumentProxy(data);
+  const { totalPages, text } = await extractText(doc, { mergePages: true });
+
+  // Try to get document metadata
+  let info: PDFContent["info"] = {};
+  try {
+    const meta = await doc.getMetadata();
+    const raw = (meta?.info ?? {}) as Record<string, string | undefined>;
+    info = {
+      title: raw.Title,
+      author: raw.Author,
+      subject: raw.Subject,
+      keywords: raw.Keywords,
+      creator: raw.Creator,
+    };
+  } catch {
+    // Metadata may not be available in all PDFs
+  }
+
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+
+  return {
+    text,
+    numPages: totalPages,
+    info,
+    wordCount,
+    characterCount: text.length,
   };
-}
-
-type PDFParseFunction = (buffer: Buffer) => Promise<PDFParseResult>;
-
-// Lazy-load pdf-parse to avoid SSR issues
-let pdfParseLoaded: PDFParseFunction | null = null;
-
-async function getPdfParse(): Promise<PDFParseFunction> {
-  if (pdfParseLoaded) return pdfParseLoaded;
-  
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  pdfParseLoaded = require("pdf-parse") as PDFParseFunction;
-  return pdfParseLoaded;
 }
 
 /**
  * Parse a PDF file and extract its content
  */
 export async function parsePDF(filePath: string): Promise<PDFContent> {
-  const pdf = await getPdfParse();
   const dataBuffer = await readFile(filePath);
-  const data = await pdf(dataBuffer);
-
-  const text = data.text;
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-
-  return {
-    text,
-    numPages: data.numpages,
-    info: {
-      title: data.info?.Title,
-      author: data.info?.Author,
-      subject: data.info?.Subject,
-      keywords: data.info?.Keywords,
-      creator: data.info?.Creator,
-    },
-    wordCount,
-    characterCount: text.length,
-  };
+  return extractWithUnpdf(new Uint8Array(dataBuffer));
 }
 
 /**
  * Parse PDF from a buffer (for uploaded files)
  */
 export async function parsePDFBuffer(buffer: Buffer): Promise<PDFContent> {
-  const pdf = await getPdfParse();
-  const data = await pdf(buffer);
-
-  const text = data.text;
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-
-  return {
-    text,
-    numPages: data.numpages,
-    info: {
-      title: data.info?.Title,
-      author: data.info?.Author,
-      subject: data.info?.Subject,
-      keywords: data.info?.Keywords,
-      creator: data.info?.Creator,
-    },
-    wordCount,
-    characterCount: text.length,
-  };
+  return extractWithUnpdf(new Uint8Array(buffer));
 }
 
 /**

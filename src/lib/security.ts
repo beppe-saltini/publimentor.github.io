@@ -440,7 +440,7 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self'",
-    "connect-src 'self' https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org",
+    "connect-src 'self' https://*.supabase.co https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

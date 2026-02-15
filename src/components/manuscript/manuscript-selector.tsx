@@ -1,5 +1,12 @@
 "use client";
 
+// Version stamp — check window.__MS_V in the browser console to verify
+// the latest client code is running (should be 8).
+if (typeof window !== "undefined") {
+  console.warn("[ManuscriptSelector] v8 loaded — Supabase direct upload");
+  (window as /* eslint-disable-line @typescript-eslint/no-explicit-any */ any).__MS_V = 8;
+}
+
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -100,14 +107,23 @@ export function ManuscriptSelector({
 
   useEffect(() => {
     if (!publisherIdProp) {
+      console.log("[ManuscriptSelector] no publisherIdProp, fetching /api/publishers…");
       fetch("/api/publishers")
-        .then(res => res.json())
-        .then(data => {
+        .then(res => res.text())
+        .then(text => {
+          const data = JSON.parse(text);
           if (data.publishers?.length > 0) {
+            console.log("[ManuscriptSelector] auto-resolved publisherId:", data.publishers[0].id);
             setAutoPublisherId(data.publishers[0].id);
+          } else {
+            console.warn("[ManuscriptSelector] no publishers found — upload will be unavailable");
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("[ManuscriptSelector] failed to fetch publishers:", err);
+        });
+    } else {
+      console.log("[ManuscriptSelector] publisherIdProp provided:", publisherIdProp);
     }
   }, [publisherIdProp]);
 
@@ -129,7 +145,8 @@ export function ManuscriptSelector({
     setLoading(true);
     try {
       const response = await fetch("/api/manuscripts?status=READY&limit=50");
-      const data = await response.json();
+      const text = await response.text();
+      const data = JSON.parse(text);
       if (response.ok) {
         setManuscripts(data.manuscripts);
       }
@@ -148,7 +165,8 @@ export function ManuscriptSelector({
         throw new Error("Failed to get status");
       }
       
-      const status: ProcessingStatus = await response.json();
+      const statusText = await response.text();
+      const status: ProcessingStatus = JSON.parse(statusText);
       setProcessingStatus(status);
       
       // Continue polling if not complete
@@ -173,10 +191,19 @@ export function ManuscriptSelector({
     }
   }, []);
 
-  // Handle file upload
+  // Handle file upload — two-step Supabase direct upload
   const handleUpload = async (file: File) => {
+    console.log("[Upload] handleUpload called", { fileName: file.name, size: file.size, publisherId, journalId });
     if (!publisherId) {
-      toast.error("Upload not available - publisher ID required");
+      console.error("[Upload] publisherId is missing! publisherIdProp:", publisherIdProp, "autoPublisherId:", autoPublisherId);
+      toast.error("Upload not available — publisher ID not loaded. Try refreshing the page.");
+      return;
+    }
+
+    const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
+    if (file.size > MAX_SIZE) {
+      toast.error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum is 50 MB.`);
+      setUploadError(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum is 50 MB.`);
       return;
     }
 
@@ -186,36 +213,114 @@ export function ManuscriptSelector({
     setProcessingStatus(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("publisherId", publisherId);
-      if (journalId) {
-        formData.append("journalId", journalId);
-      }
+      // ── STEP 1: Initialize upload (get signed URL) ──
+      console.log("[Upload] Step 1: calling /api/manuscripts/upload/init");
+      setUploadProgress(5);
 
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => Math.min(prev + 10, 90));
-      }, 200);
-
-      const response = await fetch("/api/manuscripts/upload", {
+      const initRes = await fetch("/api/manuscripts/upload/init", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          publisherId,
+          fileName: file.name,
+          fileSize: file.size,
+        }),
       });
 
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Upload failed");
+      const initText = await initRes.text();
+      let initData: Record<string, unknown>;
+      try {
+        initData = JSON.parse(initText);
+      } catch {
+        console.error("[Upload] Non-JSON init response:", initRes.status, initText.slice(0, 500));
+        throw new Error(`Server error (HTTP ${initRes.status}). The server may be misconfigured.`);
       }
 
-      // Start polling for processing status
-      pollStatus(data.manuscriptId);
+      if (!initRes.ok) {
+        throw new Error((initData.error as string) || "Failed to initialize upload");
+      }
+
+      const { manuscriptId, signedUrl, token } = initData as {
+        manuscriptId: string;
+        signedUrl: string;
+        token: string;
+      };
+
+      console.log("[Upload] Step 1 done, manuscriptId:", manuscriptId);
+      setUploadProgress(10);
+
+      // ── STEP 2: Upload file directly to Supabase Storage ──
+      console.log("[Upload] Step 2: uploading to Supabase Storage", {
+        size: file.size,
+        sizeMB: (file.size / (1024 * 1024)).toFixed(1),
+      });
+
+      // Use XMLHttpRequest for real progress tracking
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", signedUrl, true);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        // Supabase signed upload URLs require the token as a header
+        xhr.setRequestHeader("x-upsert", "false");
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            // Map upload progress to 10%–80% of total progress
+            const pct = Math.round(10 + (e.loaded / e.total) * 70);
+            setUploadProgress(pct);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            console.log("[Upload] Supabase upload complete, status:", xhr.status);
+            resolve();
+          } else {
+            console.error("[Upload] Supabase upload failed:", xhr.status, xhr.responseText?.slice(0, 500));
+            reject(new Error(`File upload failed (HTTP ${xhr.status})`));
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error("Network error during file upload"));
+        };
+
+        xhr.send(file);
+      });
+
+      setUploadProgress(85);
+
+      // ── STEP 3: Trigger server-side processing ──
+      console.log("[Upload] Step 3: triggering processing");
+
+      const processRes = await fetch(`/api/manuscripts/${manuscriptId}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const processText = await processRes.text();
+      let processData: Record<string, unknown>;
+      try {
+        processData = JSON.parse(processText);
+      } catch {
+        console.error("[Upload] Non-JSON process response:", processRes.status, processText.slice(0, 500));
+        throw new Error(`Server error during processing (HTTP ${processRes.status})`);
+      }
+
+      if (!processRes.ok) {
+        throw new Error((processData.error as string) || "Failed to start processing");
+      }
+
+      console.log("[Upload] Step 3 done, processing started");
+      setUploadProgress(90);
+
+      // ── STEP 4: Poll for processing status ──
+      toast.success("File uploaded! Processing manuscript...");
+      pollStatus(manuscriptId);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
+      console.error("[Upload] Error:", message);
       setUploadError(message);
       toast.error(message);
     } finally {
@@ -223,11 +328,21 @@ export function ManuscriptSelector({
     }
   };
 
-  // Dropzone configuration
+  // Dropzone configuration — 50 MB limit (Supabase Storage, no Vercel body limit)
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (files) => {
       if (files.length > 0) {
         handleUpload(files[0]);
+      }
+    },
+    onDropRejected: (rejections) => {
+      const reason = rejections[0]?.errors?.[0];
+      if (reason?.code === "file-too-large") {
+        toast.error("File is too large. Maximum size is 50 MB.");
+      } else if (reason?.code === "file-invalid-type") {
+        toast.error("Invalid file type. Only PDF and DOCX are supported.");
+      } else {
+        toast.error(reason?.message || "File rejected");
       }
     },
     accept: {
@@ -235,7 +350,7 @@ export function ManuscriptSelector({
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
     },
     maxFiles: 1,
-    maxSize: 50 * 1024 * 1024, // 50MB
+    maxSize: 50 * 1024 * 1024, // 50 MB (Supabase Storage handles the file directly)
     disabled: uploading || !!processingStatus,
   });
 
@@ -249,9 +364,23 @@ export function ManuscriptSelector({
   const fetchManuscriptDetails = async (id: string) => {
     try {
       const response = await fetch(`/api/manuscripts/${id}`);
-      const data = await response.json();
+      const text = await response.text();
+      let data: Record<string, any>;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.error("[ManuscriptSelector] Non-JSON response from /api/manuscripts/", id, text.slice(0, 500));
+        toast.error("Failed to load manuscript details — server returned an invalid response.");
+        return;
+      }
       
-      if (response.ok && data.manuscript) {
+      if (!response.ok) {
+        console.error("[ManuscriptSelector] Failed to fetch manuscript:", response.status, data);
+        toast.error(data.error || `Failed to load manuscript (HTTP ${response.status})`);
+        return;
+      }
+
+      if (data.manuscript) {
         const m = data.manuscript;
         setSelected({
           id: m.id,
@@ -266,17 +395,20 @@ export function ManuscriptSelector({
 
         // Pass manuscript data to parent
         if (onManuscriptData) {
+          const kw = m.keywords || [];
+          const authors = m.authors?.map((a: any) => ({
+            name: a.fullName,
+            email: a.email,
+            affiliation: m.affiliations?.find((aff: any) => 
+              a.affiliationNums?.includes(aff.affiliationNumber)
+            )?.rawText,
+          })) || [];
+
           onManuscriptData({
             title: m.title || "",
             abstract: m.abstract || "",
-            keywords: m.keywords || [],
-            authors: m.authors?.map((a: any) => ({
-              name: a.fullName,
-              email: a.email,
-              affiliation: m.affiliations?.find((aff: any) => 
-                a.affiliationNums?.includes(aff.affiliationNumber)
-              )?.rawText,
-            })) || [],
+            keywords: kw,
+            authors,
             references: m.references?.map((r: any) => ({
               refNumber: r.refNumber,
               rawText: r.rawText,
@@ -289,10 +421,21 @@ export function ManuscriptSelector({
             })) || [],
             filePath: m.filePath,
           });
+
+          if (kw.length > 0 || authors.length > 0) {
+            toast.success(`Loaded: ${kw.length} keywords, ${authors.length} authors`);
+          } else if (m.status !== "READY") {
+            toast.info(`Manuscript selected but still processing (status: ${m.status}). Keywords and authors may not be available yet.`);
+          } else {
+            toast.info("Manuscript selected but no keywords or authors were extracted.");
+          }
         }
+      } else {
+        toast.error("Manuscript not found.");
       }
     } catch (error) {
       console.error("Failed to fetch manuscript details:", error);
+      toast.error("Failed to load manuscript details. Check the console for more info.");
     }
   };
 
@@ -427,20 +570,8 @@ export function ManuscriptSelector({
 
               {/* Upload New Tab */}
               <TabsContent value="upload" className="mt-4">
-                {/* No publisher available */}
-                {!publisherId && !uploading && !processingStatus && (
-                  <div className="py-8 text-center">
-                    <AlertCircle className="h-12 w-12 mx-auto text-amber-400 mb-4" />
-                    <p className="text-gray-600 font-medium">Setting up upload...</p>
-                    <p className="text-sm text-gray-400 mt-1">
-                      <Loader2 className="h-4 w-4 inline animate-spin mr-1" />
-                      Loading publisher information
-                    </p>
-                  </div>
-                )}
-
                 {/* Upload error */}
-                {publisherId && uploadError && (
+                {uploadError && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 flex items-start gap-3">
                     <AlertCircle className="h-5 w-5 text-red-500 mt-0.5" />
                     <div>
@@ -459,7 +590,7 @@ export function ManuscriptSelector({
                 )}
 
                 {/* Processing status */}
-                {publisherId && processingStatus && !uploadError && (
+                {processingStatus && !uploadError && (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <div className="flex items-center gap-2 mb-2">
                       {processingStatus.isComplete ? (
@@ -498,7 +629,7 @@ export function ManuscriptSelector({
                 )}
 
                 {/* Dropzone */}
-                {publisherId && !processingStatus && !uploadError && (
+                {!processingStatus && !uploadError && (
                   <div
                     {...getRootProps()}
                     className={`
@@ -529,7 +660,7 @@ export function ManuscriptSelector({
                           }
                         </p>
                         <p className="text-sm text-gray-400 mt-2">
-                          Supported formats: PDF, DOCX (Max 50MB)
+                          Supported formats: PDF, DOCX (Max 50 MB)
                         </p>
                       </>
                     )}

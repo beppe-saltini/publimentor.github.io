@@ -1,7 +1,11 @@
 /**
  * File Storage Module
- * 
- * Supports local filesystem storage with future migration path to S3/R2
+ *
+ * Supports:
+ * - Local filesystem (development)
+ * - Supabase Storage (production)
+ *
+ * getStorage() returns the appropriate provider based on STORAGE_PROVIDER env var.
  */
 
 import fs from "fs/promises";
@@ -29,6 +33,13 @@ export interface UploadOptions {
   mimeType: string;
 }
 
+export interface StorageProvider {
+  upload(buffer: Buffer, options: UploadOptions): Promise<StorageFile>;
+  download(filePath: string): Promise<Buffer>;
+  delete(filePath: string): Promise<void>;
+  exists(filePath: string): Promise<boolean>;
+}
+
 // ============================================================
 // Helper Functions
 // ============================================================
@@ -50,14 +61,99 @@ export function calculateHash(buffer: Buffer): string {
 }
 
 // ============================================================
+// Supabase Storage Provider
+// ============================================================
+
+class SupabaseStorageProvider implements StorageProvider {
+  private async getClient() {
+    // Dynamic import to avoid loading @supabase/supabase-js when not needed
+    const { getSupabaseAdmin, MANUSCRIPTS_BUCKET } = await import("@/lib/supabase");
+    return { supabase: getSupabaseAdmin(), bucket: MANUSCRIPTS_BUCKET };
+  }
+
+  async upload(buffer: Buffer, options: UploadOptions): Promise<StorageFile> {
+    const storagePath = generateStoragePath(options);
+    const { supabase, bucket } = await this.getClient();
+
+    const { error } = await supabase.storage
+      .from(bucket)
+      .upload(storagePath, buffer, {
+        contentType: options.mimeType,
+        upsert: false,
+      });
+
+    if (error) {
+      console.error("[SupabaseStorage] Upload failed:", error);
+      throw new Error(`Storage upload failed: ${error.message}`);
+    }
+
+    const hash = calculateHash(buffer);
+
+    return {
+      path: storagePath,
+      size: buffer.length,
+      mimeType: options.mimeType,
+      hash,
+      createdAt: new Date(),
+    };
+  }
+
+  async download(filePath: string): Promise<Buffer> {
+    const { supabase, bucket } = await this.getClient();
+
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .download(filePath);
+
+    if (error || !data) {
+      console.error("[SupabaseStorage] Download failed:", error);
+      throw new Error(`Storage download failed: ${error?.message || "no data"}`);
+    }
+
+    const arrayBuffer = await data.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  async delete(filePath: string): Promise<void> {
+    const { supabase, bucket } = await this.getClient();
+
+    const { error } = await supabase.storage
+      .from(bucket)
+      .remove([filePath]);
+
+    if (error) {
+      console.error("[SupabaseStorage] Delete failed:", error);
+      // Non-critical — don't throw
+    }
+  }
+
+  async exists(filePath: string): Promise<boolean> {
+    try {
+      const { supabase, bucket } = await this.getClient();
+      // Try to get metadata — if it fails the file doesn't exist
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .list(filePath.split("/").slice(0, -1).join("/"), {
+          search: filePath.split("/").pop(),
+        });
+      return !error && (data?.length ?? 0) > 0;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// ============================================================
 // Local Storage Provider
 // ============================================================
 
-class LocalStorageProvider {
+class LocalStorageProvider implements StorageProvider {
   private basePath: string;
 
   constructor() {
-    this.basePath = process.env.LOCAL_STORAGE_PATH || path.join(process.cwd(), "uploads");
+    // On Vercel the project directory is read-only; use /tmp for ephemeral storage.
+    this.basePath = process.env.LOCAL_STORAGE_PATH
+      || (process.env.VERCEL ? "/tmp/uploads" : path.join(process.cwd(), "uploads"));
   }
 
   private getFullPath(filePath: string): string {
@@ -67,17 +163,17 @@ class LocalStorageProvider {
   async upload(buffer: Buffer, options: UploadOptions): Promise<StorageFile> {
     const storagePath = generateStoragePath(options);
     const fullPath = this.getFullPath(storagePath);
-    
+
     // Ensure directory exists
     const dir = path.dirname(fullPath);
     await fs.mkdir(dir, { recursive: true });
-    
+
     // Write file
     await fs.writeFile(fullPath, buffer);
-    
+
     // Calculate hash
     const hash = calculateHash(buffer);
-    
+
     return {
       path: storagePath,
       size: buffer.length,
@@ -112,82 +208,50 @@ class LocalStorageProvider {
       return false;
     }
   }
-
-  async getMetadata(filePath: string): Promise<StorageFile | null> {
-    const fullPath = this.getFullPath(filePath);
-    try {
-      const stats = await fs.stat(fullPath);
-      return {
-        path: filePath,
-        size: stats.size,
-        mimeType: "application/octet-stream",
-        createdAt: stats.birthtime,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  async list(prefix: string): Promise<StorageFile[]> {
-    const fullPath = this.getFullPath(prefix);
-    const files: StorageFile[] = [];
-    
-    try {
-      const entries = await fs.readdir(fullPath, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        if (entry.isFile()) {
-          const filePath = path.join(prefix, entry.name);
-          const metadata = await this.getMetadata(filePath);
-          if (metadata) {
-            files.push(metadata);
-          }
-        }
-      }
-    } catch {
-      // Return empty array if directory doesn't exist
-    }
-    
-    return files;
-  }
 }
 
 // ============================================================
 // Singleton Export
 // ============================================================
 
-let storageInstance: LocalStorageProvider | null = null;
+let storageInstance: StorageProvider | null = null;
 
-export function getStorage(): LocalStorageProvider {
+export function getStorage(): StorageProvider {
   if (!storageInstance) {
-    storageInstance = new LocalStorageProvider();
+    const provider = process.env.STORAGE_PROVIDER || "local";
+    if (provider === "supabase") {
+      storageInstance = new SupabaseStorageProvider();
+    } else {
+      storageInstance = new LocalStorageProvider();
+    }
+    console.log(`[Storage] Using ${provider} provider`);
   }
   return storageInstance;
+}
+
+/**
+ * Get the storage provider name currently in use.
+ */
+export function getStorageProviderName(): "supabase" | "local" {
+  return (process.env.STORAGE_PROVIDER === "supabase") ? "supabase" : "local";
 }
 
 // ============================================================
 // Legacy Helper (for backward compatibility)
 // ============================================================
 
-/**
- * Simple file upload helper for legacy submissions
- */
 export async function uploadFile(file: File, folder: string): Promise<string> {
-  const storage = getStorage();
   const buffer = Buffer.from(await file.arrayBuffer());
   const timestamp = Date.now();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
   const filePath = `${folder}/${timestamp}_${sanitizedName}`;
-  
-  const basePath = process.env.LOCAL_STORAGE_PATH || path.join(process.cwd(), "uploads");
+
+  const basePath = process.env.LOCAL_STORAGE_PATH
+    || (process.env.VERCEL ? "/tmp/uploads" : path.join(process.cwd(), "uploads"));
   const fullPath = path.join(basePath, filePath);
-  
-  // Ensure directory exists
+
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
-  
-  // Write file
   await fs.writeFile(fullPath, buffer);
-  
-  // Return a relative URL
+
   return `/uploads/${filePath}`;
 }

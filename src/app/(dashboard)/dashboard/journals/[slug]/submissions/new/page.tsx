@@ -119,10 +119,16 @@ export default function NewSubmissionPage() {
     }
   };
 
-  // Handle file upload
+  // Handle file upload — two-step Supabase direct upload
   const handleUpload = async (file: File) => {
     if (!defaultPublisherId) {
       toast.error("Please wait while we set up your account...");
+      return;
+    }
+
+    const MAX_SIZE = 50 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      toast.error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum is 50 MB.`);
       return;
     }
 
@@ -131,30 +137,50 @@ export default function NewSubmissionPage() {
     setPdfFile(file);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("publisherId", defaultPublisherId);
-
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => Math.min(prev + 10, 90));
-      }, 200);
-
-      const response = await fetch("/api/manuscripts/upload", {
+      // Step 1: Init
+      setUploadProgress(5);
+      const initRes = await fetch("/api/manuscripts/upload/init", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publisherId: defaultPublisherId, fileName: file.name, fileSize: file.size }),
       });
+      const initText = await initRes.text();
+      const initData = JSON.parse(initText);
+      if (!initRes.ok) throw new Error(initData.error || "Failed to initialize upload");
+      const { manuscriptId: msId, signedUrl } = initData;
+      setUploadProgress(10);
 
-      clearInterval(progressInterval);
-      setUploadProgress(100);
+      // Step 2: Upload to Supabase
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", signedUrl, true);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.setRequestHeader("x-upsert", "false");
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setUploadProgress(Math.round(10 + (e.loaded / e.total) * 70));
+          }
+        };
+        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+        xhr.onerror = () => reject(new Error("Network error during upload"));
+        xhr.send(file);
+      });
+      setUploadProgress(85);
 
-      const data = await response.json();
+      // Step 3: Trigger processing
+      const processRes = await fetch(`/api/manuscripts/${msId}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const processText = await processRes.text();
+      const processData = JSON.parse(processText);
+      if (!processRes.ok) throw new Error(processData.error || "Failed to start processing");
+      setUploadProgress(90);
 
-      if (!response.ok) {
-        throw new Error(data.error || "Upload failed");
-      }
-
-      setManuscriptId(data.manuscriptId);
-      pollStatus(data.manuscriptId);
+      setManuscriptId(msId);
+      toast.success("File uploaded! Processing manuscript...");
+      pollStatus(msId);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
       toast.error(message);

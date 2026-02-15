@@ -21,9 +21,9 @@ export async function GET(
 
     const { id } = await params;
 
-    // Get manuscript with all related data
-    const manuscript = await prisma.manuscript.findUnique({
-      where: { id },
+    // Get manuscript with all related data (exclude soft-deleted)
+    const manuscript = await prisma.manuscript.findFirst({
+      where: { id, deletedAt: null },
       include: {
         publisher: {
           select: { id: true, name: true, slug: true },
@@ -120,8 +120,16 @@ export async function GET(
         affiliations: manuscript.affiliations,
         references: manuscript.references,
         
-        // Processing
-        processingJobs: manuscript.processingJobs,
+        // Processing (strip internal error details from client response)
+        processingJobs: manuscript.processingJobs.map((j: Record<string, unknown>) => ({
+          id: j.id,
+          jobType: j.jobType,
+          status: j.status,
+          progress: j.progress,
+          startedAt: j.startedAt,
+          completedAt: j.completedAt,
+          createdAt: j.createdAt,
+        })),
         processingStarted: manuscript.processingStarted,
         processingEnded: manuscript.processingEnded,
         
@@ -159,13 +167,14 @@ export async function DELETE(
 
     const { id } = await params;
 
-    const manuscript = await prisma.manuscript.findUnique({
-      where: { id },
+    const manuscript = await prisma.manuscript.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true,
         uploaderId: true,
         publisherId: true,
         filePath: true,
+        status: true,
       },
     });
 
@@ -194,19 +203,22 @@ export async function DELETE(
       );
     }
 
-    // Delete from storage
-    try {
-      const { getStorage } = await import("@/lib/storage");
-      const storage = getStorage();
-      await storage.delete(manuscript.filePath);
-    } catch (error) {
-      console.error("[Manuscript] Error deleting file from storage:", error);
-      // Continue with database deletion
+    // Check if manuscript is actively processing (Finding 12)
+    const activeStatuses = ["EXTRACTING", "PROCESSING", "EMBEDDING"];
+    if (activeStatuses.includes(manuscript.status as string)) {
+      return NextResponse.json(
+        { error: "Cannot delete a manuscript that is currently being processed. Wait for processing to complete." },
+        { status: 409 }
+      );
     }
 
-    // Delete from database (cascades to related records)
-    await prisma.manuscript.delete({
+    // Soft delete (compliance: retain records for audit trail)
+    await prisma.manuscript.update({
       where: { id },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: session.user.id,
+      },
     });
 
     return NextResponse.json({
