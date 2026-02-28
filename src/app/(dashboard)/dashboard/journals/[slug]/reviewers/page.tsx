@@ -94,7 +94,10 @@ interface AdvancedReviewer {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
+
+type DiscoveryReviewer = AdvancedReviewer;
 
 interface DiscoverySummary {
   totalFound: number;
@@ -335,6 +338,10 @@ function ReviewerSearchContent() {
 
   // Find reviewers automatically from PubMed and OpenAlex
   const handleFindReviewers = async () => {
+    if (!selectedManuscriptId) {
+      toast.error("Please select a manuscript first so reviewers can be saved");
+      return;
+    }
     if (!keywords.trim()) {
       toast.error("Please enter keywords to search for reviewers");
       return;
@@ -381,20 +388,17 @@ function ReviewerSearchContent() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ reviewers: mapped }),
           });
+          const saveData = await saveRes.json();
           if (saveRes.ok) {
-            const saveData = await saveRes.json();
             toast.success(
               `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
             );
           } else {
-            toast.success(
-              `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
-            );
+            toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
           }
-        } catch {
-          toast.success(
-            `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
-          );
+        } catch (err) {
+          console.error("[AutoSave] Save error:", err);
+          toast.error("Found reviewers but failed to save them to the manuscript");
         }
       } else {
         toast.success(
@@ -410,6 +414,10 @@ function ReviewerSearchContent() {
 
   // Advanced reviewer discovery
   const handleAdvancedDiscovery = async () => {
+    if (!selectedManuscriptId) {
+      toast.error("Please select a manuscript first so reviewers can be saved");
+      return;
+    }
     if (!primaryKeywords.trim()) {
       toast.error("Please enter primary expertise keywords");
       return;
@@ -452,25 +460,38 @@ function ReviewerSearchContent() {
 
       if (selectedManuscriptId && data.reviewers?.length > 0) {
         try {
+          const mapped = data.reviewers.map((r: DiscoveryReviewer) => ({
+            name: r.name,
+            firstName: r.firstName,
+            lastName: r.lastName,
+            affiliation: r.affiliation,
+            country: r.country,
+            hIndex: r.hIndex,
+            citationCount: r.citationCount,
+            publicationCount: r.publicationCount,
+            sources: r.sources,
+            recentArticles: r.recentArticles,
+            verificationUrls: r.verificationUrls,
+            llmAnalysis: r.llmAnalysis,
+            coiSummary: r.coiSummary,
+            inferredGender: r.inferredGender,
+          }));
           const saveRes = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reviewers: data.reviewers }),
+            body: JSON.stringify({ reviewers: mapped }),
           });
+          const saveData = await saveRes.json();
           if (saveRes.ok) {
-            const saveData = await saveRes.json();
             toast.success(
               `Found ${data.reviewers.length} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
             );
           } else {
-            toast.success(
-              `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
-            );
+            toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
           }
-        } catch {
-          toast.success(
-            `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
-          );
+        } catch (err) {
+          console.error("[AutoSave] Save error:", err);
+          toast.error("Found reviewers but failed to save them to the manuscript");
         }
       } else {
         toast.success(
@@ -492,7 +513,7 @@ function ReviewerSearchContent() {
       return;
     }
 
-    let reviewersToSave: { name: string; firstName?: string; lastName?: string; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
+    let reviewersToSave: { name: string; firstName?: string; lastName?: string; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; recentArticles?: Record<string, unknown>[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
 
     if (discoveryResult?.reviewers.length) {
       reviewersToSave = discoveryResult.reviewers.map(r => ({
@@ -505,9 +526,11 @@ function ReviewerSearchContent() {
         citationCount: r.citationCount,
         publicationCount: r.publicationCount,
         sources: r.sources,
+        recentArticles: r.recentArticles as Record<string, unknown>[] | undefined,
         verificationUrls: r.verificationUrls,
         llmAnalysis: r.llmAnalysis as Record<string, unknown> | undefined,
         coiSummary: r.coiSummary as Record<string, unknown> | undefined,
+        inferredGender: r.inferredGender,
       }));
     } else if (candidateReviewers.length) {
       reviewersToSave = candidateReviewers.map(r => ({
@@ -713,7 +736,7 @@ function ReviewerSearchContent() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
-                  Source Manuscript (optional)
+                  Source Manuscript
                 </Label>
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
@@ -1398,7 +1421,7 @@ function ReviewerSearchContent() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
-                  Load from Manuscript (optional)
+                  Source Manuscript
                 </Label>
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
