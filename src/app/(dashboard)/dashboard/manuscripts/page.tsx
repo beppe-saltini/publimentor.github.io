@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ManuscriptUploadForm } from "@/components/manuscript";
 import { 
-  FileText, Clock, CheckCircle, XCircle, Loader2, 
+  FileText, Clock, Loader2, 
   Upload, List, Eye, Trash2, Users, BookOpen
 } from "lucide-react";
 import { toast } from "sonner";
@@ -162,21 +161,6 @@ export default function ManuscriptsPage() {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
-  // Get status badge variant
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "READY":
-        return <Badge className="bg-green-100 text-green-700">Ready</Badge>;
-      case "PROCESSING":
-      case "EXTRACTING":
-      case "EMBEDDING":
-        return <Badge className="bg-blue-100 text-blue-700">Processing</Badge>;
-      case "ERROR":
-        return <Badge className="bg-red-100 text-red-700">Error</Badge>;
-      default:
-        return <Badge className="bg-gray-100 text-gray-700">{status}</Badge>;
-    }
-  };
 
   return (
     <div className="container mx-auto py-8 px-4 max-w-6xl">
@@ -245,35 +229,24 @@ export default function ManuscriptsPage() {
           ) : (
             <div className="space-y-4">
               {manuscripts.map((manuscript) => (
-                <Card key={manuscript.id} className="hover:shadow-md transition-shadow">
+                <Card
+                  key={manuscript.id}
+                  className="hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => window.location.href = `/dashboard/manuscripts/${manuscript.id}`}
+                >
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-2">
-                          <FileText className="h-5 w-5 text-gray-400" />
-                          <h3 className="font-medium">
+                          <FileText className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                          <h3 className="font-medium truncate">
                             {manuscript.title || manuscript.fileName}
                           </h3>
-                          {getStatusBadge(manuscript.status)}
-                          <select
-                            value={manuscript.workflowStatus || "NEW"}
-                            onChange={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleWorkflowStatusChange(manuscript.id, e.target.value);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-xs border rounded px-2 py-0.5 bg-white cursor-pointer hover:border-blue-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          >
-                            {WORKFLOW_OPTIONS.map(opt => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
                         </div>
                         
-                        <div className="flex flex-wrap gap-4 text-sm text-gray-500">
+                        <div className="flex flex-wrap gap-4 text-sm text-gray-500 ml-8">
                           <span className="flex items-center gap-1">
-                            <Clock className="h-4 w-4" />
+                            <Clock className="h-3.5 w-3.5" />
                             {new Date(manuscript.createdAt).toLocaleDateString()}
                           </span>
                           {manuscript.wordCount && (
@@ -281,13 +254,13 @@ export default function ManuscriptsPage() {
                           )}
                           {manuscript.authorCount > 0 && (
                             <span className="flex items-center gap-1">
-                              <Users className="h-4 w-4" />
+                              <Users className="h-3.5 w-3.5" />
                               {manuscript.authorCount} authors
                             </span>
                           )}
                           {manuscript.referenceCount > 0 && (
                             <span className="flex items-center gap-1">
-                              <BookOpen className="h-4 w-4" />
+                              <BookOpen className="h-3.5 w-3.5" />
                               {manuscript.referenceCount} refs
                             </span>
                           )}
@@ -297,13 +270,22 @@ export default function ManuscriptsPage() {
                         </div>
 
                         {manuscript.statusMessage && manuscript.status === "ERROR" && (
-                          <p className="text-sm text-red-500 mt-2">
+                          <p className="text-sm text-red-500 mt-2 ml-8">
                             {manuscript.statusMessage}
                           </p>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={manuscript.workflowStatus || "NEW"}
+                          onChange={(e) => handleWorkflowStatusChange(manuscript.id, e.target.value)}
+                          className="h-9 text-sm border rounded-md px-3 py-1 bg-white cursor-pointer border-input hover:bg-accent hover:text-accent-foreground focus:ring-2 focus:ring-ring focus:border-ring"
+                        >
+                          {WORKFLOW_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
                         <Button
                           variant="outline"
                           size="sm"
