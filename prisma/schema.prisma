@@ -918,6 +918,9 @@ model ManuscriptReviewer {
   llmAnalysis      Json? // { relevanceScore, reasoning, topicalMatch, ... }
   coiSummary       Json? // { hasConflict, worstSeverity, conflictCount, conflicts }
 
+  // Editor-assigned expertise areas (string[])
+  assignedExpertise Json?
+
   // Status
   status ManuscriptReviewerStatus @default(SUGGESTED)
 

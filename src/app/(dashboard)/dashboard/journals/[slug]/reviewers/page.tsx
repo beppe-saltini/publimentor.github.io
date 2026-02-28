@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
   Search, User, Building, BookOpen, Award, Globe, Loader2, 
   ExternalLink, CheckCircle, FileText, AlertTriangle,
   Users, Sparkles, Mail, MapPin, GraduationCap, FlaskConical,
-  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star
+  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star, Check
 } from "lucide-react";
 import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
@@ -304,35 +304,59 @@ function ReviewerSearchContent() {
         const rejected = allReviewers.filter(r => r.status === "REJECTED");
         const active = allReviewers.filter(r => r.status !== "REJECTED");
 
-        setRejectedNames(new Set(rejected.map(r => (r.name as string).toLowerCase().trim())));
+        // Build full rejected set: DB rejected + local rejections (handles async PATCH race)
+        const dbRejected = new Set(rejected.map(r => (r.name as string).toLowerCase().trim()));
+        const allRejected = new Set([...rejectedNames, ...dbRejected]);
+        setRejectedNames(allRejected);
 
         if (active.length > 0) {
-          const mapped = active.map(mapDbReviewerToAdvanced);
-          const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
-          setDiscoveryResult(prev => ({
-            reviewers: prev
-              ? [...prev.reviewers.filter(existing => !mapped.some(m => m.name === existing.name)), ...mapped]
-              : mapped,
-            summary: prev?.summary || {
-              totalFound: mapped.length,
-              returned: mapped.length,
-              criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
-              diversity: { countries, countryCount: countries.length },
-              avgPublications: Math.round(mapped.reduce((sum, r) => sum + r.publicationCount, 0) / mapped.length),
-              avgSeniorAuthorships: 0,
-            },
-            relatedConcepts: prev?.relatedConcepts || [],
-            disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
-            selectionCriteria: prev?.selectionCriteria || {},
-          }));
+          const mapped = active
+            .filter(r => !allRejected.has((r.name as string).toLowerCase().trim()))
+            .map(mapDbReviewerToAdvanced);
 
-          const flags: Record<string, "up" | null> = {};
-          active.forEach(r => {
-            if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
-          });
-          setFlaggedReviewers(prev => ({ ...prev, ...flags }));
-        } else {
-          setRejectedNames(new Set(rejected.map(r => (r.name as string).toLowerCase().trim())));
+          if (mapped.length > 0) {
+            const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
+            setDiscoveryResult(prev => {
+              const keptPrev = prev
+                ? prev.reviewers.filter(existing =>
+                    !mapped.some(m => m.name === existing.name) &&
+                    !allRejected.has(existing.name.toLowerCase().trim()))
+                : [];
+              const merged = [...keptPrev, ...mapped];
+              return {
+                reviewers: merged,
+                summary: prev?.summary || {
+                  totalFound: merged.length,
+                  returned: merged.length,
+                  criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
+                  diversity: { countries, countryCount: countries.length },
+                  avgPublications: Math.round(merged.reduce((sum, r) => sum + r.publicationCount, 0) / (merged.length || 1)),
+                  avgSeniorAuthorships: 0,
+                },
+                relatedConcepts: prev?.relatedConcepts || [],
+                disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
+                selectionCriteria: prev?.selectionCriteria || {},
+              };
+            });
+
+            const flags: Record<string, "up" | null> = {};
+            active.forEach(r => {
+              if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
+            });
+            setFlaggedReviewers(prev => ({ ...prev, ...flags }));
+          }
+        }
+
+        // Load assigned expertise from DB
+        const expertiseMap: Record<string, string[]> = {};
+        allReviewers.forEach(r => {
+          const ae = r.assignedExpertise as string[] | null;
+          if (ae && ae.length > 0) {
+            expertiseMap[r.id as string] = ae;
+          }
+        });
+        if (Object.keys(expertiseMap).length > 0) {
+          setAssignedExpertise(prev => ({ ...prev, ...expertiseMap }));
         }
       }
     } catch (error) {
@@ -433,6 +457,68 @@ function ReviewerSearchContent() {
     });
   };
 
+  // Expertise coverage tracking — keyed by reviewer ID
+  const [assignedExpertise, setAssignedExpertise] = useState<Record<string, string[]>>({});
+
+  // Derive the required expertise areas from search keywords
+  const manuscriptExpertise = useMemo(() => {
+    const all = [
+      ...primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
+      ...secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
+    ];
+    return [...new Set(all)];
+  }, [primaryKeywords, secondaryKeywords]);
+
+  // Compute coverage: which expertise areas are covered and by whom
+  const expertiseCoverage = useMemo(() => {
+    const allReviewers = [
+      ...(discoveryResult?.reviewers || []).filter(r => !isRejected(r.name)),
+      ...(candidateReviewers || []).filter(r => !isRejected(r.name)),
+    ];
+    const coverage: Record<string, { reviewerIds: string[]; reviewerNames: string[] }> = {};
+    for (const exp of manuscriptExpertise) {
+      coverage[exp] = { reviewerIds: [], reviewerNames: [] };
+    }
+    for (const r of allReviewers) {
+      const assigned = assignedExpertise[r.id] || [];
+      for (const exp of assigned) {
+        if (coverage[exp]) {
+          coverage[exp].reviewerIds.push(r.id);
+          coverage[exp].reviewerNames.push(r.name);
+        }
+      }
+    }
+    return coverage;
+  }, [manuscriptExpertise, assignedExpertise, discoveryResult, candidateReviewers, isRejected]);
+
+  const coveredExpertise = useMemo(
+    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) > 0),
+    [manuscriptExpertise, expertiseCoverage]
+  );
+  const uncoveredExpertise = useMemo(
+    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) === 0),
+    [manuscriptExpertise, expertiseCoverage]
+  );
+
+  const toggleExpertise = (reviewerId: string, expertise: string) => {
+    setAssignedExpertise(prev => {
+      const current = prev[reviewerId] || [];
+      const updated = current.includes(expertise)
+        ? current.filter(e => e !== expertise)
+        : [...current, expertise];
+      const next = { ...prev, [reviewerId]: updated };
+      // Persist to DB
+      if (selectedManuscriptId) {
+        fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assignedExpertise: updated }),
+        }).catch(err => console.error("Error saving expertise:", err));
+      }
+      return next;
+    });
+  };
+
   const toggleFlag = (reviewerId: string, reviewerName: string, direction: "up" | "down") => {
     if (direction === "down") {
       // Optimistic update: remove immediately
@@ -470,6 +556,7 @@ function ReviewerSearchContent() {
       ...(discoveryResult?.reviewers || [])
         .filter(r => !isRejected(r.name))
         .map(r => ({
+          id: r.id,
           name: r.name,
           affiliation: r.affiliation || "",
           country: r.country || "",
@@ -478,10 +565,12 @@ function ReviewerSearchContent() {
           flag: flaggedReviewers[r.id] || "none",
           coiStatus: r.coiSummary?.worstSeverity || "clear",
           responsiveness: reviewerScores[r.name]?.score || "",
+          expertise: (assignedExpertise[r.id] || []).join("; "),
         })),
       ...(candidateReviewers || [])
         .filter(r => !isRejected(r.name))
         .map(r => ({
+          id: r.id,
           name: r.name,
           affiliation: r.affiliation || "",
           country: "",
@@ -490,6 +579,7 @@ function ReviewerSearchContent() {
           flag: flaggedReviewers[r.id] || "none",
           coiStatus: r.coiSummary?.worstSeverity || "clear",
           responsiveness: reviewerScores[r.name]?.score || "",
+          expertise: (assignedExpertise[r.id] || []).join("; "),
         })),
     ];
 
@@ -497,9 +587,9 @@ function ReviewerSearchContent() {
     const rows = (flaggedOnly.length > 0 ? flaggedOnly : allReviewers);
 
     const csv = [
-      "Name,Affiliation,Country,h-Index,Publications,Flag,COI Status,Responsiveness Score",
+      "Name,Affiliation,Country,h-Index,Publications,Flag,COI Status,Responsiveness Score,Assigned Expertise",
       ...rows.map(r => 
-        `"${r.name}","${r.affiliation}","${r.country}","${r.hIndex}","${r.publications}","${r.flag}","${r.coiStatus}","${r.responsiveness}"`
+        `"${r.name}","${r.affiliation}","${r.country}","${r.hIndex}","${r.publications}","${r.flag}","${r.coiStatus}","${r.responsiveness}","${r.expertise}"`
       ),
     ].join("\n");
 
@@ -1076,6 +1166,31 @@ function ReviewerSearchContent() {
                 </div>
               </div>
 
+              {/* Uncovered expertise hints */}
+              {uncoveredExpertise.length > 0 && discoveryResult && (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 mb-3">
+                  <p className="text-xs font-medium text-amber-800 mb-2">
+                    <AlertTriangle className="h-3 w-3 inline mr-1" />
+                    {uncoveredExpertise.length} expertise {uncoveredExpertise.length === 1 ? "area" : "areas"} still {uncoveredExpertise.length === 1 ? "needs" : "need"} coverage:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {uncoveredExpertise.map(exp => (
+                      <button
+                        key={exp}
+                        onClick={() => {
+                          setPrimaryKeywords(exp);
+                          toast.success(`Keywords set to "${exp}" — click Discover to search`);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors"
+                      >
+                        <Search className="h-3 w-3" />
+                        {exp}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <Button 
                 onClick={handleAdvancedDiscovery} 
                 disabled={isDiscovering} 
@@ -1167,14 +1282,14 @@ function ReviewerSearchContent() {
                         variant="outline"
                         onClick={() => {
                           if (!discoveryResult) return;
-                          const reviewerNames = discoveryResult.reviewers.map(r => r.name).join("\n");
-                          // Store in sessionStorage and navigate to COI page
+                          const activeReviewers = discoveryResult.reviewers.filter(r => !isRejected(r.name));
+                          const reviewerNames = activeReviewers.map(r => r.name).join("\n");
                           sessionStorage.setItem("coi_reviewers_import", reviewerNames);
                           if (authorList) {
                             sessionStorage.setItem("coi_authors_import", authorList);
                           }
                           router.push(`/dashboard/journals/${slug}/coi`);
-                          toast.success(`${discoveryResult.reviewers.length} reviewers sent to COI check`);
+                          toast.success(`${activeReviewers.length} reviewers sent to COI check`);
                         }}
                       >
                         <AlertTriangle className="h-4 w-4 mr-2" />
@@ -1185,11 +1300,79 @@ function ReviewerSearchContent() {
                 </CardContent>
               </Card>
 
+              {/* Expertise Coverage Panel */}
+              {manuscriptExpertise.length > 0 && (
+                <Card className="border-blue-200 bg-blue-50/30">
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <GraduationCap className="h-4 w-4 text-blue-600" />
+                        Expertise Coverage
+                        <Badge variant="outline" className={`text-xs ${
+                          coveredExpertise.length === manuscriptExpertise.length
+                            ? "bg-green-100 text-green-700"
+                            : coveredExpertise.length > 0
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-red-100 text-red-700"
+                        }`}>
+                          {coveredExpertise.length}/{manuscriptExpertise.length} covered
+                        </Badge>
+                      </h4>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {manuscriptExpertise.map(exp => {
+                        const info = expertiseCoverage[exp];
+                        const isCovered = info && info.reviewerNames.length > 0;
+                        return (
+                          <div key={exp} className="group relative">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs cursor-default ${
+                                isCovered
+                                  ? "bg-green-100 text-green-700 border-green-300"
+                                  : "bg-amber-50 text-amber-700 border-amber-300"
+                              }`}
+                            >
+                              {isCovered ? (
+                                <Check className="h-3 w-3 mr-1" />
+                              ) : (
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                              )}
+                              {exp}
+                              {isCovered && (
+                                <span className="ml-1 text-green-600">
+                                  ({info.reviewerNames.length})
+                                </span>
+                              )}
+                            </Badge>
+                            {isCovered && (
+                              <div className="absolute z-10 hidden group-hover:block bottom-full mb-1 left-0 bg-white border rounded shadow-lg p-2 text-xs min-w-[140px]">
+                                <p className="font-medium text-gray-700 mb-1">Covered by:</p>
+                                {info.reviewerNames.map((name, i) => (
+                                  <p key={i} className="text-gray-600">{name}</p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {uncoveredExpertise.length > 0 && (
+                      <p className="text-xs text-amber-600 mt-2">
+                        {uncoveredExpertise.length === manuscriptExpertise.length
+                          ? "Assign expertise to reviewers using the checkboxes on each card below."
+                          : `Still need coverage: ${uncoveredExpertise.join(", ")}`}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Results Header */}
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-semibold">
-                    {discoveryResult.reviewers.length} Reviewers Found
+                    {discoveryResult.reviewers.filter(r => !isRejected(r.name)).length} Reviewers Found
                   </h3>
                   <p className="text-sm text-gray-500">
                     From {discoveryResult.summary.diversity.countryCount} countries • 
@@ -1211,7 +1394,7 @@ function ReviewerSearchContent() {
 
               {/* Reviewer Cards */}
               <div className="grid gap-4 md:grid-cols-2">
-                {discoveryResult.reviewers.map((reviewer, index) => (
+                {discoveryResult.reviewers.filter(r => !isRejected(r.name)).map((reviewer, index) => (
                   <Card 
                     key={reviewer.id} 
                     className={`hover:shadow-md transition-shadow ${
@@ -1343,6 +1526,36 @@ function ReviewerSearchContent() {
                               ))}
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* Expertise Assignment */}
+                      {manuscriptExpertise.length > 0 && (
+                        <div className="mb-3 p-2 bg-blue-50/50 rounded-lg border border-blue-200">
+                          <p className="text-xs font-medium text-blue-800 mb-1.5">Covers expertise:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {manuscriptExpertise.map(exp => {
+                              const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
+                              return (
+                                <button
+                                  key={exp}
+                                  onClick={(e) => { e.stopPropagation(); toggleExpertise(reviewer.id, exp); }}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                                    isChecked
+                                      ? "bg-green-100 text-green-800 border-green-300"
+                                      : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
+                                  }`}
+                                >
+                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
+                                    isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
+                                  }`}>
+                                    {isChecked && <Check className="h-2.5 w-2.5 text-white" />}
+                                  </div>
+                                  {exp}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 
@@ -1635,7 +1848,7 @@ function ReviewerSearchContent() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {candidateReviewers.map((reviewer) => {
+                {candidateReviewers.filter(r => !isRejected(r.name)).map((reviewer) => {
                   const coauthorCount = isCoauthor(reviewer.name);
                   const hasCoiConflict = reviewer.coiSummary?.hasConflict;
                   
@@ -1760,12 +1973,42 @@ function ReviewerSearchContent() {
                         )}
 
                         {reviewer.topics && reviewer.topics.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1 mb-2">
                             {reviewer.topics.slice(0, 3).map((topic, i) => (
                               <Badge key={i} variant="outline" className="text-xs">
                                 {topic}
                               </Badge>
                             ))}
+                          </div>
+                        )}
+
+                        {/* Expertise Assignment */}
+                        {manuscriptExpertise.length > 0 && (
+                          <div className="mb-2 p-2 bg-blue-50/50 rounded border border-blue-200">
+                            <p className="text-xs font-medium text-blue-800 mb-1">Covers expertise:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {manuscriptExpertise.map(exp => {
+                                const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
+                                return (
+                                  <button
+                                    key={exp}
+                                    onClick={(e) => { e.stopPropagation(); toggleExpertise(reviewer.id, exp); }}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                                      isChecked
+                                        ? "bg-green-100 text-green-800 border-green-300"
+                                        : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
+                                    }`}
+                                  >
+                                    <div className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${
+                                      isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
+                                    }`}>
+                                      {isChecked && <Check className="h-2 w-2 text-white" />}
+                                    </div>
+                                    {exp}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
 

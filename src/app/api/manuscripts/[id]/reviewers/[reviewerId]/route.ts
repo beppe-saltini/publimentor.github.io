@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * PATCH /api/manuscripts/:id/reviewers/:reviewerId
- * Update a reviewer's status (thumbs up = SHORTLISTED, thumbs down = REJECTED)
- * Expects: { status: "SUGGESTED" | "SHORTLISTED" | "REJECTED" }
+ * Update a reviewer's status and/or assigned expertise.
+ * Expects: { status?: "SUGGESTED" | "SHORTLISTED" | "REJECTED", assignedExpertise?: string[] }
  */
 export async function PATCH(
   request: Request,
@@ -21,16 +21,29 @@ export async function PATCH(
 
     const { id, reviewerId } = await params;
     const body = await request.json();
-    const { status } = body;
+    const { status, assignedExpertise } = body;
 
-    if (!status || !["SUGGESTED", "SHORTLISTED", "REJECTED"].includes(status)) {
+    if (status && !["SUGGESTED", "SHORTLISTED", "REJECTED"].includes(status)) {
       return NextResponse.json(
         { error: "Valid status required: SUGGESTED, SHORTLISTED, or REJECTED" },
         { status: 400 }
       );
     }
 
-    // Verify manuscript exists
+    if (assignedExpertise !== undefined && !Array.isArray(assignedExpertise)) {
+      return NextResponse.json(
+        { error: "assignedExpertise must be a string array" },
+        { status: 400 }
+      );
+    }
+
+    if (!status && assignedExpertise === undefined) {
+      return NextResponse.json(
+        { error: "Provide status or assignedExpertise" },
+        { status: 400 }
+      );
+    }
+
     const manuscript = await prisma.manuscript.findFirst({
       where: { id, deletedAt: null },
       select: { id: true },
@@ -40,15 +53,18 @@ export async function PATCH(
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
     }
 
-    // Update the reviewer status
+    const data: Record<string, unknown> = {};
+    if (status) data.status = status;
+    if (assignedExpertise !== undefined) data.assignedExpertise = assignedExpertise;
+
     const updated = await prisma.manuscriptReviewer.update({
       where: { id: reviewerId },
-      data: { status },
+      data,
     });
 
     return NextResponse.json({ reviewer: updated });
   } catch (error) {
-    console.error("[API] Error updating reviewer status:", error);
+    console.error("[API] Error updating reviewer:", error);
     return NextResponse.json(
       { error: "Failed to update reviewer" },
       { status: 500 }
