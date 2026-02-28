@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Separator } from "@/components/ui/separator";
 import { 
   FileText, ArrowLeft, Clock, CheckCircle, XCircle, Loader2, 
   Users, BookOpen, Building, Mail, ExternalLink, Download, Search, AlertTriangle,
-  Globe, DollarSign, Sparkles, Award, TrendingUp, ThumbsUp, ThumbsDown, MapPin
+  Award, MapPin, ThumbsUp, ThumbsDown, Sparkles
 } from "lucide-react";
 
 interface Author {
@@ -43,45 +42,6 @@ interface Reference {
   doi?: string;
 }
 
-interface JournalSuggestion {
-  id: string;
-  name: string;
-  publisher: string;
-  reasoning: string;
-  topicalMatch: "excellent" | "good" | "moderate" | "unknown";
-  impactFactor: number | null;
-  hIndex: number | null;
-  isOpenAccess: boolean;
-  isInDoaj: boolean;
-  apcUsd: number | null;
-  worksCount: number;
-  homepageUrl: string | null;
-  issnL: string | null;
-  countryCode: string | null;
-  source: "llm" | "openalex" | "both";
-  verified: boolean;
-}
-
-interface PersistedReviewer {
-  id: string;
-  name: string;
-  firstName?: string;
-  lastName?: string;
-  affiliation?: string;
-  country?: string;
-  hIndex?: number;
-  citationCount?: number;
-  publicationCount?: number;
-  inferredGender?: string;
-  sources?: string[];
-  recentArticles?: { title: string; journal: string; year: string; pmid: string; position: string }[];
-  verificationUrls?: { pubmedSearchUrl: string; googleScholarUrl: string; institutionSearchUrl: string; semanticScholarUrl?: string; openAlexUrl?: string };
-  llmAnalysis?: { relevanceScore: number; reasoning: string; topicalMatch: string; recommendation: string; expertise?: string[] };
-  coiSummary?: { hasConflict: boolean; worstSeverity: string | null; conflictCount: number };
-  assignedExpertise?: string[];
-  status: "SUGGESTED" | "SHORTLISTED" | "REJECTED";
-}
-
 interface Manuscript {
   id: string;
   title?: string;
@@ -91,8 +51,6 @@ interface Manuscript {
   language?: string;
   status: string;
   statusMessage?: string;
-  workflowStatus?: string;
-  detectedJournal?: string;
   fileName: string;
   fileType: string;
   fileSize: number;
@@ -121,6 +79,35 @@ interface Manuscript {
   updatedAt: string;
 }
 
+interface PersistedReviewer {
+  id: string;
+  name: string;
+  affiliation?: string;
+  country?: string;
+  hIndex?: number;
+  citationCount?: number;
+  publicationCount?: number;
+  inferredGender?: string;
+  status: "SUGGESTED" | "SHORTLISTED" | "REJECTED";
+  verificationUrls?: {
+    pubmedSearchUrl?: string;
+    googleScholarUrl?: string;
+    semanticScholarUrl?: string;
+    institutionSearchUrl?: string;
+  };
+  llmAnalysis?: {
+    relevanceScore: number;
+    reasoning: string;
+    topicalMatch: string;
+  };
+  coiSummary?: {
+    hasConflict: boolean;
+    worstSeverity?: string;
+    conflictCount: number;
+  };
+  assignedExpertise?: string[];
+}
+
 export default function ManuscriptDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -128,19 +115,9 @@ export default function ManuscriptDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [defaultJournalSlug, setDefaultJournalSlug] = useState<string | null>(null);
-
-  // Reviewer state
   const [reviewers, setReviewers] = useState<PersistedReviewer[]>([]);
   const [reviewerCounts, setReviewerCounts] = useState({ total: 0, shortlisted: 0, suggested: 0 });
   const [isLoadingReviewers, setIsLoadingReviewers] = useState(false);
-  const [workflowStatus, setWorkflowStatus] = useState<string>("NEW");
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-
-  // Journal suggestion state
-  const [journalSuggestions, setJournalSuggestions] = useState<JournalSuggestion[]>([]);
-  const [journalSearchStrategy, setJournalSearchStrategy] = useState<string>("");
-  const [isSuggestingJournals, setIsSuggestingJournals] = useState(false);
-  const [journalSuggestionsLoaded, setJournalSuggestionsLoaded] = useState(false);
 
   useEffect(() => {
     async function fetchManuscript() {
@@ -153,9 +130,6 @@ export default function ManuscriptDetailPage() {
         }
         
         setManuscript(data.manuscript);
-        if (data.manuscript?.workflowStatus) {
-          setWorkflowStatus(data.manuscript.workflowStatus);
-        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load manuscript");
       } finally {
@@ -184,8 +158,8 @@ export default function ManuscriptDetailPage() {
           setReviewers(data.reviewers || []);
           setReviewerCounts(data.counts || { total: 0, shortlisted: 0, suggested: 0 });
         }
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error("[Manuscript] Error fetching reviewers:", err);
       } finally {
         setIsLoadingReviewers(false);
       }
@@ -197,6 +171,31 @@ export default function ManuscriptDetailPage() {
       fetchReviewers();
     }
   }, [params.id]);
+
+  const handleReviewerStatusChange = async (reviewerId: string, newStatus: "SHORTLISTED" | "REJECTED" | "SUGGESTED") => {
+    try {
+      const response = await fetch(`/api/manuscripts/${params.id}/reviewers/${reviewerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (response.ok) {
+        if (newStatus === "REJECTED") {
+          setReviewers(prev => prev.filter(r => r.id !== reviewerId));
+          setReviewerCounts(prev => ({ ...prev, total: prev.total - 1 }));
+        } else {
+          setReviewers(prev => prev.map(r => r.id === reviewerId ? { ...r, status: newStatus } : r));
+          setReviewerCounts(prev => ({
+            total: prev.total,
+            shortlisted: newStatus === "SHORTLISTED" ? prev.shortlisted + 1 : Math.max(0, prev.shortlisted - 1),
+            suggested: newStatus === "SUGGESTED" ? prev.suggested + 1 : Math.max(0, prev.suggested - 1),
+          }));
+        }
+      }
+    } catch {
+      toast.error("Failed to update reviewer");
+    }
+  };
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -218,111 +217,6 @@ export default function ManuscriptDetailPage() {
         return <Badge className="bg-gray-100 text-gray-700">{status}</Badge>;
     }
   };
-
-  const handleSuggestJournals = async () => {
-    if (!manuscript?.abstract) {
-      toast.error("This manuscript has no abstract — journal matching requires an abstract");
-      return;
-    }
-
-    setIsSuggestingJournals(true);
-    try {
-      const response = await fetch("/api/journals/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          abstract: manuscript.abstract,
-          keywords: manuscript.keywords,
-          manuscriptType: manuscript.manuscriptType,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to suggest journals");
-      }
-
-      setJournalSuggestions(data.suggestions || []);
-      setJournalSearchStrategy(data.searchStrategy || "");
-      setJournalSuggestionsLoaded(true);
-      toast.success(`Found ${data.suggestions?.length || 0} matching journals`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Journal suggestion failed");
-    } finally {
-      setIsSuggestingJournals(false);
-    }
-  };
-
-  const getMatchBadge = (match: string) => {
-    switch (match) {
-      case "excellent":
-        return <Badge className="bg-green-100 text-green-700">Excellent Match</Badge>;
-      case "good":
-        return <Badge className="bg-blue-100 text-blue-700">Good Match</Badge>;
-      case "moderate":
-        return <Badge className="bg-amber-100 text-amber-700">Moderate Match</Badge>;
-      default:
-        return null;
-    }
-  };
-
-  const handleWorkflowStatusChange = async (newStatus: string) => {
-    setIsUpdatingStatus(true);
-    try {
-      const response = await fetch(`/api/manuscripts/${params.id}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflowStatus: newStatus }),
-      });
-      if (response.ok) {
-        setWorkflowStatus(newStatus);
-        toast.success(`Status updated to ${newStatus.replace(/_/g, " ").toLowerCase()}`);
-      } else {
-        toast.error("Failed to update status");
-      }
-    } catch {
-      toast.error("Failed to update status");
-    } finally {
-      setIsUpdatingStatus(false);
-    }
-  };
-
-  const handleReviewerStatusChange = async (reviewerId: string, newStatus: "SHORTLISTED" | "REJECTED" | "SUGGESTED") => {
-    try {
-      const response = await fetch(`/api/manuscripts/${params.id}/reviewers/${reviewerId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (response.ok) {
-        if (newStatus === "REJECTED") {
-          setReviewers(prev => prev.filter(r => r.id !== reviewerId));
-          setReviewerCounts(prev => ({ ...prev, total: prev.total - 1 }));
-        } else {
-          setReviewers(prev => prev.map(r => r.id === reviewerId ? { ...r, status: newStatus } : r));
-          setReviewerCounts(prev => ({
-            total: prev.total,
-            shortlisted: newStatus === "SHORTLISTED"
-              ? prev.shortlisted + 1
-              : Math.max(0, prev.shortlisted - 1),
-            suggested: newStatus === "SUGGESTED"
-              ? prev.suggested + 1
-              : Math.max(0, prev.suggested - 1),
-          }));
-        }
-      }
-    } catch {
-      toast.error("Failed to update reviewer");
-    }
-  };
-
-  const workflowStatusOptions = [
-    { value: "NEW", label: "New", color: "bg-gray-100 text-gray-700" },
-    { value: "FINDING_REVIEWERS", label: "Finding Reviewers", color: "bg-blue-100 text-blue-700" },
-    { value: "REVIEWERS_INVITED", label: "Reviewers Invited", color: "bg-green-100 text-green-700" },
-    { value: "CLOSED", label: "Closed", color: "bg-purple-100 text-purple-700" },
-  ];
 
   if (loading) {
     return (
@@ -372,26 +266,6 @@ export default function ManuscriptDetailPage() {
             <span>•</span>
             <span>Uploaded {new Date(manuscript.createdAt).toLocaleDateString()}</span>
           </div>
-          <div className="flex items-center gap-2 mt-3">
-            <span className="text-sm text-gray-500">Workflow:</span>
-            <select
-              value={workflowStatus}
-              onChange={(e) => handleWorkflowStatusChange(e.target.value)}
-              disabled={isUpdatingStatus}
-              className="text-sm border rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              {workflowStatusOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-            {isUpdatingStatus && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-            {reviewerCounts.total > 0 && (
-              <Badge variant="outline" className="ml-2">
-                <Users className="h-3 w-3 mr-1" />
-                {reviewerCounts.shortlisted}/{reviewerCounts.total} reviewers
-              </Badge>
-            )}
-          </div>
         </div>
         <div className="flex gap-2">
           <Button 
@@ -405,11 +279,21 @@ export default function ManuscriptDetailPage() {
             variant="outline"
             onClick={() => {
               const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
-              if (journalSlug) {
-                router.push(`/dashboard/journals/${journalSlug}/coi`);
-              } else {
+              if (!journalSlug) {
                 toast.error("Please create a journal first to use COI screening");
+                return;
               }
+              if (manuscript.authors?.length > 0) {
+                sessionStorage.setItem("coi_authors_import",
+                  manuscript.authors.map(a => a.fullName).join("\n"));
+              }
+              if (reviewers.length > 0) {
+                sessionStorage.setItem("coi_reviewers_import",
+                  reviewers.map(r => r.name).join("\n"));
+              }
+              sessionStorage.setItem("coi_return_url",
+                `/dashboard/manuscripts/${manuscript.id}`);
+              router.push(`/dashboard/journals/${journalSlug}/coi`);
             }}
           >
             <AlertTriangle className="h-4 w-4 mr-2" />
@@ -472,13 +356,9 @@ export default function ManuscriptDetailPage() {
           <TabsTrigger value="authors">Authors ({manuscript.authors.length})</TabsTrigger>
           <TabsTrigger value="references">References ({manuscript.referenceCount})</TabsTrigger>
           <TabsTrigger value="declarations">Declarations</TabsTrigger>
-          <TabsTrigger value="reviewers">
-            <Users className="h-4 w-4 mr-1.5" />
+          <TabsTrigger value="reviewers" className="flex items-center gap-1">
+            <Users className="h-4 w-4" />
             Reviewers ({reviewerCounts.total})
-          </TabsTrigger>
-          <TabsTrigger value="journals">
-            <BookOpen className="h-4 w-4 mr-1.5" />
-            Journal Match
           </TabsTrigger>
         </TabsList>
 
@@ -510,205 +390,110 @@ export default function ManuscriptDetailPage() {
             </Card>
           )}
 
-          {/* Proposed Reviewers — inline on overview */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
                   Proposed Reviewers
-                  {reviewerCounts.total > 0 && (
-                    <Badge variant="secondary" className="ml-1">
-                      {reviewerCounts.shortlisted} shortlisted / {reviewerCounts.total} total
-                    </Badge>
-                  )}
                 </CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
-                    if (journalSlug) {
-                      router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
-                    } else {
-                      toast.error("Please create a journal first to find reviewers");
-                    }
-                  }}
-                >
-                  <Search className="h-4 w-4 mr-1.5" />
-                  {reviewers.length > 0 ? "Find More" : "Find Reviewers"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {reviewerCounts.total > 0 && (
+                    <Badge variant="secondary">{reviewerCounts.total} found</Badge>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
+                      if (journalSlug) {
+                        router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
+                      } else {
+                        toast.error("Please create a journal first to find reviewers");
+                      }
+                    }}
+                  >
+                    <Search className="h-4 w-4 mr-1" />
+                    {reviewerCounts.total > 0 ? "Find More" : "Find Reviewers"}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
               {isLoadingReviewers ? (
-                <div className="py-8 text-center">
-                  <Loader2 className="h-8 w-8 mx-auto animate-spin text-gray-400" />
-                  <p className="mt-2 text-gray-500 text-sm">Loading reviewers...</p>
+                <div className="text-center py-6">
+                  <Loader2 className="h-6 w-6 mx-auto animate-spin text-gray-400" />
+                  <p className="text-sm text-gray-500 mt-2">Loading reviewers...</p>
                 </div>
               ) : reviewers.length === 0 ? (
-                <div className="py-8 text-center">
-                  <Users className="h-10 w-10 mx-auto text-gray-300 mb-3" />
-                  <p className="text-gray-500 text-sm">
-                    No reviewers found yet. Use &quot;Find Reviewers&quot; to discover potential reviewers.
-                  </p>
+                <div className="text-center py-6 text-gray-500">
+                  <Users className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">No reviewers found yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Use &quot;Find Reviewers&quot; to discover suitable reviewers</p>
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {reviewers.map((reviewer) => (
-                    <div
-                      key={reviewer.id}
-                      className={`border rounded-lg p-3 hover:shadow-sm transition-shadow ${
-                        reviewer.status === "SHORTLISTED" ? "border-green-200 bg-green-50/30" : "border-gray-200"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {reviewers.slice(0, 6).map((reviewer) => (
+                    <div key={reviewer.id} className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-start justify-between">
                         <div className="min-w-0 flex-1">
-                          <h4 className="font-semibold text-sm flex items-center gap-1.5">
-                            {reviewer.name}
-                            {reviewer.inferredGender && (
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                reviewer.inferredGender === "likely_female"
-                                  ? "bg-pink-100 text-pink-700"
-                                  : reviewer.inferredGender === "likely_male"
-                                  ? "bg-sky-100 text-sky-700"
-                                  : "bg-gray-100 text-gray-500"
-                              }`}>
-                                {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
-                              </span>
-                            )}
-                          </h4>
+                          <p className="font-medium truncate">{reviewer.name}</p>
                           {reviewer.affiliation && (
-                            <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                              <Building className="h-3 w-3 flex-shrink-0" />
-                              <span className="truncate">{reviewer.affiliation}</span>
+                            <p className="text-xs text-gray-500 truncate flex items-center gap-1">
+                              <Building className="h-3 w-3 shrink-0" />
+                              {reviewer.affiliation}
                             </p>
                           )}
                           {reviewer.country && (
                             <p className="text-xs text-gray-400 flex items-center gap-1">
-                              <MapPin className="h-3 w-3 flex-shrink-0" />
+                              <MapPin className="h-3 w-3 shrink-0" />
                               {reviewer.country}
                             </p>
                           )}
                         </div>
-                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              reviewer.status === "SHORTLISTED"
-                                ? "bg-green-100 text-green-700 border-green-300"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
-                            {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
-                          </Badge>
-                          <div className="flex gap-1 mt-1">
-                            <button
-                              onClick={() => handleReviewerStatusChange(
-                                reviewer.id,
-                                reviewer.status === "SHORTLISTED" ? "SUGGESTED" : "SHORTLISTED"
-                              )}
-                              className={`p-1 rounded transition-colors ${
-                                reviewer.status === "SHORTLISTED"
-                                  ? "bg-green-100 text-green-700"
-                                  : "text-gray-300 hover:text-green-500 hover:bg-green-50"
-                              }`}
-                              title={reviewer.status === "SHORTLISTED" ? "Remove from shortlist" : "Shortlist reviewer"}
-                            >
-                              <ThumbsUp className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}
-                              className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
-                              title="Remove reviewer"
-                            >
-                              <ThumbsDown className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
+                        <Badge variant={reviewer.status === "SHORTLISTED" ? "default" : "secondary"} className="text-xs shrink-0 ml-2">
+                          {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
+                        </Badge>
                       </div>
-
-                      <div className="flex gap-3 text-xs mb-2">
+                      <div className="flex items-center gap-3 text-xs text-gray-500">
                         {reviewer.hIndex != null && (
-                          <div className="flex items-center gap-1">
-                            <Award className="h-3 w-3 text-amber-600" />
-                            <span className="font-medium">h-{reviewer.hIndex}</span>
-                          </div>
+                          <span className="flex items-center gap-1" title="h-index">
+                            <Award className="h-3 w-3" />h: {reviewer.hIndex}
+                          </span>
                         )}
                         {reviewer.publicationCount != null && (
-                          <div className="flex items-center gap-1">
-                            <BookOpen className="h-3 w-3 text-gray-500" />
-                            <span>{reviewer.publicationCount} pubs</span>
-                          </div>
+                          <span>{reviewer.publicationCount} pubs</span>
                         )}
                         {reviewer.citationCount != null && (
-                          <div className="flex items-center gap-1 text-gray-500">
-                            {reviewer.citationCount.toLocaleString()} citations
-                          </div>
+                          <span>{reviewer.citationCount.toLocaleString()} cits</span>
                         )}
                       </div>
-
-                      {reviewer.llmAnalysis && (
-                        <div className="p-2 bg-purple-50 rounded border border-purple-200 mb-2">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Sparkles className="h-3 w-3 text-purple-600" />
-                            <span className="text-xs font-medium text-purple-800">
-                              {reviewer.llmAnalysis.relevanceScore}% match
-                            </span>
-                            <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700">
-                              {reviewer.llmAnalysis.topicalMatch}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-purple-700">{reviewer.llmAnalysis.reasoning}</p>
-                        </div>
-                      )}
-
-                      {reviewer.coiSummary?.hasConflict && (
-                        <div className="p-2 bg-amber-50 rounded border border-amber-200 mb-2">
-                          <div className="flex items-center gap-1.5">
-                            <AlertTriangle className="h-3 w-3 text-amber-600" />
-                            <span className="text-xs font-medium text-amber-800">
-                              COI: {reviewer.coiSummary.worstSeverity || "detected"} ({reviewer.coiSummary.conflictCount} conflict{reviewer.coiSummary.conflictCount !== 1 ? "s" : ""})
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {reviewer.verificationUrls && (
-                        <div className="flex flex-wrap gap-1.5">
-                          <a href={reviewer.verificationUrls.pubmedSearchUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-                            <FileText className="h-3 w-3" /> PubMed
-                          </a>
-                          <a href={reviewer.verificationUrls.googleScholarUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-                            <BookOpen className="h-3 w-3" /> Scholar
-                          </a>
-                          {reviewer.verificationUrls.semanticScholarUrl && (
-                            <a href={reviewer.verificationUrls.semanticScholarUrl} target="_blank" rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-                              <Award className="h-3 w-3" /> S2
-                            </a>
-                          )}
-                          <a href={reviewer.verificationUrls.institutionSearchUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-                            <Mail className="h-3 w-3" /> Email
-                          </a>
-                        </div>
-                      )}
-
-                      {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {reviewer.assignedExpertise.map((exp, i) => (
-                            <Badge key={i} variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                              <CheckCircle className="h-3 w-3 mr-0.5" />
-                              {exp}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
+                      <div className="flex gap-1">
+                        {reviewer.status !== "SHORTLISTED" && (
+                          <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
+                            onClick={() => handleReviewerStatusChange(reviewer.id, "SHORTLISTED")}>
+                            <ThumbsUp className="h-3 w-3 mr-1" />Shortlist
+                          </Button>
+                        )}
+                        {reviewer.status === "SHORTLISTED" && (
+                          <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
+                            onClick={() => handleReviewerStatusChange(reviewer.id, "SUGGESTED")}>
+                            Unshortlist
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" className="h-7 text-xs text-red-600 hover:text-red-700"
+                          onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}>
+                          <ThumbsDown className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
+              )}
+              {reviewers.length > 6 && (
+                <p className="text-xs text-center text-gray-400 mt-3">
+                  Showing 6 of {reviewers.length} reviewers. See the Reviewers tab for the full list.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -909,458 +694,153 @@ export default function ManuscriptDetailPage() {
 
         {/* Reviewers Tab */}
         <TabsContent value="reviewers" className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="font-medium">
+                {reviewerCounts.total} Reviewer{reviewerCounts.total !== 1 ? "s" : ""}
+              </h3>
+              {reviewerCounts.shortlisted > 0 && (
+                <Badge>{reviewerCounts.shortlisted} shortlisted</Badge>
+              )}
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
+                if (journalSlug) {
+                  router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
+                } else {
+                  toast.error("Please create a journal first to find reviewers");
+                }
+              }}
+            >
+              <Search className="h-4 w-4 mr-1" />
+              {reviewerCounts.total > 0 ? "Find More" : "Find Reviewers"}
+            </Button>
+          </div>
+
           {isLoadingReviewers ? (
             <Card>
-              <CardContent className="py-12 text-center">
-                <Loader2 className="h-8 w-8 mx-auto animate-spin text-gray-400" />
-                <p className="mt-2 text-gray-500">Loading reviewers...</p>
+              <CardContent className="py-8 text-center">
+                <Loader2 className="h-6 w-6 mx-auto animate-spin text-gray-400" />
+                <p className="text-sm text-gray-500 mt-2">Loading reviewers...</p>
               </CardContent>
             </Card>
           ) : reviewers.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                <h3 className="text-lg font-medium text-gray-700">No reviewers found yet</h3>
-                <p className="text-gray-500 mt-1 mb-4">
-                  Use the &quot;Find Reviewers&quot; button to discover potential reviewers for this manuscript.
-                </p>
-                <Button
-                  onClick={() => {
-                    const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
-                    if (journalSlug) {
-                      router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
-                    } else {
-                      toast.error("Please create a journal first to find reviewers");
-                    }
-                  }}
-                >
-                  <Search className="h-4 w-4 mr-2" />
-                  Find Reviewers
-                </Button>
+                <Users className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+                <h3 className="font-medium text-gray-700">No reviewers yet</h3>
+                <p className="text-sm text-gray-500 mt-1">Use the &quot;Find Reviewers&quot; button to discover suitable reviewers for this manuscript.</p>
               </CardContent>
             </Card>
           ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">
-                    {reviewerCounts.total} Reviewers
-                  </h3>
-                  <p className="text-sm text-gray-500">
-                    {reviewerCounts.shortlisted} shortlisted · {reviewerCounts.suggested} suggested
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
-                    if (journalSlug) {
-                      router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
-                    }
-                  }}
-                >
-                  <Search className="h-4 w-4 mr-2" />
-                  Find More
-                </Button>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {reviewers.map((reviewer) => (
-                  <Card
-                    key={reviewer.id}
-                    className={`hover:shadow-md transition-shadow ${
-                      reviewer.status === "SHORTLISTED" ? "border-green-200 bg-green-50/30" : ""
-                    }`}
-                  >
-                    <CardContent className="py-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <h4 className="font-semibold text-sm flex items-center gap-1.5">
-                            {reviewer.name}
-                            {reviewer.inferredGender && (
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                reviewer.inferredGender === "likely_female"
-                                  ? "bg-pink-100 text-pink-700"
-                                  : reviewer.inferredGender === "likely_male"
-                                  ? "bg-sky-100 text-sky-700"
-                                  : "bg-gray-100 text-gray-500"
-                              }`}>
-                                {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
-                              </span>
-                            )}
-                          </h4>
-                          {reviewer.affiliation && (
-                            <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                              <Building className="h-3 w-3" />
-                              {reviewer.affiliation.length > 60
-                                ? reviewer.affiliation.slice(0, 60) + "..."
-                                : reviewer.affiliation}
-                            </p>
-                          )}
-                          {reviewer.country && (
-                            <p className="text-xs text-gray-400 flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              {reviewer.country}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              reviewer.status === "SHORTLISTED"
-                                ? "bg-green-100 text-green-700 border-green-300"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
+            <div className="space-y-3">
+              {reviewers.map((reviewer) => (
+                <Card key={reviewer.id}>
+                  <CardContent className="py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium">{reviewer.name}</h4>
+                          <Badge variant={reviewer.status === "SHORTLISTED" ? "default" : "secondary"} className="text-xs">
                             {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
                           </Badge>
-                          <div className="flex gap-1 mt-1">
-                            <button
-                              onClick={() => handleReviewerStatusChange(
-                                reviewer.id,
-                                reviewer.status === "SHORTLISTED" ? "SUGGESTED" : "SHORTLISTED"
-                              )}
-                              className={`p-1 rounded transition-colors ${
-                                reviewer.status === "SHORTLISTED"
-                                  ? "bg-green-100 text-green-700"
-                                  : "text-gray-300 hover:text-green-500 hover:bg-green-50"
-                              }`}
-                              title={reviewer.status === "SHORTLISTED" ? "Remove from shortlist" : "Shortlist reviewer"}
-                            >
-                              <ThumbsUp className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}
-                              className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
-                              title="Remove reviewer"
-                            >
-                              <ThumbsDown className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Metrics row */}
-                      <div className="flex gap-3 text-xs mb-2">
-                        {reviewer.hIndex != null && (
-                          <div className="flex items-center gap-1">
-                            <Award className="h-3 w-3 text-amber-600" />
-                            <span className="font-medium">h-{reviewer.hIndex}</span>
-                          </div>
-                        )}
-                        {reviewer.publicationCount != null && (
-                          <div className="flex items-center gap-1">
-                            <BookOpen className="h-3 w-3 text-gray-500" />
-                            <span>{reviewer.publicationCount} pubs</span>
-                          </div>
-                        )}
-                        {reviewer.citationCount != null && (
-                          <div className="flex items-center gap-1 text-gray-500">
-                            {reviewer.citationCount.toLocaleString()} citations
-                          </div>
-                        )}
-                      </div>
-
-                      {/* LLM Analysis */}
-                      {reviewer.llmAnalysis && (
-                        <div className="p-2 bg-purple-50 rounded border border-purple-200 mb-2">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Sparkles className="h-3 w-3 text-purple-600" />
-                            <span className="text-xs font-medium text-purple-800">
-                              {reviewer.llmAnalysis.relevanceScore}% match
-                            </span>
-                            <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700">
-                              {reviewer.llmAnalysis.topicalMatch}
+                          {reviewer.coiSummary?.hasConflict && (
+                            <Badge variant="destructive" className="text-xs">
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              COI ({reviewer.coiSummary.conflictCount})
                             </Badge>
-                          </div>
-                          <p className="text-xs text-purple-700">{reviewer.llmAnalysis.reasoning}</p>
-                        </div>
-                      )}
-
-                      {/* Verification links */}
-                      {reviewer.verificationUrls && (
-                        <div className="flex flex-wrap gap-1.5">
-                          <a
-                            href={reviewer.verificationUrls.pubmedSearchUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                          >
-                            <FileText className="h-3 w-3" />
-                            PubMed
-                          </a>
-                          <a
-                            href={reviewer.verificationUrls.googleScholarUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                          >
-                            <BookOpen className="h-3 w-3" />
-                            Scholar
-                          </a>
-                          {reviewer.verificationUrls.semanticScholarUrl && (
-                            <a
-                              href={reviewer.verificationUrls.semanticScholarUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                            >
-                              <Award className="h-3 w-3" />
-                              S2
-                            </a>
                           )}
-                          <a
-                            href={reviewer.verificationUrls.institutionSearchUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                          >
-                            <Mail className="h-3 w-3" />
-                            Email
-                          </a>
                         </div>
-                      )}
 
-                      {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {reviewer.assignedExpertise.map((exp, i) => (
-                            <Badge key={i} variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                              <CheckCircle className="h-3 w-3 mr-0.5" />
-                              {exp}
-                            </Badge>
-                          ))}
+                        {reviewer.affiliation && (
+                          <p className="text-sm text-gray-500 flex items-center gap-1">
+                            <Building className="h-3.5 w-3.5 shrink-0" />
+                            {reviewer.affiliation}
+                          </p>
+                        )}
+                        {reviewer.country && (
+                          <p className="text-sm text-gray-400 flex items-center gap-1">
+                            <MapPin className="h-3.5 w-3.5 shrink-0" />
+                            {reviewer.country}
+                          </p>
+                        )}
+
+                        <div className="flex items-center gap-4 text-sm text-gray-500 pt-1">
+                          {reviewer.hIndex != null && (
+                            <span className="flex items-center gap-1" title="h-index">
+                              <Award className="h-3.5 w-3.5" />h-index: {reviewer.hIndex}
+                            </span>
+                          )}
+                          {reviewer.publicationCount != null && (
+                            <span>{reviewer.publicationCount} publications</span>
+                          )}
+                          {reviewer.citationCount != null && (
+                            <span>{reviewer.citationCount.toLocaleString()} citations</span>
+                          )}
                         </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </>
-          )}
-        </TabsContent>
 
-        {/* Journal Match Tab */}
-        <TabsContent value="journals" className="mt-4 space-y-4">
-          {!journalSuggestionsLoaded ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                {isSuggestingJournals ? (
-                  <>
-                    <Loader2 className="h-10 w-10 mx-auto animate-spin text-blue-500 mb-4" />
-                    <h3 className="text-lg font-medium text-gray-700">Analyzing manuscript...</h3>
-                    <p className="text-gray-500 mt-1">
-                      Using AI and OpenAlex to find matching journals. This may take up to a minute.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <BookOpen className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <h3 className="text-lg font-medium text-gray-700">Find Matching Journals</h3>
-                    <p className="text-gray-500 mt-1 mb-4 max-w-md mx-auto">
-                      Analyze your manuscript&apos;s abstract and keywords to find the best journals
-                      for submission, across all publishers.
-                    </p>
-                    {!manuscript.abstract ? (
-                      <p className="text-amber-600 text-sm mb-4">
-                        This manuscript has no extracted abstract. Journal matching requires an abstract.
-                      </p>
-                    ) : null}
-                    <Button
-                      onClick={handleSuggestJournals}
-                      disabled={!manuscript.abstract || isSuggestingJournals}
-                      size="lg"
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      Find Matching Journals
-                    </Button>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              {/* Strategy summary */}
-              {journalSearchStrategy && (
-                <Card className="bg-purple-50 border-purple-200">
-                  <CardContent className="py-3">
-                    <div className="flex items-start gap-2">
-                      <Sparkles className="h-5 w-5 text-purple-600 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm text-purple-800">
-                        <p className="font-medium">AI Analysis</p>
-                        <p className="text-purple-700">{journalSearchStrategy}</p>
+                        {reviewer.llmAnalysis && (
+                          <div className="mt-2 bg-gray-50 rounded p-2 text-sm">
+                            <div className="flex items-center gap-1 text-gray-600 mb-1">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              <span className="font-medium">Relevance: {reviewer.llmAnalysis.relevanceScore}/10</span>
+                              {reviewer.llmAnalysis.topicalMatch && (
+                                <span className="text-xs text-gray-400 ml-1">— {reviewer.llmAnalysis.topicalMatch}</span>
+                              )}
+                            </div>
+                            {reviewer.llmAnalysis.reasoning && (
+                              <p className="text-xs text-gray-500">{reviewer.llmAnalysis.reasoning}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {reviewer.assignedExpertise.map((exp, i) => (
+                              <Badge key={i} variant="outline" className="text-xs">{exp}</Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        {reviewer.verificationUrls && (
+                          <div className="flex gap-2 pt-1">
+                            {reviewer.verificationUrls.pubmedSearchUrl && (
+                              <a href={reviewer.verificationUrls.pubmedSearchUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">PubMed</a>
+                            )}
+                            {reviewer.verificationUrls.googleScholarUrl && (
+                              <a href={reviewer.verificationUrls.googleScholarUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Scholar</a>
+                            )}
+                            {reviewer.verificationUrls.semanticScholarUrl && (
+                              <a href={reviewer.verificationUrls.semanticScholarUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Semantic Scholar</a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-1 shrink-0">
+                        {reviewer.status !== "SHORTLISTED" ? (
+                          <Button size="sm" variant="outline" className="text-xs"
+                            onClick={() => handleReviewerStatusChange(reviewer.id, "SHORTLISTED")}>
+                            <ThumbsUp className="h-3 w-3 mr-1" />Shortlist
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" className="text-xs"
+                            onClick={() => handleReviewerStatusChange(reviewer.id, "SUGGESTED")}>
+                            Unshortlist
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" className="text-xs text-red-600 hover:text-red-700"
+                          onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}>
+                          <ThumbsDown className="h-3 w-3 mr-1" />Reject
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              )}
-
-              {/* Results header */}
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">
-                  {journalSuggestions.length} Journals Found
-                </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSuggestJournals}
-                  disabled={isSuggestingJournals}
-                >
-                  {isSuggestingJournals ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  ) : (
-                    <Search className="h-4 w-4 mr-1" />
-                  )}
-                  Re-analyze
-                </Button>
-              </div>
-
-              {/* Journal cards */}
-              <div className="space-y-3">
-                {journalSuggestions.map((journal, index) => (
-                  <Card key={journal.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="py-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <span className="text-sm font-bold text-gray-400 w-6">
-                              {index + 1}.
-                            </span>
-                            <h4 className="font-semibold text-base">
-                              {journal.homepageUrl ? (
-                                <a
-                                  href={journal.homepageUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="hover:text-blue-600 hover:underline"
-                                >
-                                  {journal.name}
-                                </a>
-                              ) : (
-                                journal.name
-                              )}
-                            </h4>
-                            {getMatchBadge(journal.topicalMatch)}
-                            {journal.isOpenAccess && (
-                              <Badge variant="outline" className="bg-green-50 text-green-700 text-xs">
-                                Open Access
-                              </Badge>
-                            )}
-                            {journal.isInDoaj && (
-                              <Badge variant="outline" className="bg-teal-50 text-teal-700 text-xs">
-                                DOAJ
-                              </Badge>
-                            )}
-                            {!journal.verified && (
-                              <Badge variant="outline" className="bg-gray-50 text-gray-500 text-xs">
-                                Unverified
-                              </Badge>
-                            )}
-                          </div>
-
-                          <p className="text-sm text-gray-500 ml-8">
-                            {journal.publisher}
-                            {journal.countryCode && ` \u00B7 ${journal.countryCode}`}
-                            {journal.issnL && ` \u00B7 ISSN: ${journal.issnL}`}
-                          </p>
-
-                          {journal.reasoning && (
-                            <p className="text-sm text-gray-600 mt-2 ml-8">
-                              {journal.reasoning}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Metrics column */}
-                        <div className="flex-shrink-0 text-right space-y-1">
-                          {journal.impactFactor !== null && (
-                            <div className="flex items-center gap-1.5 justify-end" title="2-year mean citedness (Impact Factor proxy)">
-                              <TrendingUp className="h-3.5 w-3.5 text-amber-600" />
-                              <span className="text-sm font-semibold text-amber-700">
-                                {journal.impactFactor.toFixed(1)}
-                              </span>
-                              <span className="text-xs text-gray-400">IF</span>
-                            </div>
-                          )}
-                          {journal.hIndex !== null && journal.hIndex > 0 && (
-                            <div className="flex items-center gap-1.5 justify-end" title="H-Index">
-                              <Award className="h-3.5 w-3.5 text-blue-600" />
-                              <span className="text-sm font-medium text-blue-700">
-                                {journal.hIndex}
-                              </span>
-                              <span className="text-xs text-gray-400">h</span>
-                            </div>
-                          )}
-                          {journal.apcUsd !== null && journal.apcUsd > 0 && (
-                            <div className="flex items-center gap-1.5 justify-end" title="Article Processing Charge">
-                              <DollarSign className="h-3.5 w-3.5 text-gray-500" />
-                              <span className="text-xs text-gray-600">
-                                ${journal.apcUsd.toLocaleString()}
-                              </span>
-                            </div>
-                          )}
-                          {journal.worksCount > 0 && (
-                            <div className="text-xs text-gray-400">
-                              {journal.worksCount.toLocaleString()} articles
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Links row */}
-                      {(journal.homepageUrl || journal.issnL) && (
-                        <>
-                          <Separator className="my-2" />
-                          <div className="flex gap-2 ml-8">
-                            {journal.homepageUrl && (
-                              <a
-                                href={journal.homepageUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-                              >
-                                <Globe className="h-3 w-3" />
-                                Journal Homepage
-                              </a>
-                            )}
-                            {journal.issnL && (
-                              <a
-                                href={`https://portal.issn.org/resource/ISSN/${journal.issnL}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                ISSN Portal
-                              </a>
-                            )}
-                            {journal.verified && journal.id.startsWith("https://openalex.org/") && (
-                              <a
-                                href={journal.id}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                OpenAlex
-                              </a>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-
-              {journalSuggestions.length === 0 && (
-                <Card>
-                  <CardContent className="py-8 text-center text-gray-500">
-                    No matching journals found. Try uploading a manuscript with a more detailed abstract.
-                  </CardContent>
-                </Card>
-              )}
-            </>
+              ))}
+            </div>
           )}
         </TabsContent>
       </Tabs>

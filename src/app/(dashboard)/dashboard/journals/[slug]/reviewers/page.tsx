@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
   Search, User, Building, BookOpen, Award, Globe, Loader2, 
   ExternalLink, CheckCircle, FileText, AlertTriangle,
   Users, Sparkles, Mail, MapPin, GraduationCap, FlaskConical,
-  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star, Check
+  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star
 } from "lucide-react";
 import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
@@ -41,7 +41,6 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
-  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 interface CoauthorWarning {
@@ -95,7 +94,6 @@ interface AdvancedReviewer {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
-  inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
 
 interface DiscoverySummary {
@@ -110,7 +108,6 @@ interface DiscoverySummary {
   diversity: {
     countries: string[];
     countryCount: number;
-    gender?: { likely_female: number; likely_male: number; unknown: number };
   };
   avgPublications: number;
   avgSeniorAuthorships: number;
@@ -153,54 +150,23 @@ function ReviewerSearchContent() {
   // Manuscript source state
   const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
   const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
-  const [journalId, setJournalId] = useState<string | null>(null);
   const [manuscriptAutoLoaded, setManuscriptAutoLoaded] = useState(false);
 
-  // Fetch journal details (publisherId + id) for manuscript uploads.
-  // This uses the journal the user is already viewing, so even editors without
-  // a direct publisher membership can upload manuscripts.
+  // Fetch default publisher for uploads
   useEffect(() => {
-    const fetchJournalInfo = async () => {
-      let foundPublisherId: string | null = null;
-
+    const fetchDefaultPublisher = async () => {
       try {
-        const response = await fetch(`/api/journals/${slug}`);
-        const text = await response.text();
-        const data = JSON.parse(text);
-        if (response.ok && data.journal) {
-          setJournalId(data.journal.id);
-          if (data.journal.publisherId) {
-            foundPublisherId = data.journal.publisherId;
-            setDefaultPublisherId(data.journal.publisherId);
-          }
-          console.log("[Reviewers] journal info loaded, publisherId:", data.journal.publisherId || "none");
-        } else {
-          console.warn("[Reviewers] journal fetch not ok:", response.status, data);
+        const response = await fetch("/api/publishers");
+        const data = await response.json();
+        if (response.ok && data.publishers?.length > 0) {
+          setDefaultPublisherId(data.publishers[0].id);
         }
       } catch (error) {
-        console.error("[Reviewers] Error fetching journal info:", error);
-      }
-
-      // Fallback: try user's own publisher membership
-      if (!foundPublisherId) {
-        try {
-          const response = await fetch("/api/publishers");
-          const text = await response.text();
-          const data = JSON.parse(text);
-          if (response.ok && data.publishers?.length > 0) {
-            foundPublisherId = data.publishers[0].id;
-            setDefaultPublisherId(data.publishers[0].id);
-            console.log("[Reviewers] publisher fallback loaded:", data.publishers[0].id);
-          } else {
-            console.warn("[Reviewers] no publishers found, upload will be unavailable");
-          }
-        } catch (err) {
-          console.error("[Reviewers] Error fetching publishers:", err);
-        }
+        console.error("Error fetching publisher:", error);
       }
     };
-    fetchJournalInfo();
-  }, [slug]);
+    fetchDefaultPublisher();
+  }, []);
 
   // Auto-load manuscript from URL query parameter (e.g., from "Find Reviewers" button on manuscript page)
   useEffect(() => {
@@ -258,178 +224,8 @@ function ReviewerSearchContent() {
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
 
-  // Thumbs up flagging state
-  const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | null>>({});
-
-  // Rejected reviewer names — loaded from DB per manuscript
-  const [rejectedNames, setRejectedNames] = useState<Set<string>>(new Set());
-  const [isLoadingPersisted, setIsLoadingPersisted] = useState(false);
-  const [manuscriptWorkflowStatus, setManuscriptWorkflowStatus] = useState<string | null>(null);
-
-  const isRejected = (name: string) => rejectedNames.has(name.toLowerCase().trim());
-
-  const mapDbReviewerToAdvanced = (r: Record<string, unknown>): AdvancedReviewer => ({
-    id: r.id as string,
-    name: r.name as string,
-    firstName: (r.firstName as string) || "",
-    lastName: (r.lastName as string) || "",
-    affiliation: (r.affiliation as string) || "",
-    country: (r.country as string) || "",
-    hIndex: (r.hIndex as number) ?? null,
-    citationCount: (r.citationCount as number) ?? null,
-    publicationCount: (r.publicationCount as number) || 0,
-    firstAuthorCount: 0,
-    lastAuthorCount: 0,
-    correspondingCount: 0,
-    seniorAuthorCount: 0,
-    recentArticles: (r.recentArticles as AdvancedReviewer["recentArticles"]) || [],
-    sources: (r.sources as AdvancedReviewer["sources"]) || [],
-    verificationUrls: (r.verificationUrls as AdvancedReviewer["verificationUrls"]) || {
-      pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(r.name as string)}`,
-      googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(r.name as string)}"`,
-      institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(r.name as string)}"+email`,
-    },
-    llmAnalysis: (r.llmAnalysis as AdvancedReviewer["llmAnalysis"]) || undefined,
-    coiSummary: (r.coiSummary as AdvancedReviewer["coiSummary"]) || undefined,
-    inferredGender: (r.inferredGender as AdvancedReviewer["inferredGender"]) || undefined,
-  });
-
-  const loadPersistedReviewers = async (manuscriptId: string) => {
-    setIsLoadingPersisted(true);
-    try {
-      const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers?includeRejected=true`);
-      const data = await response.json();
-      if (response.ok && data.reviewers) {
-        const allReviewers = data.reviewers as Record<string, unknown>[];
-        const rejected = allReviewers.filter(r => r.status === "REJECTED");
-        const active = allReviewers.filter(r => r.status !== "REJECTED");
-
-        // Build full rejected set: DB rejected + local rejections (handles async PATCH race)
-        const dbRejected = new Set(rejected.map(r => (r.name as string).toLowerCase().trim()));
-        const allRejected = new Set([...rejectedNames, ...dbRejected]);
-        setRejectedNames(allRejected);
-
-        if (active.length > 0) {
-          const mapped = active
-            .filter(r => !allRejected.has((r.name as string).toLowerCase().trim()))
-            .map(mapDbReviewerToAdvanced);
-
-          if (mapped.length > 0) {
-            const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
-            setDiscoveryResult(prev => {
-              const keptPrev = prev
-                ? prev.reviewers.filter(existing =>
-                    !mapped.some(m => m.name === existing.name) &&
-                    !allRejected.has(existing.name.toLowerCase().trim()))
-                : [];
-              const merged = [...keptPrev, ...mapped];
-              return {
-                reviewers: merged,
-                summary: prev?.summary || {
-                  totalFound: merged.length,
-                  returned: merged.length,
-                  criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
-                  diversity: { countries, countryCount: countries.length },
-                  avgPublications: Math.round(merged.reduce((sum, r) => sum + r.publicationCount, 0) / (merged.length || 1)),
-                  avgSeniorAuthorships: 0,
-                },
-                relatedConcepts: prev?.relatedConcepts || [],
-                disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
-                selectionCriteria: prev?.selectionCriteria || {},
-              };
-            });
-
-            const flags: Record<string, "up" | null> = {};
-            active.forEach(r => {
-              if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
-            });
-            setFlaggedReviewers(prev => ({ ...prev, ...flags }));
-          }
-        }
-
-        // Load assigned expertise from DB
-        const expertiseMap: Record<string, string[]> = {};
-        allReviewers.forEach(r => {
-          const ae = r.assignedExpertise as string[] | null;
-          if (ae && ae.length > 0) {
-            expertiseMap[r.id as string] = ae;
-          }
-        });
-        if (Object.keys(expertiseMap).length > 0) {
-          setAssignedExpertise(prev => ({ ...prev, ...expertiseMap }));
-        }
-      }
-    } catch (error) {
-      console.error("Error loading persisted reviewers:", error);
-    } finally {
-      setIsLoadingPersisted(false);
-    }
-  };
-
-  const persistReviewersToDb = async (manuscriptId: string, reviewers: (AdvancedReviewer | ReviewerCandidate)[]) => {
-    try {
-      const payload = reviewers.map(r => ({
-        name: r.name,
-        firstName: r.firstName || null,
-        lastName: r.lastName || null,
-        affiliation: ("affiliation" in r ? r.affiliation : null) || null,
-        country: ("country" in r ? (r as AdvancedReviewer).country : null) || null,
-        hIndex: r.hIndex ?? null,
-        citationCount: ("citationCount" in r ? (r as AdvancedReviewer).citationCount : null) ?? ("citedByCount" in r ? (r as ReviewerCandidate).citedByCount : null) ?? null,
-        publicationCount: ("publicationCount" in r ? (r as AdvancedReviewer).publicationCount : null) ?? ("worksCount" in r ? (r as ReviewerCandidate).worksCount : null) ?? null,
-        inferredGender: r.inferredGender || null,
-        sources: ("sources" in r ? (r as AdvancedReviewer).sources : [(r as ReviewerCandidate).source]) || null,
-        recentArticles: ("recentArticles" in r ? (r as AdvancedReviewer).recentArticles : null) || null,
-        verificationUrls: ("verificationUrls" in r ? (r as AdvancedReviewer).verificationUrls : null) || null,
-        llmAnalysis: ("llmAnalysis" in r ? (r as AdvancedReviewer).llmAnalysis : null) || null,
-        coiSummary: r.coiSummary || null,
-      }));
-
-      const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reviewers: payload }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.saved > 0) {
-          if (manuscriptWorkflowStatus === "NEW") {
-            fetch(`/api/manuscripts/${manuscriptId}/status`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ workflowStatus: "FINDING_REVIEWERS" }),
-            })
-              .then(() => setManuscriptWorkflowStatus("FINDING_REVIEWERS"))
-              .catch(() => {});
-          }
-          await loadPersistedReviewers(manuscriptId);
-        }
-      }
-    } catch (error) {
-      console.error("Error persisting reviewers:", error);
-    }
-  };
-
-  // Load persisted reviewers and workflow status when manuscript selection changes
-  useEffect(() => {
-    if (selectedManuscriptId) {
-      loadPersistedReviewers(selectedManuscriptId);
-      fetch(`/api/manuscripts/${selectedManuscriptId}`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.manuscript?.workflowStatus) {
-            setManuscriptWorkflowStatus(data.manuscript.workflowStatus);
-          }
-        })
-        .catch(() => {});
-    } else {
-      setRejectedNames(new Set());
-      setDiscoveryResult(null);
-      setManuscriptWorkflowStatus(null);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedManuscriptId]);
+  // Thumbs up/down flagging state
+  const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | "down" | null>>({});
 
   // Reviewer responsiveness scoring (persisted in localStorage)
   const [reviewerScores, setReviewerScores] = useState<Record<string, { score: 1 | 2 | 3 | 4 | 5; note?: string }>>({});
@@ -457,139 +253,45 @@ function ReviewerSearchContent() {
     });
   };
 
-  // Expertise coverage tracking — keyed by reviewer ID
-  const [assignedExpertise, setAssignedExpertise] = useState<Record<string, string[]>>({});
-
-  // Derive the required expertise areas from search keywords
-  const manuscriptExpertise = useMemo(() => {
-    const all = [
-      ...primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
-      ...secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
-    ];
-    return [...new Set(all)];
-  }, [primaryKeywords, secondaryKeywords]);
-
-  // Compute coverage: which expertise areas are covered and by whom
-  const expertiseCoverage = useMemo(() => {
-    const allReviewers = [
-      ...(discoveryResult?.reviewers || []).filter(r => !isRejected(r.name)),
-      ...(candidateReviewers || []).filter(r => !isRejected(r.name)),
-    ];
-    const coverage: Record<string, { reviewerIds: string[]; reviewerNames: string[] }> = {};
-    for (const exp of manuscriptExpertise) {
-      coverage[exp] = { reviewerIds: [], reviewerNames: [] };
-    }
-    for (const r of allReviewers) {
-      const assigned = assignedExpertise[r.id] || [];
-      for (const exp of assigned) {
-        if (coverage[exp]) {
-          coverage[exp].reviewerIds.push(r.id);
-          coverage[exp].reviewerNames.push(r.name);
-        }
-      }
-    }
-    return coverage;
-  }, [manuscriptExpertise, assignedExpertise, discoveryResult, candidateReviewers, isRejected]);
-
-  const coveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) > 0),
-    [manuscriptExpertise, expertiseCoverage]
-  );
-  const uncoveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) === 0),
-    [manuscriptExpertise, expertiseCoverage]
-  );
-
-  const toggleExpertise = (reviewerId: string, expertise: string) => {
-    setAssignedExpertise(prev => {
-      const current = prev[reviewerId] || [];
-      const updated = current.includes(expertise)
-        ? current.filter(e => e !== expertise)
-        : [...current, expertise];
-      const next = { ...prev, [reviewerId]: updated };
-      // Persist to DB
-      if (selectedManuscriptId) {
-        fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ assignedExpertise: updated }),
-        }).catch(err => console.error("Error saving expertise:", err));
-      }
-      return next;
-    });
+  const toggleFlag = (reviewerId: string, direction: "up" | "down") => {
+    setFlaggedReviewers(prev => ({
+      ...prev,
+      [reviewerId]: prev[reviewerId] === direction ? null : direction,
+    }));
   };
 
-  const toggleFlag = (reviewerId: string, reviewerName: string, direction: "up" | "down") => {
-    if (direction === "down") {
-      // Optimistic update: remove immediately
-      setRejectedNames(prev => { const s = new Set(prev); s.add(reviewerName.toLowerCase().trim()); return s; });
-      setCandidateReviewers(prev => prev.filter(r => r.id !== reviewerId));
-      setDiscoveryResult(prev => {
-        if (!prev) return prev;
-        return { ...prev, reviewers: prev.reviewers.filter(r => r.id !== reviewerId) };
-      });
-      toast.success("Reviewer removed \u2014 won\u2019t appear again for this manuscript");
-      if (selectedManuscriptId) {
-        fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "REJECTED" }),
-        }).catch(err => console.error("Error rejecting reviewer:", err));
-      }
-      return;
-    }
-    // Thumbs up: toggle
-    const newFlag: "up" | null = flaggedReviewers[reviewerId] === "up" ? null : "up";
-    setFlaggedReviewers(prev => ({ ...prev, [reviewerId]: newFlag }));
-    if (selectedManuscriptId) {
-      fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newFlag === "up" ? "SHORTLISTED" : "SUGGESTED" }),
-      }).catch(err => console.error("Error updating reviewer status:", err));
-    }
-  };
-
-  // Export reviewers as CSV (rejected reviewers are excluded)
+  // Export flagged reviewers as CSV
   const exportFlaggedReviewers = () => {
     const allReviewers = [
-      ...(discoveryResult?.reviewers || [])
-        .filter(r => !isRejected(r.name))
-        .map(r => ({
-          id: r.id,
-          name: r.name,
-          affiliation: r.affiliation || "",
-          country: r.country || "",
-          hIndex: r.hIndex ?? "",
-          publications: r.publicationCount,
-          flag: flaggedReviewers[r.id] || "none",
-          coiStatus: r.coiSummary?.worstSeverity || "clear",
-          responsiveness: reviewerScores[r.name]?.score || "",
-          expertise: (assignedExpertise[r.id] || []).join("; "),
-        })),
-      ...(candidateReviewers || [])
-        .filter(r => !isRejected(r.name))
-        .map(r => ({
-          id: r.id,
-          name: r.name,
-          affiliation: r.affiliation || "",
-          country: "",
-          hIndex: r.hIndex ?? "",
-          publications: r.worksCount || 0,
-          flag: flaggedReviewers[r.id] || "none",
-          coiStatus: r.coiSummary?.worstSeverity || "clear",
-          responsiveness: reviewerScores[r.name]?.score || "",
-          expertise: (assignedExpertise[r.id] || []).join("; "),
-        })),
+      ...(discoveryResult?.reviewers || []).map(r => ({
+        name: r.name,
+        affiliation: r.affiliation || "",
+        country: r.country || "",
+        hIndex: r.hIndex ?? "",
+        publications: r.publicationCount,
+        flag: flaggedReviewers[r.id] || "none",
+        coiStatus: r.coiSummary?.worstSeverity || "clear",
+        responsiveness: reviewerScores[r.name]?.score || "",
+      })),
+      ...(candidateReviewers || []).map(r => ({
+        name: r.name,
+        affiliation: r.affiliation || "",
+        country: "",
+        hIndex: r.hIndex ?? "",
+        publications: r.worksCount || 0,
+        flag: flaggedReviewers[r.id] || "none",
+        coiStatus: r.coiSummary?.worstSeverity || "clear",
+        responsiveness: reviewerScores[r.name]?.score || "",
+      })),
     ];
 
     const flaggedOnly = allReviewers.filter(r => r.flag !== "none");
     const rows = (flaggedOnly.length > 0 ? flaggedOnly : allReviewers);
 
     const csv = [
-      "Name,Affiliation,Country,h-Index,Publications,Flag,COI Status,Responsiveness Score,Assigned Expertise",
+      "Name,Affiliation,Country,h-Index,Publications,Flag,COI Status,Responsiveness Score",
       ...rows.map(r => 
-        `"${r.name}","${r.affiliation}","${r.country}","${r.hIndex}","${r.publications}","${r.flag}","${r.coiStatus}","${r.responsiveness}","${r.expertise}"`
+        `"${r.name}","${r.affiliation}","${r.country}","${r.hIndex}","${r.publications}","${r.flag}","${r.coiStatus}","${r.responsiveness}"`
       ),
     ].join("\n");
 
@@ -639,6 +341,8 @@ function ReviewerSearchContent() {
     }
 
     setIsFindingReviewers(true);
+    setCandidateReviewers([]);
+    setCoauthorWarnings([]);
 
     try {
       const response = await fetch("/api/reviewers/find", {
@@ -656,26 +360,46 @@ function ReviewerSearchContent() {
         throw new Error(data.error || "Failed to find reviewers");
       }
 
-      // Merge new reviewers into existing list (deduplicate by id, exclude rejected)
-      setCandidateReviewers(prev => {
-        const existingIds = new Set(prev.map(r => r.id));
-        const newReviewers = (data.reviewers as ReviewerCandidate[]).filter(
-          (r: ReviewerCandidate) => !existingIds.has(r.id) && !isRejected(r.name)
-        );
-        return [...prev, ...newReviewers];
-      });
-      setCoauthorWarnings(prev => {
-        const existingNames = new Set(prev.map(w => w.name));
-        const newWarnings = ((data.coauthors || []) as CoauthorWarning[]).filter((w: CoauthorWarning) => !existingNames.has(w.name));
-        return [...prev, ...newWarnings];
-      });
-      
-      toast.success(
-        `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
-      );
+      setCandidateReviewers(data.reviewers);
+      setCoauthorWarnings(data.coauthors || []);
 
       if (selectedManuscriptId && data.reviewers?.length > 0) {
-        persistReviewersToDb(selectedManuscriptId, data.reviewers as ReviewerCandidate[]);
+        try {
+          const mapped = data.reviewers.map((r: ReviewerCandidate) => ({
+            name: r.name,
+            firstName: r.firstName,
+            lastName: r.lastName,
+            affiliation: r.affiliation,
+            hIndex: r.hIndex,
+            citationCount: r.citedByCount,
+            publicationCount: r.worksCount,
+            sources: r.source ? [r.source] : undefined,
+            coiSummary: r.coiSummary,
+          }));
+          const saveRes = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewers: mapped }),
+          });
+          if (saveRes.ok) {
+            const saveData = await saveRes.json();
+            toast.success(
+              `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
+            );
+          } else {
+            toast.success(
+              `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
+            );
+          }
+        } catch {
+          toast.success(
+            `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
+          );
+        }
+      } else {
+        toast.success(
+          `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
+        );
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Search failed");
@@ -692,31 +416,17 @@ function ReviewerSearchContent() {
     }
 
     setIsDiscovering(true);
-
-    // Auto-prioritize uncovered expertise: use gaps as primary keywords,
-    // push the original keywords to secondary so they still influence results
-    let effectivePrimary = primaryKeywords.split(",").map(k => k.trim()).filter(Boolean);
-    let effectiveSecondary = secondaryKeywords
-      ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean)
-      : [];
-
-    if (uncoveredExpertise.length > 0 && coveredExpertise.length > 0) {
-      effectivePrimary = uncoveredExpertise;
-      const originalAll = [
-        ...primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
-        ...effectiveSecondary,
-      ];
-      effectiveSecondary = originalAll.filter(k => !uncoveredExpertise.includes(k));
-      toast.info(`Focusing on uncovered expertise: ${uncoveredExpertise.join(", ")}`);
-    }
+    setDiscoveryResult(null);
 
     try {
       const response = await fetch("/api/reviewers/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          primaryKeywords: effectivePrimary,
-          secondaryKeywords: effectiveSecondary.length > 0 ? effectiveSecondary : undefined,
+          primaryKeywords: primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
+          secondaryKeywords: secondaryKeywords 
+            ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean) 
+            : undefined,
           keywordOperator,
           minHIndex,
           maxHIndex,
@@ -738,31 +448,103 @@ function ReviewerSearchContent() {
         throw new Error(data.error || "Failed to discover reviewers");
       }
 
-      // Merge new reviewers into existing results (deduplicate by id, exclude rejected)
-      setDiscoveryResult(prev => {
-        const incoming = (data.reviewers as AdvancedReviewer[]).filter(
-          (r: AdvancedReviewer) => !isRejected(r.name)
-        );
-        if (!prev) return { ...data, reviewers: incoming };
-        const existingIds = new Set(prev.reviewers.map((r: AdvancedReviewer) => r.id));
-        const newReviewers = incoming.filter((r: AdvancedReviewer) => !existingIds.has(r.id));
-        return {
-          ...data,
-          reviewers: [...prev.reviewers, ...newReviewers],
-        };
-      });
-      
-      toast.success(
-        `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
-      );
+      setDiscoveryResult(data);
 
       if (selectedManuscriptId && data.reviewers?.length > 0) {
-        persistReviewersToDb(selectedManuscriptId, data.reviewers as AdvancedReviewer[]);
+        try {
+          const saveRes = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewers: data.reviewers }),
+          });
+          if (saveRes.ok) {
+            const saveData = await saveRes.json();
+            toast.success(
+              `Found ${data.reviewers.length} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
+            );
+          } else {
+            toast.success(
+              `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
+            );
+          }
+        } catch {
+          toast.success(
+            `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
+          );
+        }
+      } else {
+        toast.success(
+          `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
+        );
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Discovery failed");
     } finally {
       setIsDiscovering(false);
+    }
+  };
+
+  const [isSavingReviewers, setIsSavingReviewers] = useState(false);
+
+  const saveReviewersToManuscript = async () => {
+    if (!selectedManuscriptId) {
+      toast.error("Select a manuscript first to save reviewers");
+      return;
+    }
+
+    let reviewersToSave: { name: string; firstName?: string; lastName?: string; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
+
+    if (discoveryResult?.reviewers.length) {
+      reviewersToSave = discoveryResult.reviewers.map(r => ({
+        name: r.name,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        affiliation: r.affiliation,
+        country: r.country,
+        hIndex: r.hIndex,
+        citationCount: r.citationCount,
+        publicationCount: r.publicationCount,
+        sources: r.sources,
+        verificationUrls: r.verificationUrls,
+        llmAnalysis: r.llmAnalysis as Record<string, unknown> | undefined,
+        coiSummary: r.coiSummary as Record<string, unknown> | undefined,
+      }));
+    } else if (candidateReviewers.length) {
+      reviewersToSave = candidateReviewers.map(r => ({
+        name: r.name,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        affiliation: r.affiliation,
+        hIndex: r.hIndex,
+        citationCount: r.citedByCount,
+        publicationCount: r.worksCount,
+        sources: r.source ? [r.source] : undefined,
+        coiSummary: r.coiSummary as Record<string, unknown> | undefined,
+      }));
+    }
+
+    if (reviewersToSave.length === 0) {
+      toast.error("No reviewers to save. Run a discovery first.");
+      return;
+    }
+
+    setIsSavingReviewers(true);
+    try {
+      const res = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewers: reviewersToSave }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`${data.saved} reviewer${data.saved !== 1 ? "s" : ""} saved to manuscript`);
+      } else {
+        toast.error(data.error || "Failed to save reviewers");
+      }
+    } catch {
+      toast.error("Failed to save reviewers");
+    } finally {
+      setIsSavingReviewers(false);
     }
   };
 
@@ -792,27 +574,21 @@ function ReviewerSearchContent() {
       "",
     ];
 
-    discoveryResult.reviewers
-      .filter(r => !isRejected(r.name))
-      .forEach((r, i) => {
-        lines.push(`${i + 1}. ${r.name}`);
-        lines.push(`   Affiliation: ${r.affiliation}`);
-        lines.push(`   Country: ${r.country}`);
-        lines.push(`   H-Index: ${r.hIndex !== null ? r.hIndex : "N/A"} | Citations: ${r.citationCount !== null ? r.citationCount.toLocaleString() : "N/A"}`);
-        lines.push(`   Publications: ${r.publicationCount} | First Author: ${r.firstAuthorCount} | Last/PI: ${r.lastAuthorCount} | Total Senior: ${r.seniorAuthorCount}`);
-        lines.push(`   Sources: ${r.sources.join(", ")}`);
-        lines.push(`   PubMed: ${r.verificationUrls.pubmedSearchUrl}`);
-        lines.push(`   Google Scholar: ${r.verificationUrls.googleScholarUrl}`);
-        if (r.verificationUrls.semanticScholarUrl) {
-          lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
-        }
-        lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
-        const expertise = assignedExpertise[r.id] || [];
-        if (expertise.length > 0) {
-          lines.push(`   Assigned Expertise: ${expertise.join(", ")}`);
-        }
-        lines.push("");
-      });
+    discoveryResult.reviewers.forEach((r, i) => {
+      lines.push(`${i + 1}. ${r.name}`);
+      lines.push(`   Affiliation: ${r.affiliation}`);
+      lines.push(`   Country: ${r.country}`);
+      lines.push(`   H-Index: ${r.hIndex !== null ? r.hIndex : "N/A"} | Citations: ${r.citationCount !== null ? r.citationCount.toLocaleString() : "N/A"}`);
+      lines.push(`   Publications: ${r.publicationCount} | First Author: ${r.firstAuthorCount} | Last/PI: ${r.lastAuthorCount} | Total Senior: ${r.seniorAuthorCount}`);
+      lines.push(`   Sources: ${r.sources.join(", ")}`);
+      lines.push(`   PubMed: ${r.verificationUrls.pubmedSearchUrl}`);
+      lines.push(`   Google Scholar: ${r.verificationUrls.googleScholarUrl}`);
+      if (r.verificationUrls.semanticScholarUrl) {
+        lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
+      }
+      lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
+      lines.push("");
+    });
 
     lines.push("=" .repeat(60));
     lines.push("DISCLAIMER");
@@ -861,10 +637,22 @@ function ReviewerSearchContent() {
           </p>
         </div>
         {(discoveryResult?.reviewers.length || candidateReviewers.length > 0) && (
-          <Button variant="outline" onClick={exportFlaggedReviewers}>
-            <FileDown className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
+          <div className="flex gap-2">
+            {selectedManuscriptId && (
+              <Button onClick={saveReviewersToManuscript} disabled={isSavingReviewers}>
+                {isSavingReviewers ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                )}
+                Save to Manuscript
+              </Button>
+            )}
+            <Button variant="outline" onClick={exportFlaggedReviewers}>
+              <FileDown className="h-4 w-4 mr-2" />
+              Export CSV
+            </Button>
+          </div>
         )}
       </div>
 
@@ -945,7 +733,6 @@ function ReviewerSearchContent() {
                   }}
                   placeholder="Select or upload manuscript"
                   publisherId={defaultPublisherId || undefined}
-                  journalId={journalId || undefined}
                 />
                 <p className="text-xs text-gray-500">
                   Keywords and authors will be extracted automatically
@@ -961,7 +748,7 @@ function ReviewerSearchContent() {
                     <Label htmlFor="primaryKeywords">Primary Expertise (required)</Label>
                     <Input
                       id="primaryKeywords"
-                      placeholder="Primary research area"
+                      placeholder="e.g., tuberculosis epidemiology"
                       value={primaryKeywords}
                       onChange={(e) => setPrimaryKeywords(e.target.value)}
                     />
@@ -973,7 +760,7 @@ function ReviewerSearchContent() {
                     <Label htmlFor="secondaryKeywords">Secondary Expertise (optional)</Label>
                     <Input
                       id="secondaryKeywords"
-                      placeholder="Additional skills or methods"
+                      placeholder="e.g., mathematical modelling, transmission dynamics"
                       value={secondaryKeywords}
                       onChange={(e) => setSecondaryKeywords(e.target.value)}
                     />
@@ -1021,7 +808,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="authorListAdvanced">Manuscript Authors (to exclude)</Label>
                 <Textarea
                   id="authorListAdvanced"
-                  placeholder="Comma-separated author names"
+                  placeholder="e.g., John Smith, Jane Doe PhD, Prof. Robert Johnson"
                   value={authorList}
                   onChange={(e) => setAuthorList(e.target.value)}
                   rows={2}
@@ -1185,54 +972,6 @@ function ReviewerSearchContent() {
                 </div>
               </div>
 
-              {/* Uncovered expertise hints */}
-              {uncoveredExpertise.length > 0 && discoveryResult && (
-                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 mb-3">
-                  <p className="text-xs font-medium text-amber-800 mb-2">
-                    <AlertTriangle className="h-3 w-3 inline mr-1" />
-                    {uncoveredExpertise.length} expertise {uncoveredExpertise.length === 1 ? "area" : "areas"} still {uncoveredExpertise.length === 1 ? "needs" : "need"} coverage:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {uncoveredExpertise.map(exp => (
-                      <button
-                        key={exp}
-                        onClick={() => {
-                          setPrimaryKeywords(exp);
-                          toast.success(`Keywords set to "${exp}" — click Discover to search`);
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors"
-                      >
-                        <Search className="h-3 w-3" />
-                        {exp}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Uncovered expertise hint */}
-              {uncoveredExpertise.length > 0 && coveredExpertise.length > 0 && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-sm text-amber-800 font-medium mb-2">
-                    Next search will auto-focus on {uncoveredExpertise.length} uncovered {uncoveredExpertise.length === 1 ? "area" : "areas"}:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {uncoveredExpertise.map(exp => (
-                      <span
-                        key={exp}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300"
-                      >
-                        <Search className="h-3 w-3" />
-                        {exp}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="text-xs text-amber-600 mt-1.5">
-                    Click Discover below to find reviewers for these gaps. Or click a keyword above to search for it individually.
-                  </p>
-                </div>
-              )}
-
               <Button 
                 onClick={handleAdvancedDiscovery} 
                 disabled={isDiscovering} 
@@ -1248,16 +987,6 @@ function ReviewerSearchContent() {
               </Button>
             </CardContent>
           </Card>
-
-          {/* Loading persisted reviewers indicator */}
-          {isLoadingPersisted && (
-            <Card className="bg-blue-50 border-blue-200">
-              <CardContent className="py-4 flex items-center gap-3">
-                <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                <p className="text-sm text-blue-800">Loading saved reviewers...</p>
-              </CardContent>
-            </Card>
-          )}
 
           {/* Discovery Results */}
           {discoveryResult && (
@@ -1324,14 +1053,14 @@ function ReviewerSearchContent() {
                         variant="outline"
                         onClick={() => {
                           if (!discoveryResult) return;
-                          const activeReviewers = discoveryResult.reviewers.filter(r => !isRejected(r.name));
-                          const reviewerNames = activeReviewers.map(r => r.name).join("\n");
+                          const reviewerNames = discoveryResult.reviewers.map(r => r.name).join("\n");
+                          // Store in sessionStorage and navigate to COI page
                           sessionStorage.setItem("coi_reviewers_import", reviewerNames);
                           if (authorList) {
                             sessionStorage.setItem("coi_authors_import", authorList);
                           }
                           router.push(`/dashboard/journals/${slug}/coi`);
-                          toast.success(`${activeReviewers.length} reviewers sent to COI check`);
+                          toast.success(`${discoveryResult.reviewers.length} reviewers sent to COI check`);
                         }}
                       >
                         <AlertTriangle className="h-4 w-4 mr-2" />
@@ -1342,87 +1071,16 @@ function ReviewerSearchContent() {
                 </CardContent>
               </Card>
 
-              {/* Expertise Coverage Panel */}
-              {manuscriptExpertise.length > 0 && (
-                <Card className="border-blue-200 bg-blue-50/30">
-                  <CardContent className="py-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-semibold flex items-center gap-2">
-                        <GraduationCap className="h-4 w-4 text-blue-600" />
-                        Expertise Coverage
-                        <Badge variant="outline" className={`text-xs ${
-                          coveredExpertise.length === manuscriptExpertise.length
-                            ? "bg-green-100 text-green-700"
-                            : coveredExpertise.length > 0
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-red-100 text-red-700"
-                        }`}>
-                          {coveredExpertise.length}/{manuscriptExpertise.length} covered
-                        </Badge>
-                      </h4>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {manuscriptExpertise.map(exp => {
-                        const info = expertiseCoverage[exp];
-                        const isCovered = info && info.reviewerNames.length > 0;
-                        return (
-                          <div key={exp} className="group relative">
-                            <Badge
-                              variant="outline"
-                              className={`text-xs cursor-default ${
-                                isCovered
-                                  ? "bg-green-100 text-green-700 border-green-300"
-                                  : "bg-amber-50 text-amber-700 border-amber-300"
-                              }`}
-                            >
-                              {isCovered ? (
-                                <Check className="h-3 w-3 mr-1" />
-                              ) : (
-                                <AlertTriangle className="h-3 w-3 mr-1" />
-                              )}
-                              {exp}
-                              {isCovered && (
-                                <span className="ml-1 text-green-600">
-                                  ({info.reviewerNames.length})
-                                </span>
-                              )}
-                            </Badge>
-                            {isCovered && (
-                              <div className="absolute z-10 hidden group-hover:block bottom-full mb-1 left-0 bg-white border rounded shadow-lg p-2 text-xs min-w-[140px]">
-                                <p className="font-medium text-gray-700 mb-1">Covered by:</p>
-                                {info.reviewerNames.map((name, i) => (
-                                  <p key={i} className="text-gray-600">{name}</p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {uncoveredExpertise.length > 0 && (
-                      <p className="text-xs text-amber-600 mt-2">
-                        {uncoveredExpertise.length === manuscriptExpertise.length
-                          ? "Assign expertise to reviewers using the checkboxes on each card below."
-                          : `Gaps: ${uncoveredExpertise.join(", ")} — next search will auto-focus on these.`}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Results Header */}
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-semibold">
-                    {discoveryResult.reviewers.filter(r => !isRejected(r.name)).length} Reviewers Found
+                    {discoveryResult.reviewers.length} Reviewers Found
                   </h3>
                   <p className="text-sm text-gray-500">
                     From {discoveryResult.summary.diversity.countryCount} countries • 
                     Avg publications: {discoveryResult.summary.avgPublications} • 
                     Avg senior authorships: {discoveryResult.summary.avgSeniorAuthorships}
-                    {discoveryResult.summary.diversity.gender && (
-                      <> • <span className="text-pink-600">{discoveryResult.summary.diversity.gender.likely_female}F</span> / <span className="text-sky-600">{discoveryResult.summary.diversity.gender.likely_male}M</span></>
-                    )}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1436,7 +1094,7 @@ function ReviewerSearchContent() {
 
               {/* Reviewer Cards */}
               <div className="grid gap-4 md:grid-cols-2">
-                {discoveryResult.reviewers.filter(r => !isRejected(r.name)).map((reviewer, index) => (
+                {discoveryResult.reviewers.map((reviewer, index) => (
                   <Card 
                     key={reviewer.id} 
                     className={`hover:shadow-md transition-shadow ${
@@ -1452,18 +1110,7 @@ function ReviewerSearchContent() {
                             <span className="text-sm font-bold text-blue-700">{index + 1}</span>
                           </div>
                           <div>
-                            <h4 className="font-semibold flex items-center gap-1.5">
-                              {reviewer.name}
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                reviewer.inferredGender === "likely_female"
-                                  ? "bg-pink-100 text-pink-700"
-                                  : reviewer.inferredGender === "likely_male"
-                                  ? "bg-sky-100 text-sky-700"
-                                  : "bg-gray-100 text-gray-500"
-                              }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
-                                {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
-                              </span>
-                            </h4>
+                            <h4 className="font-semibold">{reviewer.name}</h4>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
                               <Building className="h-3 w-3" />
                               {reviewer.affiliation.slice(0, 60)}{reviewer.affiliation.length > 60 ? "..." : ""}
@@ -1502,7 +1149,7 @@ function ReviewerSearchContent() {
                           {/* Thumbs up/down */}
                           <div className="flex gap-1">
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "up"); }}
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
                               className={`p-1 rounded transition-colors ${
                                 flaggedReviewers[reviewer.id] === "up"
                                   ? "bg-green-100 text-green-700"
@@ -1513,9 +1160,13 @@ function ReviewerSearchContent() {
                               <ThumbsUp className="h-3.5 w-3.5" />
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "down"); }}
-                              className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
-                              title="Remove reviewer"
+                              onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
+                              className={`p-1 rounded transition-colors ${
+                                flaggedReviewers[reviewer.id] === "down"
+                                  ? "bg-red-100 text-red-700"
+                                  : "text-gray-300 hover:text-red-500 hover:bg-red-50"
+                              }`}
+                              title="Reject reviewer"
                             >
                               <ThumbsDown className="h-3.5 w-3.5" />
                             </button>
@@ -1568,36 +1219,6 @@ function ReviewerSearchContent() {
                               ))}
                             </div>
                           )}
-                        </div>
-                      )}
-
-                      {/* Expertise Assignment */}
-                      {manuscriptExpertise.length > 0 && (
-                        <div className="mb-3 p-2 bg-blue-50/50 rounded-lg border border-blue-200">
-                          <p className="text-xs font-medium text-blue-800 mb-1.5">Covers expertise:</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {manuscriptExpertise.map(exp => {
-                              const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
-                              return (
-                                <button
-                                  key={exp}
-                                  onClick={(e) => { e.stopPropagation(); toggleExpertise(reviewer.id, exp); }}
-                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                                    isChecked
-                                      ? "bg-green-100 text-green-800 border-green-300"
-                                      : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
-                                  }`}
-                                >
-                                  <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                                    isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
-                                  }`}>
-                                    {isChecked && <Check className="h-2.5 w-2.5 text-white" />}
-                                  </div>
-                                  {exp}
-                                </button>
-                              );
-                            })}
-                          </div>
                         </div>
                       )}
 
@@ -1795,7 +1416,6 @@ function ReviewerSearchContent() {
                   }}
                   placeholder="Select or upload manuscript"
                   publisherId={defaultPublisherId || undefined}
-                  journalId={journalId || undefined}
                 />
               </div>
 
@@ -1805,7 +1425,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="keywords">Research Keywords (comma-separated)</Label>
                 <Input
                   id="keywords"
-                  placeholder="Comma-separated research keywords"
+                  placeholder="e.g., machine learning, neural networks, deep learning"
                   value={keywords}
                   onChange={(e) => setKeywords(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleFindReviewers()}
@@ -1819,7 +1439,7 @@ function ReviewerSearchContent() {
                 <Label htmlFor="authorListAuto">Manuscript Authors (optional - to exclude)</Label>
                 <Textarea
                   id="authorListAuto"
-                  placeholder="Comma-separated author names"
+                  placeholder="e.g., John Smith, Jane Doe PhD, Prof. Robert Johnson"
                   value={authorList}
                   onChange={(e) => setAuthorList(e.target.value)}
                   rows={2}
@@ -1890,7 +1510,7 @@ function ReviewerSearchContent() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {candidateReviewers.filter(r => !isRejected(r.name)).map((reviewer) => {
+                {candidateReviewers.map((reviewer) => {
                   const coauthorCount = isCoauthor(reviewer.name);
                   const hasCoiConflict = reviewer.coiSummary?.hasConflict;
                   
@@ -1912,18 +1532,7 @@ function ReviewerSearchContent() {
                               <User className="h-4 w-4 text-gray-600" />
                             </div>
                             <div>
-                              <h4 className="font-semibold text-sm flex items-center gap-1.5">
-                                {reviewer.name}
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                  reviewer.inferredGender === "likely_female"
-                                    ? "bg-pink-100 text-pink-700"
-                                    : reviewer.inferredGender === "likely_male"
-                                    ? "bg-sky-100 text-sky-700"
-                                    : "bg-gray-100 text-gray-500"
-                                }`} title={`Gender estimate based on first name (${reviewer.firstName})`}>
-                                  {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
-                                </span>
-                              </h4>
+                              <h4 className="font-semibold text-sm">{reviewer.name}</h4>
                               {reviewer.affiliation && (
                                 <p className="text-xs text-gray-500 flex items-center gap-1">
                                   <Building className="h-3 w-3" />
@@ -1951,7 +1560,7 @@ function ReviewerSearchContent() {
                             {/* Thumbs up/down */}
                             <div className="flex gap-1">
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "up"); }}
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "up"); }}
                                 className={`p-1 rounded transition-colors ${
                                   flaggedReviewers[reviewer.id] === "up"
                                     ? "bg-green-100 text-green-700"
@@ -1962,9 +1571,13 @@ function ReviewerSearchContent() {
                                 <ThumbsUp className="h-3.5 w-3.5" />
                               </button>
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, reviewer.name, "down"); }}
-                                className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
-                                title="Remove reviewer"
+                                onClick={(e) => { e.stopPropagation(); toggleFlag(reviewer.id, "down"); }}
+                                className={`p-1 rounded transition-colors ${
+                                  flaggedReviewers[reviewer.id] === "down"
+                                    ? "bg-red-100 text-red-700"
+                                    : "text-gray-300 hover:text-red-500 hover:bg-red-50"
+                                }`}
+                                title="Reject reviewer"
                               >
                                 <ThumbsDown className="h-3.5 w-3.5" />
                               </button>
@@ -2015,42 +1628,12 @@ function ReviewerSearchContent() {
                         )}
 
                         {reviewer.topics && reviewer.topics.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mb-2">
+                          <div className="flex flex-wrap gap-1">
                             {reviewer.topics.slice(0, 3).map((topic, i) => (
                               <Badge key={i} variant="outline" className="text-xs">
                                 {topic}
                               </Badge>
                             ))}
-                          </div>
-                        )}
-
-                        {/* Expertise Assignment */}
-                        {manuscriptExpertise.length > 0 && (
-                          <div className="mb-2 p-2 bg-blue-50/50 rounded border border-blue-200">
-                            <p className="text-xs font-medium text-blue-800 mb-1">Covers expertise:</p>
-                            <div className="flex flex-wrap gap-1">
-                              {manuscriptExpertise.map(exp => {
-                                const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
-                                return (
-                                  <button
-                                    key={exp}
-                                    onClick={(e) => { e.stopPropagation(); toggleExpertise(reviewer.id, exp); }}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                                      isChecked
-                                        ? "bg-green-100 text-green-800 border-green-300"
-                                        : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
-                                    }`}
-                                  >
-                                    <div className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${
-                                      isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
-                                    }`}>
-                                      {isChecked && <Check className="h-2 w-2 text-white" />}
-                                    </div>
-                                    {exp}
-                                  </button>
-                                );
-                              })}
-                            </div>
                           </div>
                         )}
 
