@@ -1,8 +1,61 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { ManuscriptWorkflowStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
+
+const VALID_WORKFLOW_STATUSES = Object.values(ManuscriptWorkflowStatus);
+
+/**
+ * PATCH /api/manuscripts/:id/status
+ * Update the manuscript workflow status (NEW, FINDING_REVIEWERS, REVIEWERS_INVITED, CLOSED)
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const body = await request.json();
+    const { workflowStatus } = body;
+
+    if (!workflowStatus || !VALID_WORKFLOW_STATUSES.includes(workflowStatus)) {
+      return NextResponse.json(
+        { error: `Valid workflowStatus required: ${VALID_WORKFLOW_STATUSES.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    const manuscript = await prisma.manuscript.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, publisherId: true, uploaderId: true },
+    });
+
+    if (!manuscript) {
+      return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
+    }
+
+    const updated = await prisma.manuscript.update({
+      where: { id },
+      data: { workflowStatus },
+      select: { id: true, workflowStatus: true },
+    });
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error("[API] Error updating workflow status:", error);
+    return NextResponse.json(
+      { error: "Failed to update workflow status" },
+      { status: 500 }
+    );
+  }
+}
 
 /**
  * GET /api/manuscripts/:id/status

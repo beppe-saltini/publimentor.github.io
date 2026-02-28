@@ -89,6 +89,8 @@ export async function GET(
         language: manuscript.language,
         status: manuscript.status,
         statusMessage: manuscript.statusMessage,
+        workflowStatus: manuscript.workflowStatus,
+        detectedJournal: manuscript.detectedJournal,
         
         // File info
         fileName: manuscript.fileName,

@@ -21,6 +21,23 @@ interface SearchWorksParams {
   perPage?: number;
 }
 
+export interface OpenAlexSourceResult {
+  id: string;
+  display_name: string;
+  type: string;
+  publisher: string;
+  is_oa: boolean;
+  is_in_doaj: boolean;
+  works_count: number;
+  cited_by_count: number;
+  h_index: number;
+  impact_factor: number | null;
+  homepage_url?: string;
+  apc_usd?: number;
+  issn_l: string | null;
+  country_code: string | null;
+}
+
 /**
  * OpenAlex API Client
  * Documentation: https://docs.openalex.org/
@@ -657,18 +674,7 @@ export const openAlex = {
   /**
    * Get source (venue) information including metrics
    */
-  async getSource(sourceId: string): Promise<{
-    id: string;
-    display_name: string;
-    type: string;
-    publisher: string;
-    is_oa: boolean;
-    works_count: number;
-    cited_by_count: number;
-    h_index: number;
-    homepage_url?: string;
-    apc_usd?: number;
-  } | null> {
+  async getSource(sourceId: string): Promise<OpenAlexSourceResult | null> {
     const params = new URLSearchParams();
     const email = getPoliteEmail();
     if (email) {
@@ -689,11 +695,15 @@ export const openAlex = {
         type: data.type,
         publisher: data.host_organization_name || "",
         is_oa: data.is_oa || false,
+        is_in_doaj: data.is_in_doaj || false,
         works_count: data.works_count || 0,
         cited_by_count: data.cited_by_count || 0,
         h_index: data.summary_stats?.h_index || 0,
+        impact_factor: data.summary_stats?.["2yr_mean_citedness"] ?? null,
         homepage_url: data.homepage_url,
         apc_usd: data.apc_usd,
+        issn_l: data.issn_l || null,
+        country_code: data.country_code || null,
       };
     } catch {
       return null;
@@ -701,15 +711,119 @@ export const openAlex = {
   },
 
   /**
-   * Infer gender from first name using simple heuristics
-   * Note: This is a basic heuristic and may not be accurate for all names
+   * Search for journals (sources) by keyword.
+   * Returns matching journals with metrics, filtered to type=journal only.
+   */
+  async searchSources(
+    query: string,
+    perPage: number = 10
+  ): Promise<OpenAlexSourceResult[]> {
+    const params = new URLSearchParams({
+      search: query,
+      filter: "type:journal",
+      per_page: String(perPage),
+      sort: "cited_by_count:desc",
+    });
+
+    const email = getPoliteEmail();
+    if (email) {
+      params.set("mailto", email);
+    }
+
+    try {
+      const response = await fetch(`${BASE_URL}/sources?${params}`);
+
+      if (!response.ok) {
+        console.log(`[OpenAlex] Source search failed: ${response.status}`);
+        return [];
+      }
+
+      const data = await response.json();
+      if (!data.results || !Array.isArray(data.results)) return [];
+
+      return data.results.map((s: Record<string, unknown>) => ({
+        id: s.id as string,
+        display_name: s.display_name as string,
+        type: s.type as string,
+        publisher: (s.host_organization_name as string) || "",
+        is_oa: (s.is_oa as boolean) || false,
+        is_in_doaj: (s.is_in_doaj as boolean) || false,
+        works_count: (s.works_count as number) || 0,
+        cited_by_count: (s.cited_by_count as number) || 0,
+        h_index: (s.summary_stats as Record<string, number>)?.h_index || 0,
+        impact_factor: (s.summary_stats as Record<string, number>)?.["2yr_mean_citedness"] ?? null,
+        homepage_url: (s.homepage_url as string) || undefined,
+        apc_usd: (s.apc_usd as number) || undefined,
+        issn_l: (s.issn_l as string) || null,
+        country_code: (s.country_code as string) || null,
+      }));
+    } catch (error) {
+      console.error("[OpenAlex] Error searching sources:", error);
+      return [];
+    }
+  },
+
+  /**
+   * Look up a journal by its exact display name.
+   * Returns the best match or null.
+   */
+  async findSourceByName(name: string): Promise<OpenAlexSourceResult | null> {
+    const results = await this.searchSources(name, 5);
+    if (results.length === 0) return null;
+
+    const nameLower = name.toLowerCase().trim();
+    // Prefer exact match
+    const exact = results.find(
+      r => r.display_name.toLowerCase().trim() === nameLower
+    );
+    return exact || results[0];
+  },
+
+  /**
+   * Infer gender from first name using curated name lists.
+   * Falls back to "unknown" rather than guessing from endings, since many
+   * male names in Italian, Greek, Slavic etc. end in vowels (Luca, Andrea, Nicola).
    */
   inferGender(firstName: string): "likely_male" | "likely_female" | "unknown" {
     const name = firstName.toLowerCase().trim();
-    
-    // Common female endings
-    const femaleEndings = ["a", "e", "ie", "y", "ine", "elle", "ette", "ina", "ana"];
+    // Handle initials like "L." or "T. W." — can't infer gender
+    if (name.length <= 2 || /^[a-z]\.?(\s+[a-z]\.?)*$/.test(name)) {
+      return "unknown";
+    }
+
+    // Names that are AMBIGUOUS across cultures — always return "unknown" for these
+    const ambiguousNames = new Set([
+      "andrea",   // male in Italian, female in English/German
+      "simone",   // male in Italian, female in French/English
+      "nicola",   // male in Italian, female in English
+      "michele",  // male in Italian, female in French/English
+      "daniele",  // male in Italian, could be confused with "Danielle"
+      "sasha", "sascha", // both genders (Russian/German)
+      "yuki",     // both genders (Japanese)
+      "wei",      // both genders (Chinese)
+      "li",       // both genders (Chinese)
+      "min",      // both genders (Chinese/Korean)
+      "jun",      // both genders (Chinese/Japanese)
+      "claude",   // male in French, female in English sometimes
+      "rene",     // male in French/Spanish, female in English
+      "luca",     // male in Italian/Romanian, female in Hungarian
+      "nikola",   // male in Slavic, could be confused with "Nicole"
+      "misha",    // male in Russian, female elsewhere
+      "alex",     // both genders
+      "robin",    // both genders
+      "kim",      // both genders
+      "pat",      // both genders
+      "sam",      // both genders
+      "jordan",   // both genders
+      "morgan",   // both genders
+      "taylor",   // both genders
+      "avery",    // both genders
+    ]);
+
+    if (ambiguousNames.has(name)) return "unknown";
+
     const femaleNames = new Set([
+      // English
       "mary", "patricia", "jennifer", "linda", "elizabeth", "barbara", "susan",
       "jessica", "sarah", "karen", "lisa", "nancy", "betty", "margaret",
       "sandra", "ashley", "kimberly", "emily", "donna", "michelle", "dorothy",
@@ -717,32 +831,56 @@ export const openAlex = {
       "laura", "cynthia", "kathleen", "amy", "angela", "anna", "maria", "eva",
       "lucia", "carmen", "rosa", "elena", "sara", "ana", "claire", "sophie",
       "emma", "olivia", "ava", "isabella", "mia", "charlotte", "amelia", "harper",
-      "yi", "li", "mei", "ling", "xin", "yan", "wei", "yun", "hui", "jie",
-      "yuki", "yoko", "keiko", "sachiko", "tomoko", "akiko", "noriko", "haruka"
+      "catherine", "virginia", "rachel", "samantha", "katherine", "christine",
+      "debra", "carolyn", "janet", "diana", "alice", "julie", "heather", "teresa",
+      "gloria", "evelyn", "joan", "victoria", "ruth", "judith", "megan", "cheryl",
+      // Romance
+      "marie", "anne", "isabelle", "françoise", "nathalie", "sylvie",
+      "giulia", "francesca", "chiara", "giovanna", "valentina",
+      "pilar", "dolores", "consuelo", "mercedes",
+      // East Asian (unambiguous)
+      "mei", "ling", "xin", "yan", "yun", "hui", "jie",
+      "yoko", "keiko", "sachiko", "tomoko", "akiko", "noriko", "haruka",
+      "minji", "soyeon", "jiyeon", "eunbi",
+      // South Asian
+      "priya", "ananya", "deepika", "pooja", "neha", "swati", "kavita",
     ]);
     
-    // Common male names
     const maleNames = new Set([
+      // English
       "james", "michael", "john", "david", "richard", "joseph", "thomas",
       "charles", "christopher", "daniel", "matthew", "anthony", "mark", "donald",
       "steven", "paul", "andrew", "joshua", "kenneth", "kevin", "brian", "george",
       "timothy", "ronald", "edward", "jason", "jeffrey", "ryan", "jacob", "gary",
       "nicholas", "eric", "jonathan", "stephen", "william", "robert", "peter",
+      "benjamin", "samuel", "henry", "alexander", "patrick", "jack", "dennis",
+      "jerry", "tyler", "aaron", "nathan", "adam", "douglas", "scott", "alan",
+      "raymond", "roger", "eugene", "bruce", "ralph", "roy", "louis", "russell",
+      "lewis", "philip", "bobby", "harry", "vincent", "albert", "martin",
+      // Italian/Romance (unambiguous male)
+      "marco", "matteo", "pietro", "carlo", "fabio",
+      "giuseppe", "giovanni", "alessandro", "davide",
+      "enrique", "alejandro", "pablo", "diego", "rodrigo", "felipe", "bernardo",
+      "pierre", "philippe", "alexandre", "andre",
+      // Greek
+      "nikos", "kostas", "giorgos", "dimitris", "yannis", "manolis",
+      // Slavic (unambiguous)
+      "ilya", "kolya", "luka",
+      // East Asian (unambiguous)
+      "taro", "kenji", "takeshi", "hiroshi", "akira", "takashi", "kazuki",
+      "ryo", "yuto", "haruto", "minato", "ren",
+      // Hispanic
       "carlos", "jose", "juan", "luis", "jorge", "antonio", "francisco", "miguel",
-      "wei", "jun", "lei", "chen", "wang", "zhang", "liu", "li", "yang", "huang",
-      "taro", "kenji", "takeshi", "hiroshi", "akira", "yuki", "takashi", "kazuki"
+      // South Asian
+      "raj", "amit", "rahul", "vikram", "suresh", "anil", "sanjay", "deepak",
     ]);
     
+    // If in doubt, return "unknown" — conservative approach
     if (femaleNames.has(name)) return "likely_female";
     if (maleNames.has(name)) return "likely_male";
     
-    // Check endings
-    for (const ending of femaleEndings) {
-      if (name.endsWith(ending) && name.length > ending.length + 1) {
-        return "likely_female";
-      }
-    }
-    
+    // Do NOT fall back to suffix heuristics — too many false positives
+    // (e.g. "Luca" → female because ends in "a", "Matteo" → female because ends in "e")
     return "unknown";
   },
 };

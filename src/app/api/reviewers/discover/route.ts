@@ -243,6 +243,8 @@ export async function POST(request: Request) {
             let openAlexUrl: string | undefined;
 
             // 3a. OpenAlex FIRST — most reliable author disambiguation
+            // Also use the verified display_name to correct LLM hallucinated first names
+            let verifiedName: string | null = null;
             try {
               const oaAuthor = await openAlex.findAuthorByName(suggested.name);
               if (oaAuthor) {
@@ -252,7 +254,17 @@ export async function POST(request: Request) {
                 citationCount = oaAuthor.cited_by_count;
                 openAlexUrl = oaAuthor.id;
                 sources.push("OpenAlex");
-                console.log(`[Discover] OpenAlex: ${suggested.name} H-index=${hIndexOA}, papers=${oaPaperCount}, ORCID=${oaOrcid || "none"}`);
+                // Prefer the database name over the LLM name (fixes hallucinated first names)
+                if (oaAuthor.display_name) {
+                  const oaLast = oaAuthor.display_name.split(" ").pop()?.toLowerCase();
+                  if (oaLast === lastName) {
+                    verifiedName = oaAuthor.display_name;
+                    if (verifiedName !== suggested.name) {
+                      console.log(`[Discover] Name corrected: "${suggested.name}" → "${verifiedName}" (from OpenAlex)`);
+                    }
+                  }
+                }
+                console.log(`[Discover] OpenAlex: ${verifiedName || suggested.name} H-index=${hIndexOA}, papers=${oaPaperCount}, ORCID=${oaOrcid || "none"}`);
               }
               await delay(100);
             } catch (error) {
@@ -328,11 +340,15 @@ export async function POST(request: Request) {
               };
             });
 
+            // Use verified name from OpenAlex when available (fixes LLM-hallucinated first names)
+            const finalName = verifiedName || suggested.name;
+            const finalNameParts = finalName.split(" ");
+
             const candidate: ReviewerCandidate = {
-              id: `llm_${suggested.name.toLowerCase().replace(/\s+/g, "_")}`,
-              name: suggested.name,
-              firstName: nameParts.slice(0, -1).join(" "),
-              lastName: nameParts[nameParts.length - 1],
+              id: `llm_${finalName.toLowerCase().replace(/\s+/g, "_")}`,
+              name: finalName,
+              firstName: finalNameParts.slice(0, -1).join(" "),
+              lastName: finalNameParts[finalNameParts.length - 1],
               affiliation: suggested.affiliation,
               country: suggested.country,
               hIndex,
@@ -345,9 +361,9 @@ export async function POST(request: Request) {
               recentArticles,
               sources,
               verificationUrls: {
-                pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(usedSearchTerm || suggested.name + "[Author]")}`,
-                googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(suggested.name)}"`,
-                institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(suggested.name)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`,
+                pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(usedSearchTerm || finalName + "[Author]")}`,
+                googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(finalName)}"`,
+                institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(finalName)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`,
                 semanticScholarUrl,
                 openAlexUrl,
               },

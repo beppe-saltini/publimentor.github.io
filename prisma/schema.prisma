@@ -334,6 +334,13 @@ enum ManuscriptStatus {
   ERROR // Processing failed
 }
 
+enum ManuscriptWorkflowStatus {
+  NEW
+  FINDING_REVIEWERS
+  REVIEWERS_INVITED
+  CLOSED
+}
+
 model Manuscript {
   id String @id @default(cuid())
 
@@ -359,6 +366,9 @@ model Manuscript {
   statusMessage     String? // Error message if failed
   processingStarted DateTime?
   processingEnded   DateTime?
+
+  // === WORKFLOW STATUS ===
+  workflowStatus ManuscriptWorkflowStatus @default(NEW)
 
   // === EXTRACTED TEXT ===
   extractedText        String? @db.Text // Full document text
@@ -423,6 +433,7 @@ model Manuscript {
   chunks        DocumentChunk[]
   permissions   ManuscriptPermission[]
   processingJobs ProcessingJob[]
+  reviewers     ManuscriptReviewer[]
 
   // === INDEXES ===
   @@index([publisherId])
@@ -865,6 +876,62 @@ model DataRetentionPolicy {
   lastRunResult Json?
 
   @@map("data_retention_policies")
+}
+
+// ============================================================
+// MANUSCRIPT REVIEWERS — Persisted reviewer suggestions per manuscript
+// ============================================================
+
+enum ManuscriptReviewerStatus {
+  SUGGESTED   // Default: discovered but not yet acted on
+  SHORTLISTED // Thumbs up
+  REJECTED    // Thumbs down — hidden from list, excluded from future searches
+}
+
+model ManuscriptReviewer {
+  id String @id @default(cuid())
+
+  // Ownership
+  manuscriptId String
+
+  // Reviewer identity
+  name      String
+  firstName String?
+  lastName  String?
+
+  // Professional info
+  affiliation String?
+  country     String?
+
+  // Metrics
+  hIndex           Int?
+  citationCount    Int?
+  publicationCount Int?
+
+  // Gender inference
+  inferredGender String? // "likely_male", "likely_female", "unknown"
+
+  // Data provenance
+  sources          Json? // e.g. ["PubMed","OpenAlex","SemanticScholar"]
+  recentArticles   Json? // Array of article objects
+  verificationUrls Json? // { pubmedSearchUrl, googleScholarUrl, ... }
+  llmAnalysis      Json? // { relevanceScore, reasoning, topicalMatch, ... }
+  coiSummary       Json? // { hasConflict, worstSeverity, conflictCount, conflicts }
+
+  // Status
+  status ManuscriptReviewerStatus @default(SUGGESTED)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  // Unique: one reviewer name per manuscript
+  @@unique([manuscriptId, name])
+  @@index([manuscriptId])
+  @@index([manuscriptId, status])
 }
 
 // ============================================================

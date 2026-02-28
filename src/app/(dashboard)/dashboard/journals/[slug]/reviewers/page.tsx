@@ -261,38 +261,151 @@ function ReviewerSearchContent() {
   // Thumbs up flagging state
   const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | null>>({});
 
-  // Rejected reviewer names — persisted per manuscript so they don't reappear on new searches
+  // Rejected reviewer names — loaded from DB per manuscript
   const [rejectedNames, setRejectedNames] = useState<Set<string>>(new Set());
-
-  // Build a localStorage key scoped to manuscript (or journal as fallback)
-  const rejectedKey = selectedManuscriptId
-    ? `publimentor_rejected_${selectedManuscriptId}`
-    : `publimentor_rejected_journal_${slug}`;
-
-  // Load rejected names from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(rejectedKey);
-      if (stored) {
-        setRejectedNames(new Set(JSON.parse(stored)));
-      } else {
-        setRejectedNames(new Set());
-      }
-    } catch {
-      setRejectedNames(new Set());
-    }
-  }, [rejectedKey]);
-
-  const addRejectedName = (name: string) => {
-    setRejectedNames(prev => {
-      const updated = new Set(prev);
-      updated.add(name.toLowerCase().trim());
-      localStorage.setItem(rejectedKey, JSON.stringify([...updated]));
-      return updated;
-    });
-  };
+  const [isLoadingPersisted, setIsLoadingPersisted] = useState(false);
+  const [manuscriptWorkflowStatus, setManuscriptWorkflowStatus] = useState<string | null>(null);
 
   const isRejected = (name: string) => rejectedNames.has(name.toLowerCase().trim());
+
+  const mapDbReviewerToAdvanced = (r: Record<string, unknown>): AdvancedReviewer => ({
+    id: r.id as string,
+    name: r.name as string,
+    firstName: (r.firstName as string) || "",
+    lastName: (r.lastName as string) || "",
+    affiliation: (r.affiliation as string) || "",
+    country: (r.country as string) || "",
+    hIndex: (r.hIndex as number) ?? null,
+    citationCount: (r.citationCount as number) ?? null,
+    publicationCount: (r.publicationCount as number) || 0,
+    firstAuthorCount: 0,
+    lastAuthorCount: 0,
+    correspondingCount: 0,
+    seniorAuthorCount: 0,
+    recentArticles: (r.recentArticles as AdvancedReviewer["recentArticles"]) || [],
+    sources: (r.sources as AdvancedReviewer["sources"]) || [],
+    verificationUrls: (r.verificationUrls as AdvancedReviewer["verificationUrls"]) || {
+      pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(r.name as string)}`,
+      googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(r.name as string)}"`,
+      institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(r.name as string)}"+email`,
+    },
+    llmAnalysis: (r.llmAnalysis as AdvancedReviewer["llmAnalysis"]) || undefined,
+    coiSummary: (r.coiSummary as AdvancedReviewer["coiSummary"]) || undefined,
+    inferredGender: (r.inferredGender as AdvancedReviewer["inferredGender"]) || undefined,
+  });
+
+  const loadPersistedReviewers = async (manuscriptId: string) => {
+    setIsLoadingPersisted(true);
+    try {
+      const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers?includeRejected=true`);
+      const data = await response.json();
+      if (response.ok && data.reviewers) {
+        const allReviewers = data.reviewers as Record<string, unknown>[];
+        const rejected = allReviewers.filter(r => r.status === "REJECTED");
+        const active = allReviewers.filter(r => r.status !== "REJECTED");
+
+        setRejectedNames(new Set(rejected.map(r => (r.name as string).toLowerCase().trim())));
+
+        if (active.length > 0) {
+          const mapped = active.map(mapDbReviewerToAdvanced);
+          const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
+          setDiscoveryResult(prev => ({
+            reviewers: prev
+              ? [...prev.reviewers.filter(existing => !mapped.some(m => m.name === existing.name)), ...mapped]
+              : mapped,
+            summary: prev?.summary || {
+              totalFound: mapped.length,
+              returned: mapped.length,
+              criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
+              diversity: { countries, countryCount: countries.length },
+              avgPublications: Math.round(mapped.reduce((sum, r) => sum + r.publicationCount, 0) / mapped.length),
+              avgSeniorAuthorships: 0,
+            },
+            relatedConcepts: prev?.relatedConcepts || [],
+            disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
+            selectionCriteria: prev?.selectionCriteria || {},
+          }));
+
+          const flags: Record<string, "up" | null> = {};
+          active.forEach(r => {
+            if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
+          });
+          setFlaggedReviewers(prev => ({ ...prev, ...flags }));
+        } else {
+          setRejectedNames(new Set(rejected.map(r => (r.name as string).toLowerCase().trim())));
+        }
+      }
+    } catch (error) {
+      console.error("Error loading persisted reviewers:", error);
+    } finally {
+      setIsLoadingPersisted(false);
+    }
+  };
+
+  const persistReviewersToDb = async (manuscriptId: string, reviewers: (AdvancedReviewer | ReviewerCandidate)[]) => {
+    try {
+      const payload = reviewers.map(r => ({
+        name: r.name,
+        firstName: r.firstName || null,
+        lastName: r.lastName || null,
+        affiliation: ("affiliation" in r ? r.affiliation : null) || null,
+        country: ("country" in r ? (r as AdvancedReviewer).country : null) || null,
+        hIndex: r.hIndex ?? null,
+        citationCount: ("citationCount" in r ? (r as AdvancedReviewer).citationCount : null) ?? ("citedByCount" in r ? (r as ReviewerCandidate).citedByCount : null) ?? null,
+        publicationCount: ("publicationCount" in r ? (r as AdvancedReviewer).publicationCount : null) ?? ("worksCount" in r ? (r as ReviewerCandidate).worksCount : null) ?? null,
+        inferredGender: r.inferredGender || null,
+        sources: ("sources" in r ? (r as AdvancedReviewer).sources : [(r as ReviewerCandidate).source]) || null,
+        recentArticles: ("recentArticles" in r ? (r as AdvancedReviewer).recentArticles : null) || null,
+        verificationUrls: ("verificationUrls" in r ? (r as AdvancedReviewer).verificationUrls : null) || null,
+        llmAnalysis: ("llmAnalysis" in r ? (r as AdvancedReviewer).llmAnalysis : null) || null,
+        coiSummary: r.coiSummary || null,
+      }));
+
+      const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewers: payload }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.saved > 0) {
+          if (manuscriptWorkflowStatus === "NEW") {
+            fetch(`/api/manuscripts/${manuscriptId}/status`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ workflowStatus: "FINDING_REVIEWERS" }),
+            })
+              .then(() => setManuscriptWorkflowStatus("FINDING_REVIEWERS"))
+              .catch(() => {});
+          }
+          await loadPersistedReviewers(manuscriptId);
+        }
+      }
+    } catch (error) {
+      console.error("Error persisting reviewers:", error);
+    }
+  };
+
+  // Load persisted reviewers and workflow status when manuscript selection changes
+  useEffect(() => {
+    if (selectedManuscriptId) {
+      loadPersistedReviewers(selectedManuscriptId);
+      fetch(`/api/manuscripts/${selectedManuscriptId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.manuscript?.workflowStatus) {
+            setManuscriptWorkflowStatus(data.manuscript.workflowStatus);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setRejectedNames(new Set());
+      setDiscoveryResult(null);
+      setManuscriptWorkflowStatus(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedManuscriptId]);
 
   // Reviewer responsiveness scoring (persisted in localStorage)
   const [reviewerScores, setReviewerScores] = useState<Record<string, { score: 1 | 2 | 3 | 4 | 5; note?: string }>>({});
@@ -322,25 +435,33 @@ function ReviewerSearchContent() {
 
   const toggleFlag = (reviewerId: string, reviewerName: string, direction: "up" | "down") => {
     if (direction === "down") {
-      // Persist the rejection by name so they won't reappear on future searches
-      addRejectedName(reviewerName);
-      // Remove the reviewer from both lists
+      // Optimistic update: remove immediately
+      setRejectedNames(prev => { const s = new Set(prev); s.add(reviewerName.toLowerCase().trim()); return s; });
       setCandidateReviewers(prev => prev.filter(r => r.id !== reviewerId));
       setDiscoveryResult(prev => {
         if (!prev) return prev;
-        return {
-          ...prev,
-          reviewers: prev.reviewers.filter(r => r.id !== reviewerId),
-        };
+        return { ...prev, reviewers: prev.reviewers.filter(r => r.id !== reviewerId) };
       });
-      toast.success("Reviewer removed — won\u2019t appear again for this manuscript");
+      toast.success("Reviewer removed \u2014 won\u2019t appear again for this manuscript");
+      if (selectedManuscriptId) {
+        fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "REJECTED" }),
+        }).catch(err => console.error("Error rejecting reviewer:", err));
+      }
       return;
     }
-    // Thumbs up: toggle visual flag
-    setFlaggedReviewers(prev => ({
-      ...prev,
-      [reviewerId]: prev[reviewerId] === direction ? null : direction,
-    }));
+    // Thumbs up: toggle
+    const newFlag: "up" | null = flaggedReviewers[reviewerId] === "up" ? null : "up";
+    setFlaggedReviewers(prev => ({ ...prev, [reviewerId]: newFlag }));
+    if (selectedManuscriptId) {
+      fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers/${reviewerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newFlag === "up" ? "SHORTLISTED" : "SUGGESTED" }),
+      }).catch(err => console.error("Error updating reviewer status:", err));
+    }
   };
 
   // Export reviewers as CSV (rejected reviewers are excluded)
@@ -462,6 +583,10 @@ function ReviewerSearchContent() {
       toast.success(
         `Found ${data.reviewers.length} potential reviewers from PubMed and OpenAlex`
       );
+
+      if (selectedManuscriptId && data.reviewers?.length > 0) {
+        persistReviewersToDb(selectedManuscriptId, data.reviewers as ReviewerCandidate[]);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Search failed");
     } finally {
@@ -525,6 +650,10 @@ function ReviewerSearchContent() {
       toast.success(
         `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
       );
+
+      if (selectedManuscriptId && data.reviewers?.length > 0) {
+        persistReviewersToDb(selectedManuscriptId, data.reviewers as AdvancedReviewer[]);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Discovery failed");
     } finally {
@@ -558,21 +687,23 @@ function ReviewerSearchContent() {
       "",
     ];
 
-    discoveryResult.reviewers.forEach((r, i) => {
-      lines.push(`${i + 1}. ${r.name}`);
-      lines.push(`   Affiliation: ${r.affiliation}`);
-      lines.push(`   Country: ${r.country}`);
-      lines.push(`   H-Index: ${r.hIndex !== null ? r.hIndex : "N/A"} | Citations: ${r.citationCount !== null ? r.citationCount.toLocaleString() : "N/A"}`);
-      lines.push(`   Publications: ${r.publicationCount} | First Author: ${r.firstAuthorCount} | Last/PI: ${r.lastAuthorCount} | Total Senior: ${r.seniorAuthorCount}`);
-      lines.push(`   Sources: ${r.sources.join(", ")}`);
-      lines.push(`   PubMed: ${r.verificationUrls.pubmedSearchUrl}`);
-      lines.push(`   Google Scholar: ${r.verificationUrls.googleScholarUrl}`);
-      if (r.verificationUrls.semanticScholarUrl) {
-        lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
-      }
-      lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
-      lines.push("");
-    });
+    discoveryResult.reviewers
+      .filter(r => !isRejected(r.name))
+      .forEach((r, i) => {
+        lines.push(`${i + 1}. ${r.name}`);
+        lines.push(`   Affiliation: ${r.affiliation}`);
+        lines.push(`   Country: ${r.country}`);
+        lines.push(`   H-Index: ${r.hIndex !== null ? r.hIndex : "N/A"} | Citations: ${r.citationCount !== null ? r.citationCount.toLocaleString() : "N/A"}`);
+        lines.push(`   Publications: ${r.publicationCount} | First Author: ${r.firstAuthorCount} | Last/PI: ${r.lastAuthorCount} | Total Senior: ${r.seniorAuthorCount}`);
+        lines.push(`   Sources: ${r.sources.join(", ")}`);
+        lines.push(`   PubMed: ${r.verificationUrls.pubmedSearchUrl}`);
+        lines.push(`   Google Scholar: ${r.verificationUrls.googleScholarUrl}`);
+        if (r.verificationUrls.semanticScholarUrl) {
+          lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
+        }
+        lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
+        lines.push("");
+      });
 
     lines.push("=" .repeat(60));
     lines.push("DISCLAIMER");
@@ -960,6 +1091,16 @@ function ReviewerSearchContent() {
               </Button>
             </CardContent>
           </Card>
+
+          {/* Loading persisted reviewers indicator */}
+          {isLoadingPersisted && (
+            <Card className="bg-blue-50 border-blue-200">
+              <CardContent className="py-4 flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                <p className="text-sm text-blue-800">Loading saved reviewers...</p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Discovery Results */}
           {discoveryResult && (
