@@ -792,6 +792,10 @@ function ReviewerSearchContent() {
           lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
         }
         lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
+        const expertise = assignedExpertise[r.id] || [];
+        if (expertise.length > 0) {
+          lines.push(`   Assigned Expertise: ${expertise.join(", ")}`);
+        }
         lines.push("");
       });
 
@@ -1182,6 +1186,30 @@ function ReviewerSearchContent() {
                           toast.success(`Keywords set to "${exp}" — click Discover to search`);
                         }}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors"
+                      >
+                        <Search className="h-3 w-3" />
+                        {exp}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Uncovered expertise hint */}
+              {uncoveredExpertise.length > 0 && coveredExpertise.length > 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-sm text-amber-800 font-medium mb-2">
+                    {uncoveredExpertise.length} expertise {uncoveredExpertise.length === 1 ? "area" : "areas"} still {uncoveredExpertise.length === 1 ? "needs" : "need"} coverage
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {uncoveredExpertise.map(exp => (
+                      <button
+                        key={exp}
+                        onClick={() => {
+                          setPrimaryKeywords(exp);
+                          toast.success(`Keywords set to "${exp}" — click Discover to search`);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors cursor-pointer"
                       >
                         <Search className="h-3 w-3" />
                         {exp}

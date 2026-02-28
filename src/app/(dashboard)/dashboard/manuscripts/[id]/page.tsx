@@ -78,6 +78,7 @@ interface PersistedReviewer {
   verificationUrls?: { pubmedSearchUrl: string; googleScholarUrl: string; institutionSearchUrl: string; semanticScholarUrl?: string; openAlexUrl?: string };
   llmAnalysis?: { relevanceScore: number; reasoning: string; topicalMatch: string; recommendation: string; expertise?: string[] };
   coiSummary?: { hasConflict: boolean; worstSeverity: string | null; conflictCount: number };
+  assignedExpertise?: string[];
   status: "SUGGESTED" | "SHORTLISTED" | "REJECTED";
 }
 
@@ -694,6 +695,17 @@ export default function ManuscriptDetailPage() {
                           </a>
                         </div>
                       )}
+
+                      {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {reviewer.assignedExpertise.map((exp, i) => (
+                            <Badge key={i} variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                              <CheckCircle className="h-3 w-3 mr-0.5" />
+                              {exp}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1107,6 +1119,17 @@ export default function ManuscriptDetailPage() {
                             <Mail className="h-3 w-3" />
                             Email
                           </a>
+                        </div>
+                      )}
+
+                      {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {reviewer.assignedExpertise.map((exp, i) => (
+                            <Badge key={i} variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                              <CheckCircle className="h-3 w-3 mr-0.5" />
+                              {exp}
+                            </Badge>
+                          ))}
                         </div>
                       )}
                     </CardContent>
