@@ -509,6 +509,198 @@ export default function ManuscriptDetailPage() {
             </Card>
           )}
 
+          {/* Proposed Reviewers — inline on overview */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Proposed Reviewers
+                  {reviewerCounts.total > 0 && (
+                    <Badge variant="secondary" className="ml-1">
+                      {reviewerCounts.shortlisted} shortlisted / {reviewerCounts.total} total
+                    </Badge>
+                  )}
+                </CardTitle>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const journalSlug = manuscript.journal?.slug || defaultJournalSlug;
+                    if (journalSlug) {
+                      router.push(`/dashboard/journals/${journalSlug}/reviewers?manuscriptId=${manuscript.id}`);
+                    } else {
+                      toast.error("Please create a journal first to find reviewers");
+                    }
+                  }}
+                >
+                  <Search className="h-4 w-4 mr-1.5" />
+                  {reviewers.length > 0 ? "Find More" : "Find Reviewers"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {isLoadingReviewers ? (
+                <div className="py-8 text-center">
+                  <Loader2 className="h-8 w-8 mx-auto animate-spin text-gray-400" />
+                  <p className="mt-2 text-gray-500 text-sm">Loading reviewers...</p>
+                </div>
+              ) : reviewers.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Users className="h-10 w-10 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500 text-sm">
+                    No reviewers found yet. Use &quot;Find Reviewers&quot; to discover potential reviewers.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {reviewers.map((reviewer) => (
+                    <div
+                      key={reviewer.id}
+                      className={`border rounded-lg p-3 hover:shadow-sm transition-shadow ${
+                        reviewer.status === "SHORTLISTED" ? "border-green-200 bg-green-50/30" : "border-gray-200"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-semibold text-sm flex items-center gap-1.5">
+                            {reviewer.name}
+                            {reviewer.inferredGender && (
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                reviewer.inferredGender === "likely_female"
+                                  ? "bg-pink-100 text-pink-700"
+                                  : reviewer.inferredGender === "likely_male"
+                                  ? "bg-sky-100 text-sky-700"
+                                  : "bg-gray-100 text-gray-500"
+                              }`}>
+                                {reviewer.inferredGender === "likely_female" ? "F" : reviewer.inferredGender === "likely_male" ? "M" : "N/A"}
+                              </span>
+                            )}
+                          </h4>
+                          {reviewer.affiliation && (
+                            <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                              <Building className="h-3 w-3 flex-shrink-0" />
+                              <span className="truncate">{reviewer.affiliation}</span>
+                            </p>
+                          )}
+                          {reviewer.country && (
+                            <p className="text-xs text-gray-400 flex items-center gap-1">
+                              <MapPin className="h-3 w-3 flex-shrink-0" />
+                              {reviewer.country}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              reviewer.status === "SHORTLISTED"
+                                ? "bg-green-100 text-green-700 border-green-300"
+                                : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
+                            {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
+                          </Badge>
+                          <div className="flex gap-1 mt-1">
+                            <button
+                              onClick={() => handleReviewerStatusChange(
+                                reviewer.id,
+                                reviewer.status === "SHORTLISTED" ? "SUGGESTED" : "SHORTLISTED"
+                              )}
+                              className={`p-1 rounded transition-colors ${
+                                reviewer.status === "SHORTLISTED"
+                                  ? "bg-green-100 text-green-700"
+                                  : "text-gray-300 hover:text-green-500 hover:bg-green-50"
+                              }`}
+                              title={reviewer.status === "SHORTLISTED" ? "Remove from shortlist" : "Shortlist reviewer"}
+                            >
+                              <ThumbsUp className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}
+                              className="p-1 rounded transition-colors text-gray-300 hover:text-red-500 hover:bg-red-50"
+                              title="Remove reviewer"
+                            >
+                              <ThumbsDown className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 text-xs mb-2">
+                        {reviewer.hIndex != null && (
+                          <div className="flex items-center gap-1">
+                            <Award className="h-3 w-3 text-amber-600" />
+                            <span className="font-medium">h-{reviewer.hIndex}</span>
+                          </div>
+                        )}
+                        {reviewer.publicationCount != null && (
+                          <div className="flex items-center gap-1">
+                            <BookOpen className="h-3 w-3 text-gray-500" />
+                            <span>{reviewer.publicationCount} pubs</span>
+                          </div>
+                        )}
+                        {reviewer.citationCount != null && (
+                          <div className="flex items-center gap-1 text-gray-500">
+                            {reviewer.citationCount.toLocaleString()} citations
+                          </div>
+                        )}
+                      </div>
+
+                      {reviewer.llmAnalysis && (
+                        <div className="p-2 bg-purple-50 rounded border border-purple-200 mb-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Sparkles className="h-3 w-3 text-purple-600" />
+                            <span className="text-xs font-medium text-purple-800">
+                              {reviewer.llmAnalysis.relevanceScore}% match
+                            </span>
+                            <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700">
+                              {reviewer.llmAnalysis.topicalMatch}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-purple-700">{reviewer.llmAnalysis.reasoning}</p>
+                        </div>
+                      )}
+
+                      {reviewer.coiSummary?.hasConflict && (
+                        <div className="p-2 bg-amber-50 rounded border border-amber-200 mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <AlertTriangle className="h-3 w-3 text-amber-600" />
+                            <span className="text-xs font-medium text-amber-800">
+                              COI: {reviewer.coiSummary.worstSeverity || "detected"} ({reviewer.coiSummary.conflictCount} conflict{reviewer.coiSummary.conflictCount !== 1 ? "s" : ""})
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {reviewer.verificationUrls && (
+                        <div className="flex flex-wrap gap-1.5">
+                          <a href={reviewer.verificationUrls.pubmedSearchUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                            <FileText className="h-3 w-3" /> PubMed
+                          </a>
+                          <a href={reviewer.verificationUrls.googleScholarUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                            <BookOpen className="h-3 w-3" /> Scholar
+                          </a>
+                          {reviewer.verificationUrls.semanticScholarUrl && (
+                            <a href={reviewer.verificationUrls.semanticScholarUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                              <Award className="h-3 w-3" /> S2
+                            </a>
+                          )}
+                          <a href={reviewer.verificationUrls.institutionSearchUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                            <Mail className="h-3 w-3" /> Email
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>File Information</CardTitle>
