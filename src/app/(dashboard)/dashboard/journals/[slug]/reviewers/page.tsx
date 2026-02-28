@@ -693,15 +693,30 @@ function ReviewerSearchContent() {
 
     setIsDiscovering(true);
 
+    // Auto-prioritize uncovered expertise: use gaps as primary keywords,
+    // push the original keywords to secondary so they still influence results
+    let effectivePrimary = primaryKeywords.split(",").map(k => k.trim()).filter(Boolean);
+    let effectiveSecondary = secondaryKeywords
+      ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean)
+      : [];
+
+    if (uncoveredExpertise.length > 0 && coveredExpertise.length > 0) {
+      effectivePrimary = uncoveredExpertise;
+      const originalAll = [
+        ...primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
+        ...effectiveSecondary,
+      ];
+      effectiveSecondary = originalAll.filter(k => !uncoveredExpertise.includes(k));
+      toast.info(`Focusing on uncovered expertise: ${uncoveredExpertise.join(", ")}`);
+    }
+
     try {
       const response = await fetch("/api/reviewers/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          primaryKeywords: primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
-          secondaryKeywords: secondaryKeywords 
-            ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean) 
-            : undefined,
+          primaryKeywords: effectivePrimary,
+          secondaryKeywords: effectiveSecondary.length > 0 ? effectiveSecondary : undefined,
           keywordOperator,
           minHIndex,
           maxHIndex,
@@ -1199,23 +1214,22 @@ function ReviewerSearchContent() {
               {uncoveredExpertise.length > 0 && coveredExpertise.length > 0 && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-sm text-amber-800 font-medium mb-2">
-                    {uncoveredExpertise.length} expertise {uncoveredExpertise.length === 1 ? "area" : "areas"} still {uncoveredExpertise.length === 1 ? "needs" : "need"} coverage
+                    Next search will auto-focus on {uncoveredExpertise.length} uncovered {uncoveredExpertise.length === 1 ? "area" : "areas"}:
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {uncoveredExpertise.map(exp => (
-                      <button
+                      <span
                         key={exp}
-                        onClick={() => {
-                          setPrimaryKeywords(exp);
-                          toast.success(`Keywords set to "${exp}" — click Discover to search`);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300"
                       >
                         <Search className="h-3 w-3" />
                         {exp}
-                      </button>
+                      </span>
                     ))}
                   </div>
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Click Discover below to find reviewers for these gaps. Or click a keyword above to search for it individually.
+                  </p>
                 </div>
               )}
 
@@ -1389,7 +1403,7 @@ function ReviewerSearchContent() {
                       <p className="text-xs text-amber-600 mt-2">
                         {uncoveredExpertise.length === manuscriptExpertise.length
                           ? "Assign expertise to reviewers using the checkboxes on each card below."
-                          : `Still need coverage: ${uncoveredExpertise.join(", ")}`}
+                          : `Gaps: ${uncoveredExpertise.join(", ")} — next search will auto-focus on these.`}
                       </p>
                     )}
                   </CardContent>
