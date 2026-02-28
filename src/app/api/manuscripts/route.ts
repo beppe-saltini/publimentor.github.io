@@ -156,6 +156,7 @@ export async function GET(request: Request) {
         id: m.id,
         title: m.title || "Untitled",
         status: m.status,
+        workflowStatus: m.workflowStatus,
         statusMessage: m.statusMessage,
         fileName: m.fileName,
         fileType: m.fileType,

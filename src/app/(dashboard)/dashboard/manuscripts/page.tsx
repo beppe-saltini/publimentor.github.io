@@ -16,6 +16,7 @@ interface ManuscriptSummary {
   id: string;
   title: string;
   status: string;
+  workflowStatus: string;
   statusMessage?: string;
   fileName: string;
   fileType: string;
@@ -31,6 +32,13 @@ interface ManuscriptSummary {
   createdAt: string;
   updatedAt: string;
 }
+
+const WORKFLOW_OPTIONS = [
+  { value: "NEW", label: "New" },
+  { value: "FINDING_REVIEWERS", label: "Finding Reviewers" },
+  { value: "REVIEWERS_INVITED", label: "Reviewers Invited" },
+  { value: "CLOSED", label: "Closed" },
+];
 
 interface Pagination {
   page: number;
@@ -102,6 +110,27 @@ export default function ManuscriptsPage() {
     fetchManuscripts();
     ensureDefaultPublisher();
   }, []);
+
+  // Handle workflow status change
+  const handleWorkflowStatusChange = async (id: string, newStatus: string) => {
+    try {
+      const response = await fetch(`/api/manuscripts/${id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowStatus: newStatus }),
+      });
+      if (response.ok) {
+        setManuscripts(prev =>
+          prev.map(m => m.id === id ? { ...m, workflowStatus: newStatus } : m)
+        );
+        toast.success(`Status updated to ${newStatus.replace(/_/g, " ").toLowerCase()}`);
+      } else {
+        toast.error("Failed to update status");
+      }
+    } catch {
+      toast.error("Failed to update status");
+    }
+  };
 
   // Handle delete
   const handleDelete = async (id: string) => {
@@ -226,6 +255,20 @@ export default function ManuscriptsPage() {
                             {manuscript.title || manuscript.fileName}
                           </h3>
                           {getStatusBadge(manuscript.status)}
+                          <select
+                            value={manuscript.workflowStatus || "NEW"}
+                            onChange={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleWorkflowStatusChange(manuscript.id, e.target.value);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs border rounded px-2 py-0.5 bg-white cursor-pointer hover:border-blue-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            {WORKFLOW_OPTIONS.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
                         </div>
                         
                         <div className="flex flex-wrap gap-4 text-sm text-gray-500">
