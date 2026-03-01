@@ -458,7 +458,10 @@ function ReviewerSearchContent() {
 
       setDiscoveryResult(data);
 
-      if (selectedManuscriptId && data.reviewers?.length > 0) {
+      const msId = selectedManuscriptId;
+      const revCount = data.reviewers?.length ?? 0;
+
+      if (msId && revCount > 0) {
         try {
           const mapped = data.reviewers.map((r: DiscoveryReviewer) => ({
             name: r.name,
@@ -476,7 +479,7 @@ function ReviewerSearchContent() {
             coiSummary: r.coiSummary,
             inferredGender: r.inferredGender,
           }));
-          const saveRes = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
+          const saveRes = await fetch(`/api/manuscripts/${msId}/reviewers`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ reviewers: mapped }),
@@ -484,7 +487,7 @@ function ReviewerSearchContent() {
           const saveData = await saveRes.json();
           if (saveRes.ok) {
             toast.success(
-              `Found ${data.reviewers.length} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
+              `Found ${revCount} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
             );
           } else {
             toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
@@ -495,7 +498,7 @@ function ReviewerSearchContent() {
         }
       } else {
         toast.success(
-          `Found ${data.reviewers.length} senior reviewers from ${data.summary.diversity.countryCount} countries`
+          `Found ${revCount} senior reviewers from ${data.summary.diversity.countryCount} countries`
         );
       }
     } catch (error) {

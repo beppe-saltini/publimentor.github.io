@@ -101,21 +101,13 @@ export async function POST(
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
     }
 
-    // Check which names are already REJECTED so we don't re-add them
-    const existingRejected = await prisma.manuscriptReviewer.findMany({
-      where: {
-        manuscriptId: id,
-        status: "REJECTED",
-      },
-      select: { name: true },
-    });
-    const rejectedNames = new Set(existingRejected.map(r => r.name.toLowerCase().trim()));
-
-    // Upsert each reviewer (skip rejected ones)
     const results = [];
+    const errors: { name: string; error: string }[] = [];
     for (const reviewer of reviewers) {
-      if (!reviewer.name) continue;
-      if (rejectedNames.has(reviewer.name.toLowerCase().trim())) continue;
+      if (!reviewer.name) {
+        errors.push({ name: "(empty)", error: "No name provided" });
+        continue;
+      }
 
       try {
         const upserted = await prisma.manuscriptReviewer.upsert({
@@ -126,20 +118,20 @@ export async function POST(
             },
           },
           update: {
-            // Update metrics and data if the reviewer already exists (but don't change status)
             firstName: reviewer.firstName || undefined,
             lastName: reviewer.lastName || undefined,
             affiliation: reviewer.affiliation || undefined,
             country: reviewer.country || undefined,
-            hIndex: reviewer.hIndex ?? undefined,
-            citationCount: reviewer.citationCount ?? undefined,
-            publicationCount: reviewer.publicationCount ?? undefined,
+            hIndex: typeof reviewer.hIndex === "number" ? reviewer.hIndex : undefined,
+            citationCount: typeof reviewer.citationCount === "number" ? reviewer.citationCount : undefined,
+            publicationCount: typeof reviewer.publicationCount === "number" ? reviewer.publicationCount : undefined,
             inferredGender: reviewer.inferredGender || undefined,
-            sources: reviewer.sources || undefined,
-            recentArticles: reviewer.recentArticles || undefined,
-            verificationUrls: reviewer.verificationUrls || undefined,
-            llmAnalysis: reviewer.llmAnalysis || undefined,
-            coiSummary: reviewer.coiSummary || undefined,
+            sources: reviewer.sources ?? undefined,
+            recentArticles: reviewer.recentArticles ?? undefined,
+            verificationUrls: reviewer.verificationUrls ?? undefined,
+            llmAnalysis: reviewer.llmAnalysis ?? undefined,
+            coiSummary: reviewer.coiSummary ?? undefined,
+            status: "SUGGESTED",
           },
           create: {
             manuscriptId: id,
@@ -148,27 +140,30 @@ export async function POST(
             lastName: reviewer.lastName || null,
             affiliation: reviewer.affiliation || null,
             country: reviewer.country || null,
-            hIndex: reviewer.hIndex ?? null,
-            citationCount: reviewer.citationCount ?? null,
-            publicationCount: reviewer.publicationCount ?? null,
+            hIndex: typeof reviewer.hIndex === "number" ? reviewer.hIndex : null,
+            citationCount: typeof reviewer.citationCount === "number" ? reviewer.citationCount : null,
+            publicationCount: typeof reviewer.publicationCount === "number" ? reviewer.publicationCount : null,
             inferredGender: reviewer.inferredGender || null,
-            sources: reviewer.sources || null,
-            recentArticles: reviewer.recentArticles || null,
-            verificationUrls: reviewer.verificationUrls || null,
-            llmAnalysis: reviewer.llmAnalysis || null,
-            coiSummary: reviewer.coiSummary || null,
+            sources: reviewer.sources ?? null,
+            recentArticles: reviewer.recentArticles ?? null,
+            verificationUrls: reviewer.verificationUrls ?? null,
+            llmAnalysis: reviewer.llmAnalysis ?? null,
+            coiSummary: reviewer.coiSummary ?? null,
             status: "SUGGESTED",
           },
         });
         results.push(upserted);
       } catch (err) {
-        console.error(`[API] Error upserting reviewer ${reviewer.name}:`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[API] Error upserting reviewer ${reviewer.name}:`, msg);
+        errors.push({ name: reviewer.name, error: msg });
       }
     }
 
     return NextResponse.json({
       saved: results.length,
-      skippedRejected: reviewers.length - results.length,
+      skipped: reviewers.length - results.length,
+      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
     console.error("[API] Error saving manuscript reviewers:", error);
