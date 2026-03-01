@@ -1253,10 +1253,12 @@ function ReviewerSearchContent() {
                         onClick={() => {
                           if (!discoveryResult) return;
                           const reviewerNames = discoveryResult.reviewers.map(r => r.name).join("\n");
-                          // Store in sessionStorage and navigate to COI page
                           sessionStorage.setItem("coi_reviewers_import", reviewerNames);
                           if (authorList) {
                             sessionStorage.setItem("coi_authors_import", authorList);
+                          }
+                          if (selectedManuscriptId) {
+                            sessionStorage.setItem("coi_manuscript_id", selectedManuscriptId);
                           }
                           router.push(`/dashboard/journals/${slug}/coi`);
                           toast.success(`${discoveryResult.reviewers.length} reviewers sent to COI check`);

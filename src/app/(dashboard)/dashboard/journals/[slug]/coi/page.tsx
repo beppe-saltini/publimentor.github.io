@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -112,6 +112,12 @@ function COICheckContent() {
   const [batchResult, setBatchResult] = useState<BatchCOIResult | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
 
+  // Auto-run tracking
+  const [activeTab, setActiveTab] = useState<string>("bulk");
+  const autoRunPending = useRef(false);
+  const authorsLoadedFromManuscript = useRef(false);
+  const reviewersLoadedFromImport = useRef(false);
+
   const yearOptions = generateYearOptions();
 
   // Load submission authors if submissionId provided
@@ -149,21 +155,28 @@ function COICheckContent() {
     }
   }, [slug, submissionId]);
 
-  // Load imported reviewers/authors from reviewer discovery page (via sessionStorage)
+  // Load imported reviewers/authors/manuscript from reviewer discovery page (via sessionStorage)
   useEffect(() => {
     const importedReviewers = sessionStorage.getItem("coi_reviewers_import");
     const importedAuthors = sessionStorage.getItem("coi_authors_import");
+    const importedManuscriptId = sessionStorage.getItem("coi_manuscript_id");
 
     if (importedReviewers) {
       const names = importedReviewers.split("\n").filter(n => n.trim());
       if (names.length > 0) {
         setReviewers(names.map(name => ({ name: name.trim(), orcid: "" })));
+        reviewersLoadedFromImport.current = true;
         toast.success(`Imported ${names.length} reviewers from discovery`);
       }
       sessionStorage.removeItem("coi_reviewers_import");
     }
 
-    if (importedAuthors) {
+    if (importedManuscriptId) {
+      setSelectedManuscriptId(importedManuscriptId);
+      setActiveTab("individual");
+      autoRunPending.current = true;
+      sessionStorage.removeItem("coi_manuscript_id");
+    } else if (importedAuthors) {
       const names = importedAuthors.split("\n").filter(n => n.trim()).map(n => n.replace(/\d+/g, "").trim());
       if (names.length > 0) {
         const total = names.length;
@@ -179,6 +192,20 @@ function COICheckContent() {
       sessionStorage.removeItem("coi_authors_import");
     }
   }, []);
+
+  // Auto-run COI check when manuscript authors and imported reviewers are both loaded
+  useEffect(() => {
+    if (!autoRunPending.current) return;
+    const hasAuthors = authors.length > 0 && authors.some(a => a.name.trim());
+    const hasReviewers = reviewers.length > 0 && reviewers.some(r => r.name.trim());
+    if (hasAuthors && hasReviewers && !isChecking) {
+      autoRunPending.current = false;
+      const timer = setTimeout(() => {
+        handleBatchCheck();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [authors, reviewers]);
 
   // Author management
   const addAuthor = () => {
@@ -426,7 +453,7 @@ function COICheckContent() {
         </Card>
       </div>
 
-      <Tabs defaultValue="bulk" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="bulk">
             <Users className="h-4 w-4 mr-2" />
@@ -454,13 +481,17 @@ function COICheckContent() {
                 onChange={(m) => setSelectedManuscriptId(m?.id || null)}
                 onManuscriptData={(data) => {
                   if (data.authors.length > 0) {
-                    const newAuthors: Author[] = data.authors.map((a, i) => ({
-                      name: a.name,
-                      orcid: "",
-                      role: i === 0 ? "first" : i === data.authors.length - 1 ? "last" : "middle_late" as AuthorRole,
-                      position: i + 1,
-                    }));
+                    const total = data.authors.length;
+                    const newAuthors: Author[] = data.authors.map((a, i) => {
+                      let role: AuthorRole;
+                      if (i === total - 1) role = "last";
+                      else if (i === 0) role = "first";
+                      else if (i <= 2) role = "middle_early";
+                      else role = "middle_late";
+                      return { name: a.name, orcid: "", role, position: i + 1 };
+                    });
                     setAuthors(newAuthors);
+                    authorsLoadedFromManuscript.current = true;
                     toast.success(`Loaded ${newAuthors.length} authors from manuscript`);
                   }
                 }}

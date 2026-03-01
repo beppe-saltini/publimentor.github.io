@@ -284,12 +284,6 @@ export default async function DashboardPage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">Manuscripts</h2>
-            <Button asChild>
-              <Link href="/dashboard/manuscripts">
-                <Upload className="h-4 w-4 mr-2" />
-                Upload Manuscript
-              </Link>
-            </Button>
           </div>
 
           {manuscripts.length === 0 ? (
@@ -324,34 +318,23 @@ export default async function DashboardPage() {
                                 {ms.title || ms.fileName}
                               </h3>
                               <Badge
-                                className={
-                                  ms.status === "READY"
-                                    ? "bg-green-100 text-green-700"
-                                    : ms.status === "ERROR"
-                                    ? "bg-red-100 text-red-700"
-                                    : "bg-blue-100 text-blue-700"
-                                }
-                              >
-                                {ms.status === "READY" ? "Ready" : ms.status === "ERROR" ? "Error" : "Processing"}
-                              </Badge>
-                              <Badge
                                 variant="outline"
                                 className={
                                   ms.workflowStatus === "CLOSED"
                                     ? "bg-purple-50 text-purple-700 border-purple-200"
                                     : ms.workflowStatus === "REVIEWERS_INVITED"
                                     ? "bg-green-50 text-green-700 border-green-200"
-                                    : ms.workflowStatus === "FINDING_REVIEWERS"
+                                    : (ms.workflowStatus === "FINDING_REVIEWERS" || ms.reviewerCounts.shortlisted + ms.reviewerCounts.suggested > 0)
                                     ? "bg-blue-50 text-blue-700 border-blue-200"
                                     : "bg-gray-50 text-gray-600 border-gray-200"
                                 }
                               >
-                                {ms.workflowStatus === "FINDING_REVIEWERS"
-                                  ? "Finding Reviewers"
+                                {ms.workflowStatus === "CLOSED"
+                                  ? "Closed"
                                   : ms.workflowStatus === "REVIEWERS_INVITED"
                                   ? "Reviewers Invited"
-                                  : ms.workflowStatus === "CLOSED"
-                                  ? "Closed"
+                                  : (ms.workflowStatus === "FINDING_REVIEWERS" || ms.reviewerCounts.shortlisted + ms.reviewerCounts.suggested > 0)
+                                  ? "Finding Reviewers"
                                   : "New"}
                               </Badge>
                             </div>
