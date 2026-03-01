@@ -9,6 +9,7 @@ import {
   FileText, Clock, Loader2, 
   Upload, List, Eye, Trash2, Users, BookOpen
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 interface ManuscriptSummary {
@@ -47,6 +48,7 @@ interface Pagination {
 }
 
 export default function ManuscriptsPage() {
+  const router = useRouter();
   const [manuscripts, setManuscripts] = useState<ManuscriptSummary[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [loading, setLoading] = useState(true);
@@ -232,14 +234,14 @@ export default function ManuscriptsPage() {
                 <Card
                   key={manuscript.id}
                   className="hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => window.location.href = `/dashboard/manuscripts/${manuscript.id}`}
+                  onClick={() => router.push(`/dashboard/manuscripts/${manuscript.id}`)}
                 >
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-2">
                           <FileText className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                          <h3 className="font-medium truncate">
+                          <h3 className="font-medium truncate text-blue-700 hover:underline">
                             {manuscript.title || manuscript.fileName}
                           </h3>
                         </div>
@@ -289,7 +291,7 @@ export default function ManuscriptsPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => window.location.href = `/dashboard/manuscripts/${manuscript.id}`}
+                          onClick={() => router.push(`/dashboard/manuscripts/${manuscript.id}`)}
                         >
                           <Eye className="h-4 w-4 mr-1" />
                           View

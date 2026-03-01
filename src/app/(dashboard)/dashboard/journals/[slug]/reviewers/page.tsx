@@ -322,6 +322,104 @@ function ReviewerSearchContent() {
     });
   };
 
+  // Load persisted reviewers from the database when a manuscript is selected
+  const [isLoadingPersisted, setIsLoadingPersisted] = useState(false);
+
+  const mapDbReviewerToAdvanced = (r: Record<string, unknown>): AdvancedReviewer => ({
+    id: r.id as string,
+    name: r.name as string,
+    firstName: (r.firstName as string) || "",
+    lastName: (r.lastName as string) || "",
+    affiliation: (r.affiliation as string) || "",
+    country: (r.country as string) || "",
+    hIndex: (r.hIndex as number) ?? null,
+    citationCount: (r.citationCount as number) ?? null,
+    publicationCount: (r.publicationCount as number) || 0,
+    firstAuthorCount: 0,
+    lastAuthorCount: 0,
+    correspondingCount: 0,
+    seniorAuthorCount: 0,
+    recentArticles: (r.recentArticles as AdvancedReviewer["recentArticles"]) || [],
+    sources: (r.sources as AdvancedReviewer["sources"]) || [],
+    verificationUrls: (r.verificationUrls as AdvancedReviewer["verificationUrls"]) || {
+      pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(r.name as string)}`,
+      googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(r.name as string)}"`,
+      institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(r.name as string)}"+email`,
+    },
+    llmAnalysis: (r.llmAnalysis as AdvancedReviewer["llmAnalysis"]) || undefined,
+    coiSummary: (r.coiSummary as AdvancedReviewer["coiSummary"]) || undefined,
+    inferredGender: (r.inferredGender as AdvancedReviewer["inferredGender"]) || undefined,
+  });
+
+  const loadPersistedReviewers = async (manuscriptId: string) => {
+    setIsLoadingPersisted(true);
+    try {
+      const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers`);
+      const data = await response.json();
+      if (response.ok && data.reviewers) {
+        const allReviewers = data.reviewers as Record<string, unknown>[];
+        const active = allReviewers.filter(r => r.status !== "REJECTED");
+
+        if (active.length > 0) {
+          const mapped = active.map(mapDbReviewerToAdvanced);
+          const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
+
+          setDiscoveryResult(prev => {
+            const keptPrev = prev
+              ? prev.reviewers.filter(existing =>
+                  !mapped.some(m => m.name === existing.name))
+              : [];
+            const merged = [...keptPrev, ...mapped];
+            return {
+              reviewers: merged,
+              summary: prev?.summary || {
+                totalFound: merged.length,
+                returned: merged.length,
+                criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
+                diversity: { countries, countryCount: countries.length },
+                avgPublications: Math.round(merged.reduce((sum, r) => sum + r.publicationCount, 0) / (merged.length || 1)),
+                avgSeniorAuthorships: 0,
+              },
+              relatedConcepts: prev?.relatedConcepts || [],
+              disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
+              selectionCriteria: prev?.selectionCriteria || {},
+            };
+          });
+
+          const flags: Record<string, "up" | "down" | null> = {};
+          active.forEach(r => {
+            if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
+          });
+          setFlaggedReviewers(prev => ({ ...prev, ...flags }));
+        }
+
+        const expertiseMap: Record<string, string[]> = {};
+        allReviewers.forEach(r => {
+          const ae = r.assignedExpertise as string[] | null;
+          if (ae && ae.length > 0) {
+            expertiseMap[r.id as string] = ae;
+          }
+        });
+        if (Object.keys(expertiseMap).length > 0) {
+          setAssignedExpertise(prev => ({ ...prev, ...expertiseMap }));
+        }
+      }
+    } catch (error) {
+      console.error("Error loading persisted reviewers:", error);
+    } finally {
+      setIsLoadingPersisted(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedManuscriptId) {
+      loadPersistedReviewers(selectedManuscriptId);
+    } else {
+      setDiscoveryResult(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedManuscriptId]);
+
   // Export flagged reviewers as CSV
   const exportFlaggedReviewers = () => {
     const allReviewers = [
@@ -1078,6 +1176,16 @@ function ReviewerSearchContent() {
               </Button>
             </CardContent>
           </Card>
+
+          {/* Loading persisted reviewers */}
+          {isLoadingPersisted && !discoveryResult && (
+            <Card className="bg-blue-50 border-blue-200">
+              <CardContent className="py-6 text-center">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto mb-2" />
+                <p className="text-sm text-blue-700">Loading saved reviewers...</p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Discovery Results */}
           {discoveryResult && (
