@@ -94,7 +94,11 @@ function COICheckContent() {
   const submissionId = searchParams.get("submissionId");
 
   // Manuscript source state
-  const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [selectedManuscriptId, setSelectedManuscriptIdRaw] = useState<string | null>(null);
+  const setSelectedManuscriptId = (id: string | null) => {
+    setSelectedManuscriptIdRaw(id);
+    if (id) sessionStorage.setItem("active_manuscript_id", id);
+  };
 
   // Authors state - default to first author for single entry
   const [authors, setAuthors] = useState<Author[]>([
@@ -171,11 +175,14 @@ function COICheckContent() {
       sessionStorage.removeItem("coi_reviewers_import");
     }
 
-    if (importedManuscriptId) {
-      setSelectedManuscriptId(importedManuscriptId);
+    const msId = importedManuscriptId || sessionStorage.getItem("active_manuscript_id");
+    if (msId) {
+      setSelectedManuscriptId(msId);
       setActiveTab("individual");
-      autoRunPending.current = true;
-      sessionStorage.removeItem("coi_manuscript_id");
+      if (importedManuscriptId) {
+        autoRunPending.current = true;
+        sessionStorage.removeItem("coi_manuscript_id");
+      }
     } else if (importedAuthors) {
       const names = importedAuthors.split("\n").filter(n => n.trim()).map(n => n.replace(/\d+/g, "").trim());
       if (names.length > 0) {

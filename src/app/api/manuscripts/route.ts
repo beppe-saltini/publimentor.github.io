@@ -125,6 +125,7 @@ export async function GET(request: Request) {
             select: {
               authors: true,
               references: true,
+              reviewers: true,
             },
           },
         },
@@ -165,6 +166,7 @@ export async function GET(request: Request) {
         pageCount: m.pageCount,
         authorCount: m._count.authors,
         referenceCount: m._count.references,
+        reviewerCount: m._count.reviewers,
         publisher: m.publisher,
         journal: m.journal,
         uploader: m.uploader,

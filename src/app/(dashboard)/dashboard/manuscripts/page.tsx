@@ -25,6 +25,7 @@ interface ManuscriptSummary {
   pageCount?: number;
   authorCount: number;
   referenceCount: number;
+  reviewerCount: number;
   publisher: { id: string; name: string; slug: string };
   journal?: { id: string; name: string; slug: string };
   uploader: { id: string; name: string };
@@ -234,7 +235,10 @@ export default function ManuscriptsPage() {
                 <Card
                   key={manuscript.id}
                   className="hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => router.push(`/dashboard/manuscripts/${manuscript.id}`)}
+                  onClick={() => {
+                    sessionStorage.setItem("active_manuscript_id", manuscript.id);
+                    router.push(`/dashboard/manuscripts/${manuscript.id}`);
+                  }}
                 >
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between">
@@ -280,7 +284,11 @@ export default function ManuscriptsPage() {
 
                       <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                         <select
-                          value={manuscript.workflowStatus || "NEW"}
+                          value={
+                            manuscript.workflowStatus === "NEW" && manuscript.reviewerCount > 0
+                              ? "FINDING_REVIEWERS"
+                              : manuscript.workflowStatus || "NEW"
+                          }
                           onChange={(e) => handleWorkflowStatusChange(manuscript.id, e.target.value)}
                           className="h-9 text-sm border rounded-md px-3 py-1 bg-white cursor-pointer border-input hover:bg-accent hover:text-accent-foreground focus:ring-2 focus:ring-ring focus:border-ring"
                         >
@@ -291,7 +299,10 @@ export default function ManuscriptsPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => router.push(`/dashboard/manuscripts/${manuscript.id}`)}
+                          onClick={() => {
+                            sessionStorage.setItem("active_manuscript_id", manuscript.id);
+                            router.push(`/dashboard/manuscripts/${manuscript.id}`);
+                          }}
                         >
                           <Eye className="h-4 w-4 mr-1" />
                           View

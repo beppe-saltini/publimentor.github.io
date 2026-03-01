@@ -137,7 +137,14 @@ function IntegrityCheckContent() {
   const slug = params.slug as string;
 
   // Manuscript source state
-  const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [selectedManuscriptId, setSelectedManuscriptIdRaw] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("active_manuscript_id");
+    return null;
+  });
+  const setSelectedManuscriptId = (id: string | null) => {
+    setSelectedManuscriptIdRaw(id);
+    if (id) sessionStorage.setItem("active_manuscript_id", id);
+  };
 
   // Tortured phrases state
   const [text, setText] = useState("");

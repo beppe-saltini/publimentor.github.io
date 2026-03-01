@@ -89,7 +89,14 @@ function FormatCheckContent() {
   const [pdfInfo, setPdfInfo] = useState<PDFInfo | null>(null);
 
   // Manuscript selector state
-  const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [selectedManuscriptId, setSelectedManuscriptIdRaw] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("active_manuscript_id");
+    return null;
+  });
+  const setSelectedManuscriptId = (id: string | null) => {
+    setSelectedManuscriptIdRaw(id);
+    if (id) sessionStorage.setItem("active_manuscript_id", id);
+  };
   const [manuscriptFilePath, setManuscriptFilePath] = useState<string | null>(null);
   const [isLoadingManuscript, setIsLoadingManuscript] = useState(false);
 

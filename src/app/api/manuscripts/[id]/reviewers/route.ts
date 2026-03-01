@@ -160,6 +160,13 @@ export async function POST(
       }
     }
 
+    if (results.length > 0) {
+      await prisma.manuscript.update({
+        where: { id },
+        data: { workflowStatus: "FINDING_REVIEWERS" },
+      }).catch(() => {});
+    }
+
     return NextResponse.json({
       saved: results.length,
       skipped: reviewers.length - results.length,

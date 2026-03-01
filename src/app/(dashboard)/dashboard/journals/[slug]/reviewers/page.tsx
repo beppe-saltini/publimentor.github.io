@@ -151,7 +151,11 @@ function ReviewerSearchContent() {
   const [isFindingReviewers, setIsFindingReviewers] = useState(false);
 
   // Manuscript source state
-  const [selectedManuscriptId, setSelectedManuscriptId] = useState<string | null>(null);
+  const [selectedManuscriptId, setSelectedManuscriptIdRaw] = useState<string | null>(null);
+  const setSelectedManuscriptId = (id: string | null) => {
+    setSelectedManuscriptIdRaw(id);
+    if (id) sessionStorage.setItem("active_manuscript_id", id);
+  };
   const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
   const [manuscriptAutoLoaded, setManuscriptAutoLoaded] = useState(false);
 
@@ -171,16 +175,17 @@ function ReviewerSearchContent() {
     fetchDefaultPublisher();
   }, []);
 
-  // Auto-load manuscript from URL query parameter (e.g., from "Find Reviewers" button on manuscript page)
+  // Auto-load manuscript from URL param, or restore from session
   useEffect(() => {
-    if (manuscriptIdParam && !manuscriptAutoLoaded) {
+    const idToLoad = manuscriptIdParam || sessionStorage.getItem("active_manuscript_id");
+    if (idToLoad && !manuscriptAutoLoaded) {
       setManuscriptAutoLoaded(true);
-      setSelectedManuscriptId(manuscriptIdParam);
+      setSelectedManuscriptId(idToLoad);
 
       // Fetch manuscript details and auto-populate keywords + authors
       const fetchManuscriptData = async () => {
         try {
-          const response = await fetch(`/api/manuscripts/${manuscriptIdParam}`);
+          const response = await fetch(`/api/manuscripts/${idToLoad}`);
           const data = await response.json();
           if (response.ok && data.manuscript) {
             const ms = data.manuscript;
@@ -827,16 +832,6 @@ function ReviewerSearchContent() {
         </div>
         {(discoveryResult?.reviewers.length || candidateReviewers.length > 0) && (
           <div className="flex gap-2">
-            {selectedManuscriptId && (
-              <Button onClick={saveReviewersToManuscript} disabled={isSavingReviewers}>
-                {isSavingReviewers ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                )}
-                Save to Manuscript
-              </Button>
-            )}
             <Button variant="outline" onClick={exportFlaggedReviewers}>
               <FileDown className="h-4 w-4 mr-2" />
               Export CSV
