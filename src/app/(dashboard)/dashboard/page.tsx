@@ -18,7 +18,6 @@ export default async function DashboardPage() {
   // Default values
   let journalCount = 0;
   let submissionCount = 0;
-  let pendingReviews = 0;
   let manuscriptCount = 0;
   let userRole: string | null = null;
 
@@ -45,86 +44,79 @@ export default async function DashboardPage() {
   let manuscripts: ManuscriptWithReviewerCounts[] = [];
 
   try {
-    const [jCount, sCount, rCount, mCount, user] = await Promise.all([
+    const [jCount, sCount, user, publisherMemberships, journals] = await Promise.all([
       prisma.journalMember.count({ where: { userId } }),
       prisma.submission.count({
         where: { journal: { members: { some: { userId } } } },
       }),
-      prisma.reviewAssignment.count({
-        where: { reviewerId: userId, status: "PENDING" },
-      }),
-      prisma.manuscript.count({ where: { uploaderId: userId, deletedAt: null } }),
       prisma.user.findUnique({
         where: { id: userId },
         select: { role: true },
+      }),
+      prisma.publisherMember.findMany({
+        where: { userId },
+        select: { publisherId: true },
+      }),
+      prisma.journal.findMany({
+        where: { members: { some: { userId } } },
+        include: { _count: { select: { submissions: true, members: true } } },
+        take: 5,
+        orderBy: { updatedAt: "desc" },
       }),
     ]);
 
     journalCount = jCount;
     submissionCount = sCount;
-    pendingReviews = rCount;
-    manuscriptCount = mCount;
     userRole = user?.role || null;
+    recentJournals = journals;
 
-    recentJournals = await prisma.journal.findMany({
-      where: { members: { some: { userId } } },
-      include: { _count: { select: { submissions: true, members: true } } },
-      take: 5,
+    const publisherIds = publisherMemberships.map(m => m.publisherId);
+
+    const rawManuscripts = await prisma.manuscript.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { uploaderId: userId },
+          ...(publisherIds.length > 0 ? [{ publisherId: { in: publisherIds } }] : []),
+        ],
+      },
+      include: {
+        _count: { select: { authors: true, reviewers: true } },
+        journal: { select: { id: true, name: true, slug: true } },
+        reviewers: {
+          where: { status: { not: "REJECTED" } },
+          select: { status: true },
+        },
+      },
       orderBy: { updatedAt: "desc" },
+      take: 50,
     });
 
-    // For editors: fetch manuscripts with reviewer counts
-    if (userRole === "EDITOR" || userRole === "PUBLISHER") {
-      const publisherMemberships = await prisma.publisherMember.findMany({
-        where: { userId },
-        select: { publisherId: true },
-      });
-      const publisherIds = publisherMemberships.map(m => m.publisherId);
+    manuscriptCount = rawManuscripts.length;
 
-      const rawManuscripts = await prisma.manuscript.findMany({
-        where: {
-          deletedAt: null,
-          OR: [
-            { uploaderId: userId },
-            ...(publisherIds.length > 0 ? [{ publisherId: { in: publisherIds } }] : []),
-          ],
-        },
-        include: {
-          _count: { select: { authors: true, reviewers: true } },
-          journal: { select: { id: true, name: true, slug: true } },
-          reviewers: {
-            where: { status: { not: "REJECTED" } },
-            select: { status: true },
-          },
-        },
-        orderBy: { updatedAt: "desc" },
-        take: 50,
-      });
-
-      manuscripts = rawManuscripts.map(m => ({
-        id: m.id,
-        title: m.title,
-        fileName: m.fileName,
-        status: m.status,
-        workflowStatus: m.workflowStatus,
-        keywords: m.keywords,
-        wordCount: m.wordCount,
-        createdAt: m.createdAt,
-        updatedAt: m.updatedAt,
-        _count: { authors: m._count.authors, reviewers: m._count.reviewers },
-        journal: m.journal,
-        reviewerCounts: {
-          shortlisted: m.reviewers.filter(r => r.status === "SHORTLISTED").length,
-          suggested: m.reviewers.filter(r => r.status === "SUGGESTED").length,
-        },
-      }));
-    }
+    manuscripts = rawManuscripts.map(m => ({
+      id: m.id,
+      title: m.title,
+      fileName: m.fileName,
+      status: m.status,
+      workflowStatus: m.workflowStatus,
+      keywords: m.keywords,
+      wordCount: m.wordCount,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+      _count: { authors: m._count.authors, reviewers: m._count.reviewers },
+      journal: m.journal,
+      reviewerCounts: {
+        shortlisted: m.reviewers.filter(r => r.status === "SHORTLISTED").length,
+        suggested: m.reviewers.filter(r => r.status === "SUGGESTED").length,
+      },
+    }));
   } catch (error) {
     console.error("Dashboard data fetch error:", error);
   }
 
   // Redirect first-time users to onboarding
-  if (journalCount === 0 && submissionCount === 0 && pendingReviews === 0 && manuscriptCount === 0) {
+  if (journalCount === 0 && submissionCount === 0 && manuscriptCount === 0) {
     try {
       const publisherCount = await prisma.publisherMember.count({
         where: { userId: session?.user?.id },
@@ -173,7 +165,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        {isEditor && (
+        {manuscripts.length > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Reviewers Found</CardTitle>
@@ -287,8 +279,8 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* EDITOR/PUBLISHER: Manuscripts as primary view */}
-      {isEditor && (
+      {/* Manuscripts section - shown for all users with manuscripts */}
+      {(manuscripts.length > 0 || manuscriptCount > 0) && (
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">Manuscripts</h2>
