@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut } from "lucide-react";
+import { LogOut, User } from "lucide-react";
 
 interface SimpleShellProps {
   children: React.ReactNode;
@@ -55,6 +55,12 @@ export function SimpleShell({ children }: SimpleShellProps) {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild className="cursor-pointer">
+              <Link href="/dashboard/profile">
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="cursor-pointer text-red-600 focus:text-red-600"
               onClick={() => signOut({ callbackUrl: "/login" })}
