@@ -7,12 +7,30 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { 
-  FileText, ArrowLeft, Clock, CheckCircle, XCircle, Loader2, 
-  Users, BookOpen, Building, Mail, ExternalLink, Download, Search, AlertTriangle,
-  Award, MapPin, ThumbsUp, ThumbsDown, Sparkles, Check, GraduationCap
+import {
+  FileText,
+  ArrowLeft,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  Users,
+  BookOpen,
+  Building,
+  Mail,
+  ExternalLink,
+  Download,
+  Search,
+  AlertTriangle,
+  Sparkles,
 } from "lucide-react";
-import { COIBadge, COIDetails, getCardBorderClass, type ConflictSeverity } from "@/components/reviewers";
+import { ReviewerResultsList } from "@/components/reviewers/reviewer-results-list";
+import {
+  type ReviewerDisplay,
+  flagsFromReviewerStatuses,
+} from "@/components/reviewers/reviewer-display";
+import type { ConflictSeverity } from "@/components/reviewers/coi-badge";
+import type { ReviewerConflict } from "@/components/reviewers/coi-details";
 
 interface Author {
   id: string;
@@ -109,6 +127,68 @@ interface PersistedReviewer {
     conflictCount: number;
   };
   assignedExpertise?: string[];
+  sources?: string[];
+  recentArticles?: ReviewerDisplay["recentArticles"];
+  firstAuthorCount?: number;
+  lastAuthorCount?: number;
+  seniorAuthorCount?: number;
+}
+
+function mapPersistedToDisplay(r: PersistedReviewer): ReviewerDisplay {
+  const coiRaw = r.coiSummary as
+    | {
+        hasConflict: boolean;
+        worstSeverity?: ConflictSeverity | null;
+        conflictCount: number;
+        conflicts?: ReviewerConflict[];
+      }
+    | undefined;
+
+  return {
+    id: r.id,
+    name: r.name,
+    affiliation: r.affiliation,
+    country: r.country,
+    email: r.email ?? null,
+    hIndex: r.hIndex ?? null,
+    citationCount: r.citationCount ?? null,
+    publicationCount: r.publicationCount,
+    firstAuthorCount: r.firstAuthorCount ?? 0,
+    lastAuthorCount: r.lastAuthorCount ?? 0,
+    seniorAuthorCount: r.seniorAuthorCount ?? 0,
+    sources: (r.sources as string[]) || [],
+    recentArticles: r.recentArticles || [],
+    verificationUrls: r.verificationUrls,
+    llmAnalysis: r.llmAnalysis
+      ? {
+          relevanceScore: r.llmAnalysis.relevanceScore,
+          reasoning: r.llmAnalysis.reasoning,
+          topicalMatch: r.llmAnalysis.topicalMatch,
+        }
+      : undefined,
+    coiSummary: coiRaw
+      ? {
+          hasConflict: coiRaw.hasConflict,
+          worstSeverity: coiRaw.worstSeverity ?? null,
+          conflictCount: coiRaw.conflictCount,
+          conflicts: coiRaw.conflicts || [],
+        }
+      : undefined,
+  };
+}
+
+function sortReviewersForDisplay(
+  reviewers: ReviewerDisplay[],
+  flagged: Record<string, "up" | "down" | null>
+): ReviewerDisplay[] {
+  return [...reviewers].sort((a, b) => {
+    const rank = (r: ReviewerDisplay) => {
+      if (flagged[r.id] === "up") return 0;
+      if (flagged[r.id] === "down") return 2;
+      return 1;
+    };
+    return rank(a) - rank(b);
+  });
 }
 
 export interface ManuscriptDetailRoutes {
@@ -327,11 +407,35 @@ export function ManuscriptDetailContent({
     [manuscriptExpertise, expertiseCoverage]
   );
 
-  const sortedReviewers = useMemo(() => {
-    const rank = (r: PersistedReviewer) =>
-      r.status === "SHORTLISTED" ? 0 : r.status === "SUGGESTED" ? 1 : 2;
-    return [...reviewers].sort((a, b) => rank(a) - rank(b));
-  }, [reviewers]);
+  const uncoveredExpertise = useMemo(
+    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) === 0),
+    [manuscriptExpertise, expertiseCoverage]
+  );
+
+  const flaggedReviewers = useMemo(
+    () => flagsFromReviewerStatuses(reviewers),
+    [reviewers]
+  );
+
+  const displayReviewers = useMemo(() => {
+    const active = reviewers.filter((r) => r.status !== "REJECTED");
+    const mapped = active.map(mapPersistedToDisplay);
+    return sortReviewersForDisplay(mapped, flaggedReviewers);
+  }, [reviewers, flaggedReviewers]);
+
+  const handleToggleFlag = (reviewerId: string, direction: "up" | "down") => {
+    const reviewer = reviewers.find((r) => r.id === reviewerId);
+    if (!reviewer) return;
+    const isActive = flaggedReviewers[reviewerId] === direction;
+    if (direction === "up") {
+      handleReviewerStatusChange(
+        reviewerId,
+        isActive ? "SUGGESTED" : "SHORTLISTED"
+      );
+    } else {
+      handleReviewerStatusChange(reviewerId, isActive ? "SUGGESTED" : "REJECTED");
+    }
+  };
 
   const toggleExpertise = (reviewerId: string, expertise: string) => {
     setAssignedExpertise(prev => {
@@ -544,108 +648,20 @@ export function ManuscriptDetailContent({
               </div>
             </CardHeader>
             <CardContent>
-              {isLoadingReviewers ? (
-                <div className="text-center py-6">
-                  <Loader2 className="h-6 w-6 mx-auto animate-spin text-gray-400" />
-                  <p className="text-sm text-gray-500 mt-2">Loading reviewers...</p>
-                </div>
-              ) : reviewers.length === 0 ? (
-                <div className="text-center py-6 text-gray-500">
-                  <Users className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                  <p className="text-sm">No reviewers found yet</p>
-                  <p className="text-xs text-gray-400 mt-1">Use &quot;Find Reviewers&quot; to discover suitable reviewers</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {sortedReviewers.slice(0, 6).map((reviewer) => (
-                    <div key={reviewer.id} className={`border rounded-lg p-3 space-y-2 ${
-                      reviewer.coiSummary?.hasConflict
-                        ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)
-                        : ""
-                    }`}>
-                      <div className="flex items-start justify-between">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <p className="font-medium truncate">{reviewer.name}</p>
-                            <COIBadge
-                              severity={(reviewer.coiSummary?.worstSeverity as ConflictSeverity) || null}
-                              conflictCount={reviewer.coiSummary?.conflictCount || 0}
-                              size="sm"
-                            />
-                          </div>
-                          {reviewer.affiliation && (
-                            <p className="text-xs text-gray-500 truncate flex items-center gap-1">
-                              <Building className="h-3 w-3 shrink-0" />
-                              {reviewer.affiliation}
-                            </p>
-                          )}
-                        </div>
-                        <Badge variant={reviewer.status === "SHORTLISTED" ? "default" : "secondary"} className="text-xs shrink-0 ml-2">
-                          {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-500">
-                        {reviewer.hIndex != null && (
-                          <span className="flex items-center gap-1" title="h-index">
-                            <Award className="h-3 w-3" />h: {reviewer.hIndex}
-                          </span>
-                        )}
-                        {reviewer.publicationCount != null && (
-                          <span>{reviewer.publicationCount} pubs</span>
-                        )}
-                        {reviewer.citationCount != null && (
-                          <span>{reviewer.citationCount.toLocaleString()} cits</span>
-                        )}
-                      </div>
-                      {manuscriptExpertise.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {manuscriptExpertise.map(exp => {
-                            const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
-                            return (
-                              <button key={exp}
-                                onClick={() => toggleExpertise(reviewer.id, exp)}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                                  isChecked
-                                    ? "bg-green-100 text-green-800 border-green-300"
-                                    : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
-                                }`}>
-                                <div className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${
-                                  isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
-                                }`}>
-                                  {isChecked && <Check className="h-2 w-2 text-white" />}
-                                </div>
-                                {exp}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <div className="flex gap-1">
-                        {reviewer.status !== "SHORTLISTED" ? (
-                          <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
-                            onClick={() => handleReviewerStatusChange(reviewer.id, "SHORTLISTED")}>
-                            <ThumbsUp className="h-3 w-3 mr-1" />Shortlist
-                          </Button>
-                        ) : (
-                          <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
-                            onClick={() => handleReviewerStatusChange(reviewer.id, "SUGGESTED")}>
-                            Unshortlist
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" className="h-7 text-xs text-red-600 hover:text-red-700"
-                          onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}>
-                          <ThumbsDown className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {reviewers.length > 6 && (
-                <p className="text-xs text-center text-gray-400 mt-3">
-                  Showing 6 of {reviewers.length} reviewers. See the Reviewers tab for the full list.
-                </p>
-              )}
+              <ReviewerResultsList
+                reviewers={displayReviewers}
+                manuscriptExpertise={manuscriptExpertise}
+                expertiseCoverage={expertiseCoverage}
+                coveredExpertise={coveredExpertise}
+                uncoveredExpertise={uncoveredExpertise}
+                assignedExpertise={assignedExpertise}
+                flaggedReviewers={flaggedReviewers}
+                onToggleExpertise={toggleExpertise}
+                onToggleFlag={handleToggleFlag}
+                isLoading={isLoadingReviewers}
+                maxDisplay={6}
+                emptyMessage='No reviewers found yet. Use "Find Reviewers" to discover suitable reviewers.'
+              />
             </CardContent>
           </Card>
 
@@ -862,222 +878,19 @@ export function ManuscriptDetailContent({
             </Button>
           </div>
 
-          {/* Expertise Coverage Panel */}
-          {manuscriptExpertise.length > 0 && reviewers.length > 0 && (
-            <Card className="border-blue-200 bg-blue-50/30">
-              <CardContent className="py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-semibold flex items-center gap-2">
-                    <GraduationCap className="h-4 w-4 text-blue-600" />
-                    Expertise Coverage
-                    <Badge variant="outline" className={`text-xs ${
-                      coveredExpertise.length === manuscriptExpertise.length
-                        ? "bg-green-100 text-green-700"
-                        : coveredExpertise.length > 0
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-red-100 text-red-700"
-                    }`}>
-                      {coveredExpertise.length}/{manuscriptExpertise.length} covered
-                    </Badge>
-                  </h4>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {manuscriptExpertise.map(exp => {
-                    const info = expertiseCoverage[exp];
-                    const isCovered = info && info.reviewerNames.length > 0;
-                    return (
-                      <div key={exp} className="group relative">
-                        <Badge variant="outline" className={`text-xs cursor-default ${
-                          isCovered
-                            ? "bg-green-100 text-green-700 border-green-300"
-                            : "bg-amber-50 text-amber-700 border-amber-300"
-                        }`}>
-                          {isCovered ? <Check className="h-3 w-3 mr-1" /> : <AlertTriangle className="h-3 w-3 mr-1" />}
-                          {exp}
-                          {isCovered && <span className="ml-1 text-green-600">({info.reviewerNames.length})</span>}
-                        </Badge>
-                        {isCovered && (
-                          <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-10 bg-white shadow-lg rounded p-2 text-xs border min-w-[150px]">
-                            <p className="font-medium mb-1">Covered by:</p>
-                            {info.reviewerNames.map((n, i) => <p key={i} className="text-gray-600">{n}</p>)}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {isLoadingReviewers ? (
-            <Card>
-              <CardContent className="py-8 text-center">
-                <Loader2 className="h-6 w-6 mx-auto animate-spin text-gray-400" />
-                <p className="text-sm text-gray-500 mt-2">Loading reviewers...</p>
-              </CardContent>
-            </Card>
-          ) : reviewers.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <Users className="h-10 w-10 mx-auto mb-3 text-gray-300" />
-                <h3 className="font-medium text-gray-700">No reviewers yet</h3>
-                <p className="text-sm text-gray-500 mt-1">Use the &quot;Find Reviewers&quot; button to discover suitable reviewers for this manuscript.</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {sortedReviewers.map((reviewer) => (
-                <Card key={reviewer.id} className={
-                  reviewer.coiSummary?.hasConflict
-                    ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)
-                    : ""
-                }>
-                  <CardContent className="py-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-medium">{reviewer.name}</h4>
-                          <Badge variant={reviewer.status === "SHORTLISTED" ? "default" : "secondary"} className="text-xs">
-                            {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
-                          </Badge>
-                          <COIBadge
-                            severity={(reviewer.coiSummary?.worstSeverity as ConflictSeverity) || null}
-                            conflictCount={reviewer.coiSummary?.conflictCount || 0}
-                            size="sm"
-                          />
-                        </div>
-
-                        {reviewer.affiliation && (
-                          <p className="text-sm text-gray-500 flex items-center gap-1">
-                            <Building className="h-3.5 w-3.5 shrink-0" />
-                            {reviewer.affiliation}
-                          </p>
-                        )}
-                        {reviewer.country && (
-                          <p className="text-sm text-gray-400 flex items-center gap-1">
-                            <MapPin className="h-3.5 w-3.5 shrink-0" />
-                            {reviewer.country}
-                          </p>
-                        )}
-
-                        <div className="flex items-center gap-4 text-sm text-gray-500 pt-1">
-                          {reviewer.hIndex != null && (
-                            <span className="flex items-center gap-1" title="h-index">
-                              <Award className="h-3.5 w-3.5" />h-index: {reviewer.hIndex}
-                            </span>
-                          )}
-                          {reviewer.publicationCount != null && (
-                            <span>{reviewer.publicationCount} publications</span>
-                          )}
-                          {reviewer.citationCount != null && (
-                            <span>{reviewer.citationCount.toLocaleString()} citations</span>
-                          )}
-                        </div>
-
-                        {reviewer.llmAnalysis && (
-                          <div className="mt-2 bg-gray-50 rounded p-2 text-sm">
-                            <div className="flex items-center gap-1 text-gray-600 mb-1">
-                              <Sparkles className="h-3.5 w-3.5" />
-                              <span className="font-medium">Relevance: {reviewer.llmAnalysis.relevanceScore}/10</span>
-                              {reviewer.llmAnalysis.topicalMatch && (
-                                <span className="text-xs text-gray-400 ml-1">— {reviewer.llmAnalysis.topicalMatch}</span>
-                              )}
-                            </div>
-                            {reviewer.llmAnalysis.reasoning && (
-                              <p className="text-xs text-gray-500">{reviewer.llmAnalysis.reasoning}</p>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Expertise Assignment Checkboxes */}
-                        {manuscriptExpertise.length > 0 && (
-                          <div className="mt-2 p-2 bg-blue-50/50 rounded-lg border border-blue-200">
-                            <p className="text-xs font-medium text-blue-800 mb-1.5">Covers expertise:</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {manuscriptExpertise.map(exp => {
-                                const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
-                                return (
-                                  <button key={exp}
-                                    onClick={() => toggleExpertise(reviewer.id, exp)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                                      isChecked
-                                        ? "bg-green-100 text-green-800 border-green-300"
-                                        : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
-                                    }`}>
-                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                                      isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
-                                    }`}>
-                                      {isChecked && <Check className="h-2.5 w-2.5 text-white" />}
-                                    </div>
-                                    {exp}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex flex-col gap-1 text-xs pt-1">
-                          <div className="flex items-center gap-1.5">
-                            <Mail className="h-3 w-3 text-gray-400 shrink-0" />
-                            {reviewer.email ? (
-                              <a href={`mailto:${reviewer.email}`} className="text-blue-600 hover:underline truncate">{reviewer.email}</a>
-                            ) : (
-                              <span className="text-gray-400 italic">No public email</span>
-                            )}
-                          </div>
-                          {reviewer.verificationUrls?.institutionProfileUrl ? (
-                            <div className="flex items-center gap-1.5">
-                              <Building className="h-3 w-3 text-green-500 shrink-0" />
-                              <a href={reviewer.verificationUrls.institutionProfileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Institution Profile</a>
-                            </div>
-                          ) : reviewer.verificationUrls?.institutionSearchUrl && (
-                            <div className="flex items-center gap-1.5">
-                              <Building className="h-3 w-3 text-gray-400 shrink-0" />
-                              <a href={reviewer.verificationUrls.institutionSearchUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Search at institution</a>
-                            </div>
-                          )}
-                        </div>
-
-                        {reviewer.verificationUrls && (
-                          <div className="flex gap-2 pt-1">
-                            {reviewer.verificationUrls.pubmedSearchUrl && (
-                              <a href={reviewer.verificationUrls.pubmedSearchUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">PubMed</a>
-                            )}
-                            {reviewer.verificationUrls.googleScholarUrl && (
-                              <a href={reviewer.verificationUrls.googleScholarUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Scholar</a>
-                            )}
-                            {reviewer.verificationUrls.semanticScholarUrl && (
-                              <a href={reviewer.verificationUrls.semanticScholarUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Semantic Scholar</a>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-1 shrink-0">
-                        {reviewer.status !== "SHORTLISTED" ? (
-                          <Button size="sm" variant="outline" className="text-xs"
-                            onClick={() => handleReviewerStatusChange(reviewer.id, "SHORTLISTED")}>
-                            <ThumbsUp className="h-3 w-3 mr-1" />Shortlist
-                          </Button>
-                        ) : (
-                          <Button size="sm" variant="outline" className="text-xs"
-                            onClick={() => handleReviewerStatusChange(reviewer.id, "SUGGESTED")}>
-                            Unshortlist
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" className="text-xs text-red-600 hover:text-red-700"
-                          onClick={() => handleReviewerStatusChange(reviewer.id, "REJECTED")}>
-                          <ThumbsDown className="h-3 w-3 mr-1" />Reject
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+          <ReviewerResultsList
+            reviewers={displayReviewers}
+            manuscriptExpertise={manuscriptExpertise}
+            expertiseCoverage={expertiseCoverage}
+            coveredExpertise={coveredExpertise}
+            uncoveredExpertise={uncoveredExpertise}
+            assignedExpertise={assignedExpertise}
+            flaggedReviewers={flaggedReviewers}
+            onToggleExpertise={toggleExpertise}
+            onToggleFlag={handleToggleFlag}
+            isLoading={isLoadingReviewers}
+            emptyMessage='Use "Find Reviewers" to discover suitable reviewers for this manuscript.'
+          />
         </TabsContent>
       </Tabs>
     </div>
