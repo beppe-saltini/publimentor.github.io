@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { auth, isSuperuser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -48,6 +48,13 @@ export async function POST(request: Request) {
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!isSuperuser(session.user.email)) {
+      return NextResponse.json(
+        { error: "Only administrators can create journals" },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();

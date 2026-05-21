@@ -160,6 +160,7 @@ function IntegrityCheckContent() {
 
   // Reference validation state
   const [referenceText, setReferenceText] = useState("");
+  const [manuscriptRefs, setManuscriptRefs] = useState<{raw: string; doi?: string; pmid?: string}[]>([]);
   const [isValidatingRefs, setIsValidatingRefs] = useState(false);
   const [referenceResult, setReferenceResult] = useState<ReferenceResult | null>(null);
 
@@ -264,10 +265,14 @@ function IntegrityCheckContent() {
     setReferenceResult(null);
 
     try {
+      const payload = manuscriptRefs.length > 0
+        ? { references: manuscriptRefs }
+        : { text: referenceText };
+
       const response = await fetch("/api/integrity/references", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: referenceText }),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -414,10 +419,21 @@ function IntegrityCheckContent() {
                   affiliation: a.affiliation || "",
                 })));
               }
-              // Populate references for validation
+              // Populate references for validation — include DOIs/PMIDs from DB
               if (data.references && data.references.length > 0) {
+                const structured = data.references.map(r => ({
+                  raw: r.rawText,
+                  ...(r.doi ? { doi: r.doi } : {}),
+                  ...(r.pmid ? { pmid: r.pmid } : {}),
+                }));
+                setManuscriptRefs(structured);
                 const refText = data.references
-                  .map(r => r.rawText)
+                  .map(r => {
+                    let line = r.rawText;
+                    if (r.doi && !line.includes(r.doi)) line += ` DOI: ${r.doi}`;
+                    if (r.pmid && !line.includes(r.pmid)) line += ` PMID: ${r.pmid}`;
+                    return line;
+                  })
                   .join("\n\n");
                 setReferenceText(refText);
               }
@@ -915,12 +931,17 @@ function IntegrityCheckContent() {
                   id="refText"
                   placeholder="Paste the reference list here. Each reference should be on a new line. DOIs and PMIDs will be automatically extracted..."
                   value={referenceText}
-                  onChange={(e) => setReferenceText(e.target.value)}
+                  onChange={(e) => { setReferenceText(e.target.value); setManuscriptRefs([]); }}
                   rows={10}
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-gray-500">
                   {referenceText.length.toLocaleString()} characters
+                  {manuscriptRefs.length > 0 && (
+                    <span className="ml-2 text-blue-600">
+                      ({manuscriptRefs.length} references loaded, {manuscriptRefs.filter(r => r.doi).length} with DOI, {manuscriptRefs.filter(r => r.pmid).length} with PMID)
+                    </span>
+                  )}
                 </p>
               </div>
 

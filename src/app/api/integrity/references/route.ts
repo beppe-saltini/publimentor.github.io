@@ -14,7 +14,7 @@ const requestSchema = z.union([
     text: z.string().min(50, "Reference text must be at least 50 characters"),
   }),
   z.object({
-    references: z.array(referenceSchema).min(1).max(100),
+    references: z.array(referenceSchema).min(1).max(500),
   }),
 ]);
 

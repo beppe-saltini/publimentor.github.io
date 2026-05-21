@@ -7,8 +7,16 @@
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
-// Maximum text length to send to LLM (to manage costs and context limits)
-const MAX_TEXT_LENGTH = 100000; // ~25k tokens
+const MAX_METADATA_TEXT = 80000;
+const MAX_REFS_TEXT = 60000;
+const REFS_HEADING_PATTERNS = [
+  /\n\s*references?\s*\n/i,
+  /\n\s*bibliography\s*\n/i,
+  /\n\s*(?:literature\s+)?cited\s*\n/i,
+  /\n\s*references?\s*$/im,
+  /(?:^|\.\s+|\n)(\d+\.\s+)?references?\s+(?=\d+[\.\)]?\s)/i,
+  /(?:^|\.\s+|\n)bibliography\s+(?=\d+[\.\)]?\s)/i,
+];
 
 /**
  * Sanitize string to prevent XSS when LLM output is displayed.
@@ -127,64 +135,205 @@ export interface ExtractedMetadata {
 }
 
 /**
- * Extract metadata from manuscript text using Claude
+ * Find the start of the References/Bibliography section in the text.
+ */
+function findReferencesSection(text: string): number {
+  let bestIdx = -1;
+
+  for (const pattern of REFS_HEADING_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > text.length * 0.4 && match.index > bestIdx) {
+        bestIdx = match.index;
+      }
+      if (!pattern.global) break;
+    }
+  }
+
+  if (bestIdx === -1) {
+    const lower = text.toLowerCase();
+    const candidates = [
+      lower.lastIndexOf("\nreferences\n"),
+      lower.lastIndexOf("\nreferences"),
+      lower.lastIndexOf("\nbibliography\n"),
+      lower.lastIndexOf("\nbibliography"),
+      lower.lastIndexOf(" references "),
+    ];
+    for (const idx of candidates) {
+      if (idx > text.length * 0.4 && idx > bestIdx) bestIdx = idx;
+    }
+  }
+
+  return bestIdx;
+}
+
+/**
+ * Build text for metadata extraction: front matter + optional truncated middle.
+ * References are handled separately.
+ */
+function prepareMetadataText(text: string, refStart: number): string {
+  const front = refStart > 0 ? text.substring(0, Math.min(refStart, MAX_METADATA_TEXT)) : text.substring(0, MAX_METADATA_TEXT);
+  if (front.length < text.length && front.length < refStart) {
+    return front + "\n\n[BODY TRUNCATED — REFERENCES EXTRACTED SEPARATELY]";
+  }
+  return front;
+}
+
+/**
+ * Call Claude with the given prompt and max_tokens.
+ */
+async function callClaude(prompt: string, maxTokens: number, model = "claude-sonnet-4-20250514"): Promise<string> {
+  const response = await fetch(ANTHROPIC_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY!,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("[MetadataExtractor] API error: status", response.status);
+    throw new Error(`Claude API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.content?.[0]?.text;
+  if (!content) throw new Error("Empty response from Claude");
+  return content;
+}
+
+/**
+ * Extract references from raw reference section text via a dedicated LLM call.
+ */
+async function extractReferencesOnly(refText: string): Promise<ExtractedReference[]> {
+  const truncated = refText.length > MAX_REFS_TEXT
+    ? refText.substring(0, MAX_REFS_TEXT) + "\n\n[REMAINING REFERENCES TRUNCATED]"
+    : refText;
+
+  const prompt = `Parse ALL references from this text into a JSON array. Be thorough — extract every single one.
+
+<references>
+${truncated}
+</references>
+
+Each element: {"n":1,"a":"authors","t":"title","j":"journal","y":2024,"doi":"10.x/y","type":"journal"}
+Fields: n=number, a=authors, t=title, j=journal (null if none), y=year (int or null), doi (null if none), type=journal|book|preprint|other.
+Omit null fields. Return ONLY the JSON array.`;
+
+  const content = await callClaude(prompt, 16384, "claude-haiku-4-5-20251001");
+  let jsonStr = content.trim();
+  if (jsonStr.includes("```json")) {
+    jsonStr = jsonStr.split("```json")[1].split("```")[0].trim();
+  } else if (jsonStr.includes("```")) {
+    jsonStr = jsonStr.split("```")[1].split("```")[0].trim();
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const items = Array.isArray(parsed) ? parsed : parsed.references || [];
+    return items.map((r: Record<string, unknown>) => {
+      const expanded: Record<string, unknown> = {
+        number: r.number ?? r.n,
+        rawText: r.rawText ?? [r.a, r.t, r.j, r.y].filter(Boolean).join(". "),
+        authors: r.authors ?? r.a,
+        title: r.title ?? r.t,
+        journal: r.journal ?? r.j,
+        year: r.year ?? r.y,
+        volume: r.volume ?? r.vol,
+        issue: r.issue,
+        pages: r.pages,
+        doi: r.doi,
+        pmid: r.pmid,
+        pmcid: r.pmcid,
+        arxivId: r.arxivId,
+        url: r.url,
+        refType: r.refType ?? r.type,
+      };
+      return sanitizeReference(expanded);
+    });
+  } catch {
+    console.error("[MetadataExtractor] Failed to parse references JSON, length:", jsonStr.length);
+    return [];
+  }
+}
+
+/**
+ * Extract metadata from manuscript text using Claude.
+ * Uses a two-pass strategy for large documents:
+ * Pass 1: Title, abstract, authors, affiliations, declarations, statistics
+ * Pass 2: Dedicated reference extraction from the references section
  */
 export async function extractMetadata(text: string): Promise<ExtractedMetadata> {
   if (!ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY not configured");
   }
 
-  // Truncate text if too long
-  const truncatedText = text.length > MAX_TEXT_LENGTH 
-    ? text.substring(0, MAX_TEXT_LENGTH) + "\n\n[TEXT TRUNCATED FOR PROCESSING]"
-    : text;
+  const refStart = findReferencesSection(text);
+  const hasRefSection = refStart > 0;
+  const refSectionText = hasRefSection ? text.substring(refStart) : "";
 
-  const prompt = buildExtractionPrompt(truncatedText);
+  console.log(`[MetadataExtractor] Text: ${text.length} chars, refs section at: ${refStart}, two-pass: ${hasRefSection}`);
 
   try {
-    console.log("[MetadataExtractor] Calling Claude API...");
-    
-    const response = await fetch(ANTHROPIC_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 8192,
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      }),
-    });
+    let metadata: ExtractedMetadata;
 
-    if (!response.ok) {
-      // SECURITY: Don't log raw API error body (may contain sensitive data)
-      console.error("[MetadataExtractor] API error: status", response.status);
-      throw new Error(`Claude API error: ${response.status}`);
+    if (hasRefSection) {
+      const metaText = prepareMetadataText(text, refStart);
+      const prompt = buildExtractionPrompt(metaText);
+      console.log("[MetadataExtractor] Running metadata + references extraction in parallel...");
+
+      const [content, refs] = await Promise.all([
+        callClaude(prompt, 8192),
+        extractReferencesOnly(refSectionText),
+      ]);
+
+      metadata = parseExtractionResponse(content);
+      metadata.references = refs;
+      metadata.statistics.referenceCount = refs.length;
+      console.log(`[MetadataExtractor] Parallel extraction done: ${refs.length} references`);
+    } else {
+      const inputText = text.length > MAX_METADATA_TEXT + 20000
+        ? text.substring(0, MAX_METADATA_TEXT + 20000) + "\n\n[TEXT TRUNCATED]"
+        : text;
+      const prompt = buildExtractionPrompt(inputText);
+      console.log("[MetadataExtractor] Single-pass extraction...");
+      const content = await callClaude(prompt, 16384);
+      metadata = parseExtractionResponse(content);
     }
 
-    const data = await response.json();
-    const content = data.content?.[0]?.text;
-
-    if (!content) {
-      throw new Error("Empty response from Claude");
-    }
-
-    // Parse JSON from response
-    const metadata = parseExtractionResponse(content);
-    console.log(`[MetadataExtractor] Extracted: ${metadata.title?.substring(0, 50)}...`);
-    
+    console.log(`[MetadataExtractor] Done: "${metadata.title?.substring(0, 50)}..." — ${metadata.references.length} refs`);
     return metadata;
   } catch (error) {
     console.error("[MetadataExtractor] Extraction failed:", error);
     throw error;
   }
+}
+
+/**
+ * Extract only references from full manuscript text (single Claude call).
+ * Used for fast re-extraction without re-running the full metadata pipeline.
+ */
+export async function extractReferencesFromText(text: string): Promise<ExtractedReference[]> {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY not configured");
+  }
+
+  const refStart = findReferencesSection(text);
+  if (refStart <= 0) {
+    console.log("[MetadataExtractor] No references section found in text");
+    return [];
+  }
+
+  const refSectionText = text.substring(refStart);
+  console.log(`[MetadataExtractor] Extracting refs from section at ${refStart} (${refSectionText.length} chars)`);
+  return extractReferencesOnly(refSectionText);
 }
 
 /**

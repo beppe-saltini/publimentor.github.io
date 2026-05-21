@@ -672,6 +672,28 @@ export const openAlex = {
   },
 
   /**
+   * Get institution by OpenAlex ID. Returns homepage_url and display_name.
+   */
+  async getInstitution(institutionId: string): Promise<{ homepage_url?: string; display_name: string } | null> {
+    const params = new URLSearchParams({ select: "id,display_name,homepage_url" });
+    const email = getPoliteEmail();
+    if (email) params.set("mailto", email);
+
+    try {
+      const id = institutionId.replace("https://openalex.org/", "");
+      const response = await fetch(`${BASE_URL}/institutions/${id}?${params}`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      return {
+        display_name: data.display_name,
+        homepage_url: data.homepage_url || undefined,
+      };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Get source (venue) information including metrics
    */
   async getSource(sourceId: string): Promise<OpenAlexSourceResult | null> {

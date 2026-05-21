@@ -81,9 +81,6 @@ export default auth((req) => {
 
 export const config = {
   matcher: [
-    // Match all routes except static files, Next.js internals, auth routes,
-    // and the manuscript upload endpoint (which has its own auth and needs to
-    // bypass Edge Runtime body-size limitations for large file uploads).
     "/((?!_next/static|_next/image|favicon.ico|logo.png|api/auth|api/manuscripts/upload|api/manuscripts/[^/]+/process).*)",
   ],
 };

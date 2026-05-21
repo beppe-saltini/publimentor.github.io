@@ -325,7 +325,8 @@ async function validateAffiliation(affiliation: string): Promise<AffiliationVali
   try {
     const encodedQuery = encodeURIComponent(affiliation);
     const response = await fetch(
-      `https://api.ror.org/organizations?query=${encodedQuery}`
+      `https://api.ror.org/v2/organizations?query=${encodedQuery}`,
+      { signal: AbortSignal.timeout(10000) }
     );
     
     if (!response.ok) {
@@ -337,24 +338,28 @@ async function validateAffiliation(affiliation: string): Promise<AffiliationVali
     
     if (data.items && data.items.length > 0) {
       const bestMatch = data.items[0];
+
+      const displayName = bestMatch.names?.find(
+        (n: { types: string[] }) => n.types?.includes("ror_display")
+      )?.value || bestMatch.names?.[0]?.value || "";
+      const country = bestMatch.locations?.[0]?.geonames_details?.country_name;
       
-      // Check how well the name matches
       const normalizedInput = normalizeString(affiliation);
-      const normalizedMatch = normalizeString(bestMatch.name);
+      const normalizedMatch = normalizeString(displayName);
       
       const similarity = normalizedInput === normalizedMatch ? 1 : 
         normalizedMatch.includes(normalizedInput) || normalizedInput.includes(normalizedMatch) ? 0.8 : 0.5;
       
       if (similarity < 0.8) {
-        issues.push(`Affiliation "${affiliation}" closest match is "${bestMatch.name}" - verify spelling`);
+        issues.push(`Affiliation "${affiliation}" closest match is "${displayName}" - verify spelling`);
       }
       
       return {
         affiliationProvided: true,
         institutionExists: true,
         rorId: bestMatch.id,
-        officialName: bestMatch.name,
-        country: bestMatch.country?.country_name,
+        officialName: displayName,
+        country,
         type: bestMatch.types?.[0],
         issues,
       };

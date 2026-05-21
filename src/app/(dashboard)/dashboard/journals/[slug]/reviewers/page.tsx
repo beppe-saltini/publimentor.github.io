@@ -15,8 +15,8 @@ import { Slider } from "@/components/ui/slider";
 import { 
   Search, User, Building, BookOpen, Award, Globe, Loader2, 
   ExternalLink, CheckCircle, FileText, AlertTriangle,
-  Users, Sparkles, Mail, MapPin, GraduationCap, FlaskConical,
-  Download, Info, ThumbsUp, ThumbsDown, FileDown, Star, Check
+  Users, Sparkles, Mail, GraduationCap, FlaskConical,
+  Download, Info, ThumbsUp, ThumbsDown, FileDown, Check, XCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
@@ -54,6 +54,7 @@ interface AdvancedReviewer {
   name: string;
   firstName: string;
   lastName: string;
+  email: string | null;
   affiliation: string;
   country: string;
   hIndex: number | null;
@@ -75,6 +76,7 @@ interface AdvancedReviewer {
     pubmedSearchUrl: string;
     googleScholarUrl: string;
     institutionSearchUrl: string;
+    institutionProfileUrl?: string;
     semanticScholarUrl?: string;
     openAlexUrl?: string;
   };
@@ -335,6 +337,7 @@ function ReviewerSearchContent() {
     name: r.name as string,
     firstName: (r.firstName as string) || "",
     lastName: (r.lastName as string) || "",
+    email: (r.email as string) || null,
     affiliation: (r.affiliation as string) || "",
     country: (r.country as string) || "",
     hIndex: (r.hIndex as number) ?? null,
@@ -499,6 +502,13 @@ function ReviewerSearchContent() {
         .catch(console.error);
     }
   }, [slug, submissionId]);
+
+  const clearKeywordsAndAuthors = () => {
+    setPrimaryKeywords("");
+    setSecondaryKeywords("");
+    setKeywords("");
+    setAuthorList("");
+  };
 
   // Find reviewers automatically from PubMed and OpenAlex
   const handleFindReviewers = async () => {
@@ -776,7 +786,10 @@ function ReviewerSearchContent() {
       if (r.verificationUrls.semanticScholarUrl) {
         lines.push(`   Semantic Scholar: ${r.verificationUrls.semanticScholarUrl}`);
       }
-      lines.push(`   Find email: ${r.verificationUrls.institutionSearchUrl}`);
+      if (r.verificationUrls.institutionProfileUrl) {
+        lines.push(`   Institution Profile: ${r.verificationUrls.institutionProfileUrl}`);
+      }
+      lines.push(`   Institution Search: ${r.verificationUrls.institutionSearchUrl}`);
       const expertise = assignedExpertise[r.id] || [];
       if (expertise.length > 0) {
         lines.push(`   Assigned Expertise: ${expertise.join(", ")}`);
@@ -901,16 +914,17 @@ function ReviewerSearchContent() {
                 </Label>
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
-                  onChange={(m) => setSelectedManuscriptId(m?.id || null)}
+                  onChange={(m) => {
+                    setSelectedManuscriptId(m?.id || null);
+                    if (!m) clearKeywordsAndAuthors();
+                  }}
                   onManuscriptData={(data) => {
-                    // Auto-populate keywords from manuscript
                     if (data.keywords.length > 0) {
                       setPrimaryKeywords(data.keywords.slice(0, 3).join(", "));
                       if (data.keywords.length > 3) {
                         setSecondaryKeywords(data.keywords.slice(3).join(", "));
                       }
                     }
-                    // Auto-populate author list for COI checking
                     if (data.authors.length > 0) {
                       setAuthorList(data.authors.map(a => a.name).join(", "));
                     }
@@ -927,6 +941,19 @@ function ReviewerSearchContent() {
 
               {/* Keywords Section */}
               <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Keywords &amp; Authors</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearKeywordsAndAuthors}
+                    disabled={!primaryKeywords && !secondaryKeywords && !authorList}
+                    className="h-7 text-xs text-gray-500 hover:text-red-600"
+                  >
+                    <XCircle className="h-3.5 w-3.5 mr-1" />
+                    Clear All
+                  </Button>
+                </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="primaryKeywords">Primary Expertise (required)</Label>
@@ -1379,10 +1406,6 @@ function ReviewerSearchContent() {
                               <Building className="h-3 w-3" />
                               {reviewer.affiliation.slice(0, 60)}{reviewer.affiliation.length > 60 ? "..." : ""}
                             </p>
-                            <p className="text-sm text-gray-400 flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              {reviewer.country}
-                            </p>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
@@ -1434,22 +1457,6 @@ function ReviewerSearchContent() {
                             >
                               <ThumbsDown className="h-3.5 w-3.5" />
                             </button>
-                          </div>
-                          {/* Responsiveness score */}
-                          <div className="flex gap-0.5" title="Rate reviewer responsiveness">
-                            {[1, 2, 3, 4, 5].map(s => (
-                              <button
-                                key={s}
-                                onClick={(e) => { e.stopPropagation(); setReviewerScore(reviewer.name, s as 1|2|3|4|5); }}
-                                className="p-0 transition-colors"
-                              >
-                                <Star className={`h-3 w-3 ${
-                                  (reviewerScores[reviewer.name]?.score || 0) >= s
-                                    ? "text-amber-400 fill-amber-400"
-                                    : "text-gray-200"
-                                }`} />
-                              </button>
-                            ))}
                           </div>
                         </div>
                       </div>
@@ -1596,6 +1603,47 @@ function ReviewerSearchContent() {
 
                       <Separator className="my-3" />
 
+                      {/* Email & Institution */}
+                      <div className="flex flex-col gap-1 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          {reviewer.email ? (
+                            <a href={`mailto:${reviewer.email}`} className="text-blue-600 hover:underline truncate">
+                              {reviewer.email}
+                            </a>
+                          ) : (
+                            <span className="text-gray-400 italic">No public email</span>
+                          )}
+                        </div>
+                        {reviewer.verificationUrls.institutionProfileUrl ? (
+                          <div className="flex items-center gap-2">
+                            <Building className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                            <a
+                              href={reviewer.verificationUrls.institutionProfileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline truncate"
+                            >
+                              Institution Profile
+                            </a>
+                          </div>
+                        ) : reviewer.verificationUrls.institutionSearchUrl && (
+                          <div className="flex items-center gap-2">
+                            <Building className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                            <a
+                              href={reviewer.verificationUrls.institutionSearchUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline truncate"
+                            >
+                              Search at institution
+                            </a>
+                          </div>
+                        )}
+                      </div>
+
+                      <Separator className="my-2" />
+
                       {/* Verification Links */}
                       <div className="flex flex-wrap gap-2">
                         <Button variant="outline" size="sm" asChild>
@@ -1642,16 +1690,6 @@ function ReviewerSearchContent() {
                             Scholar
                           </a>
                         </Button>
-                        <Button variant="outline" size="sm" asChild>
-                          <a 
-                            href={reviewer.verificationUrls.institutionSearchUrl} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                          >
-                            <Mail className="h-3 w-3 mr-1" />
-                            Find Email
-                          </a>
-                        </Button>
                       </div>
                     </CardContent>
                   </Card>
@@ -1696,13 +1734,14 @@ function ReviewerSearchContent() {
                 </Label>
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
-                  onChange={(m) => setSelectedManuscriptId(m?.id || null)}
+                  onChange={(m) => {
+                    setSelectedManuscriptId(m?.id || null);
+                    if (!m) clearKeywordsAndAuthors();
+                  }}
                   onManuscriptData={(data) => {
-                    // Auto-populate keywords from manuscript
                     if (data.keywords.length > 0) {
                       setKeywords(data.keywords.join(", "));
                     }
-                    // Auto-populate author list for COI checking
                     if (data.authors.length > 0) {
                       setAuthorList(data.authors.map(a => a.name).join(", "));
                     }
@@ -1714,6 +1753,20 @@ function ReviewerSearchContent() {
               </div>
 
               <Separator />
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Keywords &amp; Authors</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearKeywordsAndAuthors}
+                  disabled={!keywords && !authorList}
+                  className="h-7 text-xs text-gray-500 hover:text-red-600"
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Clear All
+                </Button>
+              </div>
 
               <div className="space-y-2">
                 <Label htmlFor="keywords">Research Keywords (comma-separated)</Label>
@@ -1875,22 +1928,6 @@ function ReviewerSearchContent() {
                               >
                                 <ThumbsDown className="h-3.5 w-3.5" />
                               </button>
-                            </div>
-                            {/* Responsiveness score */}
-                            <div className="flex gap-0.5" title="Rate reviewer responsiveness">
-                              {[1, 2, 3, 4, 5].map(s => (
-                                <button
-                                  key={s}
-                                  onClick={(e) => { e.stopPropagation(); setReviewerScore(reviewer.name, s as 1|2|3|4|5); }}
-                                  className="p-0 transition-colors"
-                                >
-                                  <Star className={`h-3 w-3 ${
-                                    (reviewerScores[reviewer.name]?.score || 0) >= s
-                                      ? "text-amber-400 fill-amber-400"
-                                      : "text-gray-200"
-                                  }`} />
-                                </button>
-                              ))}
                             </div>
                           </div>
                         </div>

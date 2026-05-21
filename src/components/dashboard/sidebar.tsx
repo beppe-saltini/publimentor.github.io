@@ -16,7 +16,6 @@ import {
   Shield,
   Upload,
   X,
-  Heart,
   Wrench,
 } from "lucide-react";
 
@@ -40,7 +39,6 @@ function SidebarContent({ onClose }: SidebarProps) {
     { href: "/dashboard", label: "Dashboard", icon: Home },
     { href: "/dashboard/manuscripts", label: "Manuscripts", icon: Upload },
     { href: "/dashboard/journals", label: "My Journals", icon: BookOpen },
-    { href: "/dashboard/favourites", label: "Favourite Journals", icon: Heart },
   ];
 
   // Standalone tools — accessible without a journal context

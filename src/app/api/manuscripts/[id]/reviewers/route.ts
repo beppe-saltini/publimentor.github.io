@@ -120,6 +120,7 @@ export async function POST(
           update: {
             firstName: reviewer.firstName || undefined,
             lastName: reviewer.lastName || undefined,
+            email: reviewer.email || undefined,
             affiliation: reviewer.affiliation || undefined,
             country: reviewer.country || undefined,
             hIndex: typeof reviewer.hIndex === "number" ? reviewer.hIndex : undefined,
@@ -138,6 +139,7 @@ export async function POST(
             name: reviewer.name,
             firstName: reviewer.firstName || null,
             lastName: reviewer.lastName || null,
+            email: reviewer.email || null,
             affiliation: reviewer.affiliation || null,
             country: reviewer.country || null,
             hIndex: typeof reviewer.hIndex === "number" ? reviewer.hIndex : null,

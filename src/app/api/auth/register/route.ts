@@ -163,7 +163,6 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    // Don't expose internal errors
     console.error("[Register] Error:", error);
     return NextResponse.json(
       { error: "Registration failed. Please try again later." },

@@ -18,6 +18,65 @@ import {
 
 export const dynamic = "force-dynamic";
 
+interface OrcidProfile {
+  email: string | null;
+  profileUrls: string[];
+}
+
+async function fetchOrcidProfile(orcid: string): Promise<OrcidProfile> {
+  const empty: OrcidProfile = { email: null, profileUrls: [] };
+  try {
+    const res = await fetch(`https://pub.orcid.org/v3.0/${orcid}/person`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return empty;
+    const data = await res.json();
+
+    // Extract primary email
+    const emails = data?.emails?.email || [];
+    const primaryEmail = emails.find((e: { primary?: boolean; email?: string }) => e.primary)?.email
+      || emails[0]?.email || null;
+
+    // Extract researcher URLs
+    const urls: string[] = [];
+    const researcherUrls = data?.["researcher-urls"]?.["researcher-url"] || [];
+    for (const entry of researcherUrls) {
+      const url = entry?.url?.value;
+      if (url && typeof url === "string") urls.push(url);
+    }
+
+    return { email: primaryEmail, profileUrls: urls };
+  } catch {
+    return empty;
+  }
+}
+
+function extractDomain(url: string): string | null {
+  try {
+    const hostname = new URL(url).hostname;
+    // Strip leading "www."
+    return hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function findInstitutionProfileUrl(
+  profileUrls: string[],
+  institutionDomain: string | null
+): string | null {
+  if (!institutionDomain || profileUrls.length === 0) return null;
+  const domainLower = institutionDomain.toLowerCase();
+  for (const url of profileUrls) {
+    const urlDomain = extractDomain(url);
+    if (urlDomain && urlDomain.toLowerCase().endsWith(domainLower)) {
+      return url;
+    }
+  }
+  return null;
+}
+
 // Rate limit: 10 requests per minute (expensive LLM calls)
 const DISCOVER_RATE_LIMIT = { windowMs: 60000, maxRequests: 10 };
 
@@ -45,6 +104,7 @@ interface ReviewerCandidate {
   name: string;
   firstName: string;
   lastName: string;
+  email: string | null;
   affiliation: string;
   country: string;
   hIndex: number | null;
@@ -66,6 +126,7 @@ interface ReviewerCandidate {
     pubmedSearchUrl: string;
     googleScholarUrl: string;
     institutionSearchUrl: string;
+    institutionProfileUrl?: string;
     semanticScholarUrl?: string;
     openAlexUrl?: string;
   };
@@ -135,6 +196,7 @@ export async function POST(request: Request) {
     const excludeNames = parsedAuthors.map(a => a.fullName);
 
     const candidates: ReviewerCandidate[] = [];
+    const institutionDomainCache = new Map<string, string | null>();
     let llmUsed = false;
     let searchStrategy = "";
     let caveats: string[] = [];
@@ -238,6 +300,7 @@ export async function POST(request: Request) {
             let oaPaperCount: number | null = null;
             let oaOrcid: string | null = null;
             let citationCount: number | null = null;
+            let oaInstitutionId: string | null = null;
             const sources: ("PubMed" | "SemanticScholar" | "OpenAlex")[] = ["PubMed"];
             let semanticScholarUrl: string | undefined;
             let openAlexUrl: string | undefined;
@@ -253,8 +316,8 @@ export async function POST(request: Request) {
                 oaOrcid = oaAuthor.orcid?.replace("https://orcid.org/", "") || null;
                 citationCount = oaAuthor.cited_by_count;
                 openAlexUrl = oaAuthor.id;
+                oaInstitutionId = oaAuthor.last_known_institutions?.[0]?.id || null;
                 sources.push("OpenAlex");
-                // Prefer the database name over the LLM name (fixes hallucinated first names)
                 if (oaAuthor.display_name) {
                   const oaLast = oaAuthor.display_name.split(" ").pop()?.toLowerCase();
                   if (oaLast === lastName) {
@@ -344,11 +407,31 @@ export async function POST(request: Request) {
             const finalName = verifiedName || suggested.name;
             const finalNameParts = finalName.split(" ");
 
+            // Fetch ORCID profile (email + researcher URLs) and resolve institution domain
+            const orcidProfile = oaOrcid ? await fetchOrcidProfile(oaOrcid) : { email: null, profileUrls: [] };
+
+            let instDomain: string | null = null;
+            if (oaInstitutionId) {
+              if (institutionDomainCache.has(oaInstitutionId)) {
+                instDomain = institutionDomainCache.get(oaInstitutionId)!;
+              } else {
+                const inst = await openAlex.getInstitution(oaInstitutionId);
+                instDomain = inst?.homepage_url ? extractDomain(inst.homepage_url) : null;
+                institutionDomainCache.set(oaInstitutionId, instDomain);
+              }
+            }
+
+            const institutionProfileUrl = findInstitutionProfileUrl(orcidProfile.profileUrls, instDomain) || undefined;
+            const institutionSearchUrl = instDomain
+              ? `https://www.google.com/search?q=site:${encodeURIComponent(instDomain)}+"${encodeURIComponent(finalName)}"`
+              : `https://www.google.com/search?q="${encodeURIComponent(finalName)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`;
+
             const candidate: ReviewerCandidate = {
               id: `llm_${finalName.toLowerCase().replace(/\s+/g, "_")}`,
               name: finalName,
               firstName: finalNameParts.slice(0, -1).join(" "),
               lastName: finalNameParts[finalNameParts.length - 1],
+              email: orcidProfile.email,
               affiliation: suggested.affiliation,
               country: suggested.country,
               hIndex,
@@ -363,7 +446,8 @@ export async function POST(request: Request) {
               verificationUrls: {
                 pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(usedSearchTerm || finalName + "[Author]")}`,
                 googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(finalName)}"`,
-                institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(finalName)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`,
+                institutionSearchUrl,
+                institutionProfileUrl,
                 semanticScholarUrl,
                 openAlexUrl,
               },
@@ -448,11 +532,32 @@ export async function POST(request: Request) {
             if (params.maxHIndex < 100 && hIndex > params.maxHIndex) continue;
           }
 
+          const oaOrcidClean = oaAuthor.orcid?.replace("https://orcid.org/", "") || null;
+          const orcidProfile2 = oaOrcidClean ? await fetchOrcidProfile(oaOrcidClean) : { email: null, profileUrls: [] };
+
+          const oaInstId2 = oaAuthor.last_known_institutions?.[0]?.id || null;
+          let instDomain2: string | null = null;
+          if (oaInstId2) {
+            if (institutionDomainCache.has(oaInstId2)) {
+              instDomain2 = institutionDomainCache.get(oaInstId2)!;
+            } else {
+              const inst = await openAlex.getInstitution(oaInstId2);
+              instDomain2 = inst?.homepage_url ? extractDomain(inst.homepage_url) : null;
+              institutionDomainCache.set(oaInstId2, instDomain2);
+            }
+          }
+
+          const instProfileUrl2 = findInstitutionProfileUrl(orcidProfile2.profileUrls, instDomain2) || undefined;
+          const instSearchUrl2 = instDomain2
+            ? `https://www.google.com/search?q=site:${encodeURIComponent(instDomain2)}+"${encodeURIComponent(oaAuthor.display_name)}"`
+            : `https://www.google.com/search?q="${encodeURIComponent(oaAuthor.display_name)}"+"${encodeURIComponent(affiliation.slice(0, 50))}"`;
+
           candidates.push({
             id: oaAuthor.id,
             name: oaAuthor.display_name,
             firstName: nameParts.slice(0, -1).join(" "),
             lastName,
+            email: orcidProfile2.email,
             affiliation,
             country,
             hIndex,
@@ -467,7 +572,8 @@ export async function POST(request: Request) {
             verificationUrls: {
               pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(oaAuthor.display_name)}[Author]`,
               googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(oaAuthor.display_name)}"`,
-              institutionSearchUrl: `https://www.google.com/search?q="${encodeURIComponent(oaAuthor.display_name)}"`,
+              institutionSearchUrl: instSearchUrl2,
+              institutionProfileUrl: instProfileUrl2,
               semanticScholarUrl,
               openAlexUrl: oaAuthor.id,
             },
@@ -547,6 +653,7 @@ export async function POST(request: Request) {
               name: stats.name,
               firstName: stats.firstName,
               lastName: stats.lastName,
+              email: null,
               affiliation,
               country,
               hIndex: null,

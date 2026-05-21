@@ -113,3 +113,5 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   ],
 });
+
+export { isSuperuser } from "./superuser";

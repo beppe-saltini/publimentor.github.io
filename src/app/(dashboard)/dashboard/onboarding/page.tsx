@@ -37,7 +37,7 @@ export default async function OnboardingPage() {
 
   return (
     <div className="py-8">
-      <Onboarding userName={session.user.name?.split(" ")[0]} />
+      <Onboarding userName={session.user.name?.split(" ")[0]} userEmail={session.user.email} />
     </div>
   );
 }

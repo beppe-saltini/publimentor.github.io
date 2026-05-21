@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,9 @@ import { toast } from "sonner";
 import { 
   FileText, ArrowLeft, Clock, CheckCircle, XCircle, Loader2, 
   Users, BookOpen, Building, Mail, ExternalLink, Download, Search, AlertTriangle,
-  Award, MapPin, ThumbsUp, ThumbsDown, Sparkles
+  Award, MapPin, ThumbsUp, ThumbsDown, Sparkles, Check, GraduationCap
 } from "lucide-react";
+import { COIBadge, COIDetails, getCardBorderClass, type ConflictSeverity } from "@/components/reviewers";
 
 interface Author {
   id: string;
@@ -82,6 +83,7 @@ interface Manuscript {
 interface PersistedReviewer {
   id: string;
   name: string;
+  email?: string | null;
   affiliation?: string;
   country?: string;
   hIndex?: number;
@@ -94,6 +96,7 @@ interface PersistedReviewer {
     googleScholarUrl?: string;
     semanticScholarUrl?: string;
     institutionSearchUrl?: string;
+    institutionProfileUrl?: string;
   };
   llmAnalysis?: {
     relevanceScore: number;
@@ -118,6 +121,7 @@ export default function ManuscriptDetailPage() {
   const [reviewers, setReviewers] = useState<PersistedReviewer[]>([]);
   const [reviewerCounts, setReviewerCounts] = useState({ total: 0, shortlisted: 0, suggested: 0 });
   const [isLoadingReviewers, setIsLoadingReviewers] = useState(false);
+  const [assignedExpertise, setAssignedExpertise] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     async function fetchManuscript() {
@@ -155,8 +159,14 @@ export default function ManuscriptDetailPage() {
         const response = await fetch(`/api/manuscripts/${params.id}/reviewers`);
         const data = await response.json();
         if (response.ok) {
-          setReviewers(data.reviewers || []);
+          const fetchedReviewers = data.reviewers || [];
+          setReviewers(fetchedReviewers);
           setReviewerCounts(data.counts || { total: 0, shortlisted: 0, suggested: 0 });
+          const expertiseMap: Record<string, string[]> = {};
+          for (const r of fetchedReviewers) {
+            if (r.assignedExpertise?.length) expertiseMap[r.id] = r.assignedExpertise;
+          }
+          setAssignedExpertise(expertiseMap);
         }
       } catch (err) {
         console.error("[Manuscript] Error fetching reviewers:", err);
@@ -197,6 +207,49 @@ export default function ManuscriptDetailPage() {
     }
   };
 
+  const manuscriptExpertise = useMemo(() => {
+    if (!manuscript?.keywords) return [];
+    return [...new Set(manuscript.keywords)];
+  }, [manuscript?.keywords]);
+
+  const expertiseCoverage = useMemo(() => {
+    const coverage: Record<string, { reviewerIds: string[]; reviewerNames: string[] }> = {};
+    for (const exp of manuscriptExpertise) {
+      coverage[exp] = { reviewerIds: [], reviewerNames: [] };
+    }
+    for (const r of reviewers) {
+      const assigned = assignedExpertise[r.id] || [];
+      for (const exp of assigned) {
+        if (coverage[exp]) {
+          coverage[exp].reviewerIds.push(r.id);
+          coverage[exp].reviewerNames.push(r.name);
+        }
+      }
+    }
+    return coverage;
+  }, [manuscriptExpertise, assignedExpertise, reviewers]);
+
+  const coveredExpertise = useMemo(
+    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) > 0),
+    [manuscriptExpertise, expertiseCoverage]
+  );
+
+  const toggleExpertise = (reviewerId: string, expertise: string) => {
+    setAssignedExpertise(prev => {
+      const current = prev[reviewerId] || [];
+      const updated = current.includes(expertise)
+        ? current.filter(e => e !== expertise)
+        : [...current, expertise];
+      const next = { ...prev, [reviewerId]: updated };
+      fetch(`/api/manuscripts/${params.id}/reviewers/${reviewerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedExpertise: updated }),
+      }).catch(err => console.error("Error saving expertise:", err));
+      return next;
+    });
+  };
+
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -206,7 +259,7 @@ export default function ManuscriptDetailPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "READY":
-        return <Badge className="bg-green-100 text-green-700">Ready</Badge>;
+        return null;
       case "PROCESSING":
       case "EXTRACTING":
       case "EMBEDDING":
@@ -214,7 +267,7 @@ export default function ManuscriptDetailPage() {
       case "ERROR":
         return <Badge className="bg-red-100 text-red-700">Error</Badge>;
       default:
-        return <Badge className="bg-gray-100 text-gray-700">{status}</Badge>;
+        return null;
     }
   };
 
@@ -261,20 +314,26 @@ export default function ManuscriptDetailPage() {
           <div className="flex items-center gap-3 mt-2 text-sm text-gray-500">
             {getStatusBadge(manuscript.status)}
             <span>{manuscript.manuscriptType || "Document"}</span>
+            {manuscript.fileType !== "manual" && (
+              <>
+                <span>•</span>
+                <span>{formatSize(manuscript.fileSize)}</span>
+              </>
+            )}
             <span>•</span>
-            <span>{formatSize(manuscript.fileSize)}</span>
-            <span>•</span>
-            <span>Uploaded {new Date(manuscript.createdAt).toLocaleDateString()}</span>
+            <span>{manuscript.fileType === "manual" ? "Created" : "Uploaded"} {new Date(manuscript.createdAt).toLocaleDateString()}</span>
           </div>
         </div>
         <div className="flex gap-2">
-          <Button 
-            variant="outline"
-            onClick={() => window.open(`/api/manuscripts/${manuscript.id}/download`, '_blank')}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Download
-          </Button>
+          {manuscript.fileType !== "manual" && (
+            <Button 
+              variant="outline"
+              onClick={() => window.open(`/api/manuscripts/${manuscript.id}/download`, '_blank')}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Download
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => {
@@ -434,20 +493,25 @@ export default function ManuscriptDetailPage() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {reviewers.slice(0, 6).map((reviewer) => (
-                    <div key={reviewer.id} className="border rounded-lg p-3 space-y-2">
+                    <div key={reviewer.id} className={`border rounded-lg p-3 space-y-2 ${
+                      reviewer.coiSummary?.hasConflict
+                        ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)
+                        : ""
+                    }`}>
                       <div className="flex items-start justify-between">
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium truncate">{reviewer.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium truncate">{reviewer.name}</p>
+                            <COIBadge
+                              severity={(reviewer.coiSummary?.worstSeverity as ConflictSeverity) || null}
+                              conflictCount={reviewer.coiSummary?.conflictCount || 0}
+                              size="sm"
+                            />
+                          </div>
                           {reviewer.affiliation && (
                             <p className="text-xs text-gray-500 truncate flex items-center gap-1">
                               <Building className="h-3 w-3 shrink-0" />
                               {reviewer.affiliation}
-                            </p>
-                          )}
-                          {reviewer.country && (
-                            <p className="text-xs text-gray-400 flex items-center gap-1">
-                              <MapPin className="h-3 w-3 shrink-0" />
-                              {reviewer.country}
                             </p>
                           )}
                         </div>
@@ -468,14 +532,36 @@ export default function ManuscriptDetailPage() {
                           <span>{reviewer.citationCount.toLocaleString()} cits</span>
                         )}
                       </div>
+                      {manuscriptExpertise.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {manuscriptExpertise.map(exp => {
+                            const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
+                            return (
+                              <button key={exp}
+                                onClick={() => toggleExpertise(reviewer.id, exp)}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                                  isChecked
+                                    ? "bg-green-100 text-green-800 border-green-300"
+                                    : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
+                                }`}>
+                                <div className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${
+                                  isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
+                                }`}>
+                                  {isChecked && <Check className="h-2 w-2 text-white" />}
+                                </div>
+                                {exp}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <div className="flex gap-1">
-                        {reviewer.status !== "SHORTLISTED" && (
+                        {reviewer.status !== "SHORTLISTED" ? (
                           <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
                             onClick={() => handleReviewerStatusChange(reviewer.id, "SHORTLISTED")}>
                             <ThumbsUp className="h-3 w-3 mr-1" />Shortlist
                           </Button>
-                        )}
-                        {reviewer.status === "SHORTLISTED" && (
+                        ) : (
                           <Button size="sm" variant="outline" className="h-7 text-xs flex-1"
                             onClick={() => handleReviewerStatusChange(reviewer.id, "SUGGESTED")}>
                             Unshortlist
@@ -498,39 +584,41 @@ export default function ManuscriptDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>File Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-500">File Name</span>
-                <span>{manuscript.fileName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">File Type</span>
-                <span className="uppercase">{manuscript.fileType}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">File Size</span>
-                <span>{formatSize(manuscript.fileSize)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Publisher</span>
-                <span>{manuscript.publisher.name}</span>
-              </div>
-              {manuscript.journal && (
+          {manuscript.fileType !== "manual" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>File Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Journal</span>
-                  <span>{manuscript.journal.name}</span>
+                  <span className="text-gray-500">File Name</span>
+                  <span>{manuscript.fileName}</span>
                 </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-gray-500">Uploaded By</span>
-                <span>{manuscript.uploader.name}</span>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">File Type</span>
+                  <span className="uppercase">{manuscript.fileType}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">File Size</span>
+                  <span>{formatSize(manuscript.fileSize)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Publisher</span>
+                  <span>{manuscript.publisher.name}</span>
+                </div>
+                {manuscript.journal && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Journal</span>
+                    <span>{manuscript.journal.name}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Uploaded By</span>
+                  <span>{manuscript.uploader.name}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Authors Tab */}
@@ -719,6 +807,54 @@ export default function ManuscriptDetailPage() {
             </Button>
           </div>
 
+          {/* Expertise Coverage Panel */}
+          {manuscriptExpertise.length > 0 && reviewers.length > 0 && (
+            <Card className="border-blue-200 bg-blue-50/30">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold flex items-center gap-2">
+                    <GraduationCap className="h-4 w-4 text-blue-600" />
+                    Expertise Coverage
+                    <Badge variant="outline" className={`text-xs ${
+                      coveredExpertise.length === manuscriptExpertise.length
+                        ? "bg-green-100 text-green-700"
+                        : coveredExpertise.length > 0
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-red-100 text-red-700"
+                    }`}>
+                      {coveredExpertise.length}/{manuscriptExpertise.length} covered
+                    </Badge>
+                  </h4>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {manuscriptExpertise.map(exp => {
+                    const info = expertiseCoverage[exp];
+                    const isCovered = info && info.reviewerNames.length > 0;
+                    return (
+                      <div key={exp} className="group relative">
+                        <Badge variant="outline" className={`text-xs cursor-default ${
+                          isCovered
+                            ? "bg-green-100 text-green-700 border-green-300"
+                            : "bg-amber-50 text-amber-700 border-amber-300"
+                        }`}>
+                          {isCovered ? <Check className="h-3 w-3 mr-1" /> : <AlertTriangle className="h-3 w-3 mr-1" />}
+                          {exp}
+                          {isCovered && <span className="ml-1 text-green-600">({info.reviewerNames.length})</span>}
+                        </Badge>
+                        {isCovered && (
+                          <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-10 bg-white shadow-lg rounded p-2 text-xs border min-w-[150px]">
+                            <p className="font-medium mb-1">Covered by:</p>
+                            {info.reviewerNames.map((n, i) => <p key={i} className="text-gray-600">{n}</p>)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {isLoadingReviewers ? (
             <Card>
               <CardContent className="py-8 text-center">
@@ -737,21 +873,24 @@ export default function ManuscriptDetailPage() {
           ) : (
             <div className="space-y-3">
               {reviewers.map((reviewer) => (
-                <Card key={reviewer.id}>
+                <Card key={reviewer.id} className={
+                  reviewer.coiSummary?.hasConflict
+                    ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)
+                    : ""
+                }>
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-medium">{reviewer.name}</h4>
                           <Badge variant={reviewer.status === "SHORTLISTED" ? "default" : "secondary"} className="text-xs">
                             {reviewer.status === "SHORTLISTED" ? "Shortlisted" : "Suggested"}
                           </Badge>
-                          {reviewer.coiSummary?.hasConflict && (
-                            <Badge variant="destructive" className="text-xs">
-                              <AlertTriangle className="h-3 w-3 mr-1" />
-                              COI ({reviewer.coiSummary.conflictCount})
-                            </Badge>
-                          )}
+                          <COIBadge
+                            severity={(reviewer.coiSummary?.worstSeverity as ConflictSeverity) || null}
+                            conflictCount={reviewer.coiSummary?.conflictCount || 0}
+                            size="sm"
+                          />
                         </div>
 
                         {reviewer.affiliation && (
@@ -796,13 +935,55 @@ export default function ManuscriptDetailPage() {
                           </div>
                         )}
 
-                        {reviewer.assignedExpertise && reviewer.assignedExpertise.length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {reviewer.assignedExpertise.map((exp, i) => (
-                              <Badge key={i} variant="outline" className="text-xs">{exp}</Badge>
-                            ))}
+                        {/* Expertise Assignment Checkboxes */}
+                        {manuscriptExpertise.length > 0 && (
+                          <div className="mt-2 p-2 bg-blue-50/50 rounded-lg border border-blue-200">
+                            <p className="text-xs font-medium text-blue-800 mb-1.5">Covers expertise:</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {manuscriptExpertise.map(exp => {
+                                const isChecked = (assignedExpertise[reviewer.id] || []).includes(exp);
+                                return (
+                                  <button key={exp}
+                                    onClick={() => toggleExpertise(reviewer.id, exp)}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                                      isChecked
+                                        ? "bg-green-100 text-green-800 border-green-300"
+                                        : "bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-700"
+                                    }`}>
+                                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
+                                      isChecked ? "bg-green-600 border-green-600" : "border-gray-400"
+                                    }`}>
+                                      {isChecked && <Check className="h-2.5 w-2.5 text-white" />}
+                                    </div>
+                                    {exp}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
+
+                        <div className="flex flex-col gap-1 text-xs pt-1">
+                          <div className="flex items-center gap-1.5">
+                            <Mail className="h-3 w-3 text-gray-400 shrink-0" />
+                            {reviewer.email ? (
+                              <a href={`mailto:${reviewer.email}`} className="text-blue-600 hover:underline truncate">{reviewer.email}</a>
+                            ) : (
+                              <span className="text-gray-400 italic">No public email</span>
+                            )}
+                          </div>
+                          {reviewer.verificationUrls?.institutionProfileUrl ? (
+                            <div className="flex items-center gap-1.5">
+                              <Building className="h-3 w-3 text-green-500 shrink-0" />
+                              <a href={reviewer.verificationUrls.institutionProfileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Institution Profile</a>
+                            </div>
+                          ) : reviewer.verificationUrls?.institutionSearchUrl && (
+                            <div className="flex items-center gap-1.5">
+                              <Building className="h-3 w-3 text-gray-400 shrink-0" />
+                              <a href={reviewer.verificationUrls.institutionSearchUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Search at institution</a>
+                            </div>
+                          )}
+                        </div>
 
                         {reviewer.verificationUrls && (
                           <div className="flex gap-2 pt-1">

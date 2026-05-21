@@ -5,7 +5,7 @@ import { downloadFile } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 /**
  * Sanitize error messages before storing in the database.
@@ -66,8 +66,14 @@ export async function POST(
       }
     }
 
-    // Check state — only process if not already processing/ready
-    if (manuscript.status === "READY") {
+    const { searchParams } = new URL(request.url);
+    const force = searchParams.get("force") === "true";
+
+    if (force && manuscript.extractedText) {
+      return await reextractMetadata(manuscriptId, manuscript);
+    }
+
+    if (manuscript.status === "READY" && !force) {
       return NextResponse.json({
         success: true,
         manuscriptId,
@@ -77,7 +83,6 @@ export async function POST(
     }
 
     if (["EXTRACTING", "PROCESSING", "EMBEDDING"].includes(manuscript.status)) {
-      // Allow re-processing if stuck for more than 5 minutes (function timed out)
       const staleMinutes = manuscript.processingStarted
         ? (Date.now() - new Date(manuscript.processingStarted).getTime()) / 60000
         : 999;
@@ -92,7 +97,6 @@ export async function POST(
       console.log(`[Process] Stale processing detected (${staleMinutes.toFixed(0)} min), re-processing`);
     }
 
-    // Must have a storagePath (from the init step)
     if (!manuscript.storagePath) {
       return NextResponse.json(
         { error: "No storage path found — was the file uploaded?" },
@@ -100,7 +104,6 @@ export async function POST(
       );
     }
 
-    // Update status to EXTRACTING
     await prisma.manuscript.update({
       where: { id: manuscriptId },
       data: {
@@ -110,7 +113,6 @@ export async function POST(
       },
     });
 
-    // Create processing job
     await prisma.processingJob.create({
       data: {
         manuscriptId,
@@ -119,11 +121,6 @@ export async function POST(
       },
     });
 
-    // Run the processing pipeline in-line (NOT fire-and-forget).
-    // The client polls /api/manuscripts/[id]/status and doesn't need an
-    // instant response. Keeping the function alive until processing finishes
-    // (or maxDuration is hit) is more reliable on Vercel than fire-and-forget
-    // which can be silently killed after the response is sent.
     try {
       await processManuscriptFromStorage(
         manuscriptId,
@@ -393,5 +390,80 @@ async function processManuscriptFromStorage(
         completedAt: new Date(),
       },
     });
+  }
+}
+
+/**
+ * Fast path for force-reprocessing: skip file download and text extraction,
+ * only re-run LLM metadata extraction using already-stored text.
+ */
+async function reextractMetadata(
+  manuscriptId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  manuscript: any
+): Promise<Response> {
+  try {
+    const { extractReferencesFromText } = await import("@/lib/manuscript/metadata-extractor");
+
+    console.log(`[Process] Fast reprocess: re-extracting references for ${manuscriptId}`);
+
+    await prisma.manuscriptReference.deleteMany({ where: { manuscriptId } });
+
+    const refs = await extractReferencesFromText(manuscript.extractedText);
+
+    await prisma.manuscript.update({
+      where: { id: manuscriptId },
+      data: {
+        referenceCount: refs.length,
+        status: "READY",
+        processingEnded: new Date(),
+      },
+    });
+
+    if (refs.length > 0) {
+      await prisma.manuscriptReference.createMany({
+        data: refs.map((ref) => ({
+          manuscriptId,
+          publisherId: manuscript.publisherId,
+          refNumber: ref.number,
+          rawText: ref.rawText,
+          authors: ref.authors,
+          title: ref.title,
+          journal: ref.journal,
+          year: ref.year,
+          volume: ref.volume,
+          issue: ref.issue,
+          pages: ref.pages,
+          doi: ref.doi,
+          pmid: ref.pmid,
+          pmcid: ref.pmcid,
+          arxivId: ref.arxivId,
+          url: ref.url,
+          refType: ref.refType,
+        })),
+      });
+    }
+
+    console.log(`[Process] Fast reprocess complete: ${refs.length} references`);
+
+    return NextResponse.json({
+      success: true,
+      manuscriptId,
+      status: "READY",
+      message: `Reprocessed: ${refs.length} references extracted`,
+    });
+  } catch (error) {
+    console.error(`[Process] Fast reprocess failed for ${manuscriptId}:`, error);
+    await prisma.manuscript.update({
+      where: { id: manuscriptId },
+      data: { status: "READY", processingEnded: new Date() },
+    }).catch(() => {});
+
+    return NextResponse.json({
+      success: false,
+      manuscriptId,
+      status: "ERROR",
+      message: sanitizeErrorForStorage(error),
+    }, { status: 500 });
   }
 }

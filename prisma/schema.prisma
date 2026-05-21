@@ -4,6 +4,7 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
+  binaryTargets   = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -100,6 +101,7 @@ model User {
 
   // Manuscript relations
   uploadedManuscripts   Manuscript[]           @relation("UploadedManuscripts")
+  assignedManuscripts   Manuscript[]           @relation("AssignedManuscripts")
   manuscriptPermissions ManuscriptPermission[] @relation("ManuscriptPermissions")
   grantedPermissions    ManuscriptPermission[] @relation("GrantedPermissions")
 
@@ -345,9 +347,10 @@ model Manuscript {
   id String @id @default(cuid())
 
   // === OWNERSHIP (Multi-tenancy) ===
-  publisherId String // Required: Publisher isolation
-  journalId   String? // Optional: May be unassigned initially
-  uploaderId  String // Required: User who uploaded
+  publisherId      String  // Required: Publisher isolation
+  journalId        String? // Optional: May be unassigned initially
+  uploaderId       String  // Required: User who uploaded
+  assignedEditorId String? // Editor responsible for this manuscript
 
   // === FILE INFO ===
   fileName     String
@@ -425,7 +428,8 @@ model Manuscript {
   // === RELATIONSHIPS ===
   publisher   Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
   journal     Journal?  @relation(fields: [journalId], references: [id], onDelete: SetNull)
-  uploader    User      @relation("UploadedManuscripts", fields: [uploaderId], references: [id], onDelete: Cascade)
+  uploader       User  @relation("UploadedManuscripts", fields: [uploaderId], references: [id], onDelete: Cascade)
+  assignedEditor User? @relation("AssignedManuscripts", fields: [assignedEditorId], references: [id], onDelete: SetNull)
   
   authors       ManuscriptAuthor[]
   affiliations  ManuscriptAffiliation[]
@@ -898,6 +902,7 @@ model ManuscriptReviewer {
   name      String
   firstName String?
   lastName  String?
+  email     String?
 
   // Professional info
   affiliation String?

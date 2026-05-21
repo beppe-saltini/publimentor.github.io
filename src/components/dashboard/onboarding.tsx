@@ -21,15 +21,17 @@ import {
   User,
 } from "lucide-react";
 import { toast } from "sonner";
+import { isSuperuser } from "@/lib/superuser";
 
 interface OnboardingProps {
   userName?: string;
+  userEmail?: string | null;
 }
 
 type OnboardingStep = "welcome" | "role" | "publisher" | "journal" | "favourites" | "done";
 type UserRole = "AUTHOR" | "EDITOR" | "PUBLISHER";
 
-export function Onboarding({ userName }: OnboardingProps) {
+export function Onboarding({ userName, userEmail }: OnboardingProps) {
   const router = useRouter();
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -108,7 +110,7 @@ export function Onboarding({ userName }: OnboardingProps) {
 
       setCreatedPublisherId(data.publisher?.id || data.id);
       toast.success("Organization created successfully!");
-      setStep("journal");
+      setStep(isSuperuser(userEmail) ? "journal" : "done");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create organization");
     } finally {

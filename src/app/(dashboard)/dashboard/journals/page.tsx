@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { isSuperuser } from "@/lib/superuser";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,12 +35,14 @@ export default async function JournalsPage() {
           <h1 className="text-3xl font-bold">My Journals</h1>
           <p className="text-gray-500 mt-1">Manage journals you are a member of</p>
         </div>
-        <Button asChild>
-          <Link href="/dashboard/journals/new">
-            <Plus className="h-4 w-4 mr-2" />
-            Create Journal
-          </Link>
-        </Button>
+        {isSuperuser(session?.user?.email) && (
+          <Button asChild>
+            <Link href="/dashboard/journals/new">
+              <Plus className="h-4 w-4 mr-2" />
+              Create Journal
+            </Link>
+          </Button>
+        )}
       </div>
 
       {journals.length === 0 ? (
@@ -50,12 +53,14 @@ export default async function JournalsPage() {
             <CardDescription className="text-center mb-4">
               Create your first journal or wait to be invited to one
             </CardDescription>
-            <Button asChild>
-              <Link href="/dashboard/journals/new">
-                <Plus className="h-4 w-4 mr-2" />
-                Create Journal
-              </Link>
-            </Button>
+            {isSuperuser(session?.user?.email) && (
+              <Button asChild>
+                <Link href="/dashboard/journals/new">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Journal
+                </Link>
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (

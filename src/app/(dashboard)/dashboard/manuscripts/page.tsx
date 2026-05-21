@@ -7,8 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ManuscriptUploadForm } from "@/components/manuscript";
 import { 
   FileText, Clock, Loader2, 
-  Upload, List, Eye, Trash2, Users, BookOpen
+  Upload, List, Eye, Trash2, Users, BookOpen, Plus, Sparkles
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -57,6 +60,13 @@ export default function ManuscriptsPage() {
   
   // For demo: use a default publisher (in production, get from context/selection)
   const [defaultPublisherId, setDefaultPublisherId] = useState<string | null>(null);
+  
+  // Manual creation form state
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualAbstract, setManualAbstract] = useState("");
+  const [manualKeywords, setManualKeywords] = useState("");
+  const [isCreatingManual, setIsCreatingManual] = useState(false);
+  const [isSuggestingKeywords, setIsSuggestingKeywords] = useState(false);
 
   // Fetch manuscripts
   const fetchManuscripts = async (page = 1) => {
@@ -157,6 +167,84 @@ export default function ManuscriptsPage() {
     }
   };
 
+  // Handle manual manuscript creation
+  const handleCreateManual = async () => {
+    if (!manualTitle.trim()) {
+      toast.error("Please enter a manuscript title");
+      return;
+    }
+    if (!defaultPublisherId) {
+      toast.error("Publisher not ready yet, please wait");
+      return;
+    }
+
+    setIsCreatingManual(true);
+    try {
+      const keywords = manualKeywords
+        .split(",")
+        .map(k => k.trim())
+        .filter(Boolean);
+
+      const response = await fetch("/api/manuscripts/create-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: manualTitle.trim(),
+          abstract: manualAbstract.trim() || undefined,
+          keywords,
+          publisherId: defaultPublisherId,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to create manuscript");
+
+      toast.success("Manuscript created successfully!");
+      setManualTitle("");
+      setManualAbstract("");
+      setManualKeywords("");
+      setActiveTab("list");
+      fetchManuscripts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create manuscript");
+    } finally {
+      setIsCreatingManual(false);
+    }
+  };
+
+  const handleSuggestKeywords = async () => {
+    const text = manualAbstract.trim() || manualTitle.trim();
+    if (text.length < 20) {
+      toast.error("Please enter at least a title or abstract to suggest keywords");
+      return;
+    }
+    setIsSuggestingKeywords(true);
+    try {
+      const response = await fetch("/api/manuscripts/suggest-keywords", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to suggest keywords");
+      if (data.keywords?.length > 0) {
+        const existing = manualKeywords
+          .split(",")
+          .map((k: string) => k.trim())
+          .filter(Boolean);
+        const merged = [...new Set([...existing, ...data.keywords])];
+        setManualKeywords(merged.join(", "));
+        toast.success(`Suggested ${data.keywords.length} keywords`);
+      } else {
+        toast.info("No keywords could be extracted from the text");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to suggest keywords");
+    } finally {
+      setIsSuggestingKeywords(false);
+    }
+  };
+
   // Format file size
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -184,6 +272,10 @@ export default function ManuscriptsPage() {
             <Upload className="h-4 w-4 mr-2" />
             Upload New
           </TabsTrigger>
+          <TabsTrigger value="manual">
+            <Plus className="h-4 w-4 mr-2" />
+            Create Manual
+          </TabsTrigger>
         </TabsList>
 
         {/* Upload Tab */}
@@ -204,6 +296,80 @@ export default function ManuscriptsPage() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* Create Manual Tab */}
+        <TabsContent value="manual" className="mt-6">
+          <Card>
+            <CardContent className="py-6 space-y-4 max-w-xl">
+              <div>
+                <h3 className="text-lg font-semibold mb-1">Create Manuscript Manually</h3>
+                <p className="text-sm text-gray-500">
+                  Enter a title and optionally paste the abstract. Keywords can be suggested automatically
+                  or entered manually. You can find reviewers and run COI checks right away.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manual-title">Title *</Label>
+                <Input
+                  id="manual-title"
+                  placeholder="Enter manuscript title..."
+                  value={manualTitle}
+                  onChange={(e) => setManualTitle(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manual-abstract">Abstract</Label>
+                <Textarea
+                  id="manual-abstract"
+                  placeholder="Paste the abstract here to get keyword suggestions..."
+                  value={manualAbstract}
+                  onChange={(e) => setManualAbstract(e.target.value)}
+                  rows={6}
+                  className="resize-y"
+                />
+                <p className="text-xs text-gray-400">
+                  {manualAbstract.trim().split(/\s+/).filter(Boolean).length} words
+                </p>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="manual-keywords">Keywords</Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSuggestKeywords}
+                    disabled={isSuggestingKeywords || (!manualAbstract.trim() && !manualTitle.trim())}
+                  >
+                    {isSuggestingKeywords ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Suggest Keywords
+                  </Button>
+                </div>
+                <Input
+                  id="manual-keywords"
+                  placeholder="e.g. KRAS, lung cancer, PIK3CA (comma-separated)"
+                  value={manualKeywords}
+                  onChange={(e) => setManualKeywords(e.target.value)}
+                />
+                <p className="text-xs text-gray-400">Separate keywords with commas. These are used for reviewer matching and expertise tracking.</p>
+              </div>
+              <Button
+                onClick={handleCreateManual}
+                disabled={isCreatingManual || !manualTitle.trim()}
+              >
+                {isCreatingManual ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-2" />
+                )}
+                Create Manuscript
+              </Button>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* List Tab */}
@@ -270,9 +436,11 @@ export default function ManuscriptsPage() {
                               {manuscript.referenceCount} refs
                             </span>
                           )}
-                          <span className="text-gray-400">
-                            {formatSize(manuscript.fileSize)}
-                          </span>
+                          {manuscript.fileType !== "manual" && (
+                            <span className="text-gray-400">
+                              {formatSize(manuscript.fileSize)}
+                            </span>
+                          )}
                         </div>
 
                         {manuscript.statusMessage && manuscript.status === "ERROR" && (

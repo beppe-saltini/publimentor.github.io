@@ -42,7 +42,6 @@ export async function GET(
         },
         references: {
           orderBy: { refNumber: "asc" },
-          take: 50, // Limit references returned
         },
         processingJobs: {
           orderBy: { createdAt: "desc" },

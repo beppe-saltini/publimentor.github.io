@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Search, BookOpen, ArrowRight, Loader2 } from "lucide-react";
+import { isSuperuser } from "@/lib/superuser";
 
 interface JournalOption {
   id: string;
@@ -16,6 +18,7 @@ interface JournalOption {
 
 export default function StandaloneReviewerFinderPage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [journals, setJournals] = useState<JournalOption[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [loading, setLoading] = useState(true);
@@ -82,9 +85,11 @@ export default function StandaloneReviewerFinderPage() {
               <p className="text-sm text-gray-600">
                 You don&apos;t have any journals yet. Create one to start finding reviewers.
               </p>
-              <Button onClick={() => router.push("/dashboard/journals/new")}>
-                Create Journal
-              </Button>
+              {isSuperuser(session?.user?.email) && (
+                <Button onClick={() => router.push("/dashboard/journals/new")}>
+                  Create Journal
+                </Button>
+              )}
             </div>
           ) : (
             <>

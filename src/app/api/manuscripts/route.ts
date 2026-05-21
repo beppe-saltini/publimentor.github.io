@@ -102,7 +102,7 @@ export async function GET(request: Request) {
             {
               OR: [
                 { uploaderId: session.user.id },
-                { publisherId: { in: publisherIds } },
+                { assignedEditorId: session.user.id },
                 { id: { in: permittedIds } },
               ],
             },
@@ -140,7 +140,7 @@ export async function GET(request: Request) {
             {
               OR: [
                 { uploaderId: session.user.id },
-                { publisherId: { in: publisherIds } },
+                { assignedEditorId: session.user.id },
                 { id: { in: permittedIds } },
               ],
             },
