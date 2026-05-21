@@ -2,11 +2,11 @@
 
 import { Loader2, BookOpen } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { EditorManuscriptsList } from "@/components/editor/editor-manuscripts-list";
+import { ManuscriptsPageContent } from "@/components/manuscript/manuscripts-page-content";
 import { useEditorContext } from "@/hooks/use-editor-context";
 
 export default function EditorManuscriptsPage() {
-  const { hasJournal, journalId, loading } = useEditorContext();
+  const { hasJournal, journalId, publisherId, loading } = useEditorContext();
 
   if (loading) {
     return (
@@ -35,12 +35,17 @@ export default function EditorManuscriptsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">My manuscripts</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Manuscripts</h1>
         <p className="text-gray-600 mt-1">
-          Manuscripts you have uploaded or worked on as an editor.
+          Upload, create, and manage manuscripts in your workspace.
         </p>
       </div>
-      <EditorManuscriptsList journalId={journalId} />
+      <ManuscriptsPageContent
+        journalId={journalId}
+        publisherId={publisherId}
+        showPageHeader={false}
+        getDetailHref={(id) => `/dashboard/editor/manuscripts/${id}`}
+      />
     </div>
   );
 }
