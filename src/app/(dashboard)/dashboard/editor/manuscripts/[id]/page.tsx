@@ -115,6 +115,24 @@ export default function EditorManuscriptDetailPage() {
           <AlertTriangle className="h-4 w-4 mr-2" />
           COI check
         </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            sessionStorage.setItem("active_manuscript_id", id);
+            router.push("/dashboard/editor/integrity");
+          }}
+        >
+          Integrity check
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            sessionStorage.setItem("active_manuscript_id", id);
+            router.push("/dashboard/editor/format");
+          }}
+        >
+          Format check
+        </Button>
       </div>
 
       <Card>

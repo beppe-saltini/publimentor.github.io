@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, Search, AlertTriangle, FileText } from "lucide-react";
+import { LogOut, User, Search, AlertTriangle, FileText, Shield, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SimpleShellProps {
@@ -23,8 +23,10 @@ interface SimpleShellProps {
 
 const NAV_ITEMS = [
   { href: "/dashboard/editor/reviewers", label: "Find reviewers", icon: Search },
-  { href: "/dashboard/editor/coi", label: "COI check", icon: AlertTriangle },
-  { href: "/dashboard/editor/manuscripts", label: "My manuscripts", icon: FileText },
+  { href: "/dashboard/editor/coi", label: "COI", icon: AlertTriangle },
+  { href: "/dashboard/editor/integrity", label: "Integrity", icon: Shield },
+  { href: "/dashboard/editor/format", label: "Format", icon: CheckSquare },
+  { href: "/dashboard/editor/manuscripts", label: "Manuscripts", icon: FileText },
 ] as const;
 
 export function SimpleShell({ children }: SimpleShellProps) {
