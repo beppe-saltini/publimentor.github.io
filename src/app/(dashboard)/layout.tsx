@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashboardNestedLayout } from "@/components/dashboard/dashboard-nested-layout";
 
 export default async function DashboardLayout({
   children,
@@ -13,5 +13,5 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  return <DashboardShell>{children}</DashboardShell>;
+  return <DashboardNestedLayout>{children}</DashboardNestedLayout>;
 }

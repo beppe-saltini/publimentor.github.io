@@ -51,10 +51,11 @@ export async function POST(request: Request) {
 
     // Parse JSON body
     const body = await request.json();
-    const { publisherId, fileName, fileSize } = body as {
+    const { publisherId, fileName, fileSize, journalId } = body as {
       publisherId?: string;
       fileName?: string;
       fileSize?: number;
+      journalId?: string;
     };
 
     console.log("[UploadInit] request", { publisherId: !!publisherId, fileName, fileSize });
@@ -105,6 +106,18 @@ export async function POST(request: Request) {
       );
     }
 
+    if (journalId) {
+      const journalMember = await prisma.journalMember.findFirst({
+        where: { userId: session.user.id, journalId },
+      });
+      if (!journalMember) {
+        return NextResponse.json(
+          { error: "You don't have access to this journal" },
+          { status: 403 }
+        );
+      }
+    }
+
     // Check Supabase availability
     if (!isSupabaseConfigured()) {
       return NextResponse.json(
@@ -117,7 +130,9 @@ export async function POST(request: Request) {
     const manuscript = await prisma.manuscript.create({
       data: {
         publisherId,
+        journalId: journalId || null,
         uploaderId: session.user.id,
+        assignedEditorId: session.user.id,
         fileName: sanitizedFileName,
         fileType: extension,
         fileMimeType: mimeType,
@@ -131,6 +146,7 @@ export async function POST(request: Request) {
     // Generate the storage path and signed upload URL
     const storagePath = generateStoragePath({
       publisherId,
+      journalId,
       manuscriptId: manuscript.id,
       fileName: sanitizedFileName,
       mimeType,

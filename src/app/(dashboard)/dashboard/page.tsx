@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { isSuperuser } from "@/lib/superuser";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +14,15 @@ export default async function DashboardPage() {
 
   if (!userId) {
     redirect("/login");
+  }
+
+  const userForRedirect = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+
+  if (userForRedirect?.role === "EDITOR") {
+    redirect("/dashboard/editor/reviewers");
   }
 
   // Default values
@@ -77,7 +87,7 @@ export default async function DashboardPage() {
         deletedAt: null,
         OR: [
           { uploaderId: userId },
-          ...(publisherIds.length > 0 ? [{ publisherId: { in: publisherIds } }] : []),
+          { assignedEditorId: userId },
         ],
       },
       include: {
@@ -154,16 +164,18 @@ export default async function DashboardPage() {
 
       {/* Stats cards */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Manuscripts</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{manuscriptCount}</div>
-            <p className="text-xs text-muted-foreground">Uploaded manuscripts</p>
-          </CardContent>
-        </Card>
+        <Link href="/dashboard/manuscripts">
+          <Card className="cursor-pointer hover:shadow-md transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Manuscripts</CardTitle>
+              <FileText className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{manuscriptCount}</div>
+              <p className="text-xs text-muted-foreground">Uploaded manuscripts</p>
+            </CardContent>
+          </Card>
+        </Link>
 
         {manuscripts.length > 0 && (
           <Card>
@@ -267,13 +279,15 @@ export default async function DashboardPage() {
                   <span className="text-xs text-gray-500">Screen manuscripts</span>
                 </Link>
               </Button>
-              <Button variant="outline" className="h-auto py-4 flex-col items-start text-left" asChild>
-                <Link href="/dashboard/journals/new">
-                  <Plus className="h-5 w-5 mb-1 text-gray-600" />
-                  <span className="font-medium">Create Journal</span>
-                  <span className="text-xs text-gray-500">Set up a new journal</span>
-                </Link>
-              </Button>
+              {isSuperuser(session?.user?.email) && (
+                <Button variant="outline" className="h-auto py-4 flex-col items-start text-left" asChild>
+                  <Link href="/dashboard/journals/new">
+                    <Plus className="h-5 w-5 mb-1 text-gray-600" />
+                    <span className="font-medium">Create Journal</span>
+                    <span className="text-xs text-gray-500">Set up a new journal</span>
+                  </Link>
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -390,12 +404,14 @@ export default async function DashboardPage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">Recent Journals</h2>
-            <Button asChild>
-              <Link href="/dashboard/journals/new">
-                <Plus className="h-4 w-4 mr-2" />
-                Create Journal
-              </Link>
-            </Button>
+            {isSuperuser(session?.user?.email) && (
+              <Button asChild>
+                <Link href="/dashboard/journals/new">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Journal
+                </Link>
+              </Button>
+            )}
           </div>
 
           {recentJournals.length === 0 ? (
@@ -407,12 +423,14 @@ export default async function DashboardPage() {
                   Add favourite journals to quickly check formatting and find reviewers
                 </CardDescription>
                 <div className="flex gap-3">
-                  <Button asChild>
-                    <Link href="/dashboard/journals/new">
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create Journal
-                    </Link>
-                  </Button>
+                  {isSuperuser(session?.user?.email) && (
+                    <Button asChild>
+                      <Link href="/dashboard/journals/new">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Create Journal
+                      </Link>
+                    </Button>
+                  )}
                   <Button variant="outline" asChild>
                     <Link href="/dashboard/favourites">
                       <Heart className="h-4 w-4 mr-2" />

@@ -22,6 +22,7 @@ export const PROTECTED_ROUTES = [
   "/api/integrity",
   "/api/files",
   "/api/user",
+  "/api/editor",
 ];
 
 export const authConfig: NextAuthConfig = {
