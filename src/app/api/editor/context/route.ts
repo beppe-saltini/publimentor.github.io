@@ -21,6 +21,7 @@ export async function GET() {
       return NextResponse.json({
         hasJournal: false,
         journalId: null,
+        journalSlug: null,
         publisherId: null,
       });
     }
@@ -28,6 +29,7 @@ export async function GET() {
     return NextResponse.json({
       hasJournal: true,
       journalId: ctx.journalId,
+      journalSlug: ctx.journalSlug,
       publisherId: ctx.publisherId,
     });
   } catch (error) {

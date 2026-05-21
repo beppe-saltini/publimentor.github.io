@@ -1,38 +1,55 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, BookOpen } from "lucide-react";
 import { ManuscriptInputPanel, type ManuscriptReadyData } from "@/components/editor/manuscript-input-panel";
 import { SimpleReviewerFinder } from "@/components/editor/simple-reviewer-finder";
+import { useEditorContext } from "@/hooks/use-editor-context";
 
-export default function EditorReviewersPage() {
-  const [loading, setLoading] = useState(true);
-  const [hasJournal, setHasJournal] = useState(false);
-  const [publisherId, setPublisherId] = useState<string | null>(null);
-  const [journalId, setJournalId] = useState<string | null>(null);
+function EditorReviewersContent() {
+  const searchParams = useSearchParams();
+  const manuscriptIdParam = searchParams.get("manuscriptId");
+  const { hasJournal, publisherId, journalId, loading } = useEditorContext();
   const [manuscriptData, setManuscriptData] = useState<ManuscriptReadyData | null>(null);
+  const [loadingManuscript, setLoadingManuscript] = useState(!!manuscriptIdParam);
 
   useEffect(() => {
-    const loadContext = async () => {
+    if (!manuscriptIdParam) {
+      setLoadingManuscript(false);
+      return;
+    }
+
+    const load = async () => {
       try {
-        const res = await fetch("/api/editor/context");
+        const res = await fetch(`/api/manuscripts/${manuscriptIdParam}`);
         const data = await res.json();
-        if (res.ok) {
-          setHasJournal(data.hasJournal);
-          setPublisherId(data.publisherId ?? null);
-          setJournalId(data.journalId ?? null);
+        if (res.ok && data.manuscript) {
+          const ms = data.manuscript;
+          setManuscriptData({
+            manuscriptId: ms.id,
+            title: ms.title,
+            abstract: ms.abstract || "",
+            keywords: ms.keywords || [],
+            authors: (ms.authors || []).map(
+              (a: { fullName?: string; name?: string }) => ({
+                name: a.fullName || a.name || "",
+              })
+            ),
+          });
+          sessionStorage.setItem("active_manuscript_id", ms.id);
         }
       } catch (err) {
-        console.error("Failed to load editor context:", err);
+        console.error("Failed to load manuscript:", err);
       } finally {
-        setLoading(false);
+        setLoadingManuscript(false);
       }
     };
-    loadContext();
-  }, []);
+    load();
+  }, [manuscriptIdParam]);
 
-  if (loading) {
+  if (loading || loadingManuscript) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
@@ -80,5 +97,13 @@ export default function EditorReviewersPage() {
 
       <SimpleReviewerFinder manuscriptData={manuscriptData} />
     </div>
+  );
+}
+
+export default function EditorReviewersPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64">Loading...</div>}>
+      <EditorReviewersContent />
+    </Suspense>
   );
 }

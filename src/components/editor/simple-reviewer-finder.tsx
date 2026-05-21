@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ interface SimpleReviewerFinderProps {
 }
 
 export function SimpleReviewerFinder({ manuscriptData }: SimpleReviewerFinderProps) {
+  const router = useRouter();
   const [keywords, setKeywords] = useState("");
   const [authorList, setAuthorList] = useState("");
   const [isFinding, setIsFinding] = useState(false);
@@ -182,6 +184,30 @@ export function SimpleReviewerFinder({ manuscriptData }: SimpleReviewerFinderPro
               className="font-mono text-sm"
             />
           </div>
+
+          {candidates.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const names = candidates.map((r) => r.name).join("\n");
+                sessionStorage.setItem("coi_reviewers_import", names);
+                if (manuscriptData?.authors.length) {
+                  sessionStorage.setItem(
+                    "coi_authors_import",
+                    manuscriptData.authors.map((a) => a.name).join("\n")
+                  );
+                }
+                if (manuscriptId) {
+                  sessionStorage.setItem("coi_manuscript_id", manuscriptId);
+                }
+                router.push("/dashboard/editor/coi");
+              }}
+            >
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              Check COI for these reviewers
+            </Button>
+          )}
 
           <Button
             onClick={handleFindReviewers}
