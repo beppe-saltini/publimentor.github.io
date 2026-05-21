@@ -83,15 +83,20 @@ export async function GET(request: Request) {
       where.publisherId = publisherId;
     }
 
-    // Add journal filter if specified
-    if (journalId) {
-      where.journalId = journalId;
-    }
-
     // Add status filter if specified
     if (status) {
       where.status = status;
     }
+
+    // Journal scope: match journal OR user's own uploads not yet linked to a journal
+    const journalScope = journalId
+      ? {
+          OR: [
+            { journalId },
+            { journalId: null, uploaderId: session.user.id },
+          ],
+        }
+      : {};
 
     // Get manuscripts (exclude soft-deleted)
     const [manuscripts, total] = await Promise.all([
@@ -107,7 +112,7 @@ export async function GET(request: Request) {
               ],
             },
             where.publisherId ? { publisherId: where.publisherId } : {},
-            where.journalId ? { journalId: where.journalId } : {},
+            journalScope,
             where.status ? { status: where.status as any } : {},
           ],
         },
@@ -145,7 +150,7 @@ export async function GET(request: Request) {
               ],
             },
             where.publisherId ? { publisherId: where.publisherId } : {},
-            where.journalId ? { journalId: where.journalId } : {},
+            journalScope,
             where.status ? { status: where.status as any } : {},
           ],
         },

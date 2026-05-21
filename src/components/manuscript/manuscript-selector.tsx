@@ -132,7 +132,8 @@ export function ManuscriptSelector({
     if (open) {
       fetchManuscripts();
     }
-  }, [open]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, journalId]);
 
   // Fetch selected manuscript details when value changes
   useEffect(() => {
@@ -144,7 +145,11 @@ export function ManuscriptSelector({
   const fetchManuscripts = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/manuscripts?status=READY&limit=50");
+      const params = new URLSearchParams({ status: "READY", limit: "50" });
+      if (journalId) {
+        params.set("journalId", journalId);
+      }
+      const response = await fetch(`/api/manuscripts?${params}`);
       const text = await response.text();
       const data = JSON.parse(text);
       if (response.ok) {
@@ -222,6 +227,7 @@ export function ManuscriptSelector({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           publisherId,
+          journalId: journalId || undefined,
           fileName: file.name,
           fileSize: file.size,
         }),

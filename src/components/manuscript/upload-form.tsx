@@ -83,7 +83,12 @@ export function ManuscriptUploadForm({
       const initRes = await fetch("/api/manuscripts/upload/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publisherId, fileName: file.name, fileSize: file.size }),
+        body: JSON.stringify({
+          publisherId,
+          journalId: journalId || undefined,
+          fileName: file.name,
+          fileSize: file.size,
+        }),
       });
       const initText = await initRes.text();
       const initData = JSON.parse(initText);
