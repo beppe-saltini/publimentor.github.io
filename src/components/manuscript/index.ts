@@ -4,3 +4,8 @@ export {
   ManuscriptsPageContent,
   type ManuscriptsPageContentProps,
 } from "./manuscripts-page-content";
+export {
+  ManuscriptDetailContent,
+  type ManuscriptDetailContentProps,
+  type ManuscriptDetailRoutes,
+} from "./manuscript-detail-content";
