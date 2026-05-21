@@ -1,55 +1,15 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Suspense } from "react";
 import { Loader2, BookOpen } from "lucide-react";
-import { ManuscriptInputPanel, type ManuscriptReadyData } from "@/components/editor/manuscript-input-panel";
-import { SimpleReviewerFinder } from "@/components/editor/simple-reviewer-finder";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ReviewerSearchContent } from "@/components/reviewers/reviewer-search-content";
 import { useEditorContext } from "@/hooks/use-editor-context";
 
 function EditorReviewersContent() {
-  const searchParams = useSearchParams();
-  const manuscriptIdParam = searchParams.get("manuscriptId");
-  const { hasJournal, publisherId, journalId, loading } = useEditorContext();
-  const [manuscriptData, setManuscriptData] = useState<ManuscriptReadyData | null>(null);
-  const [loadingManuscript, setLoadingManuscript] = useState(!!manuscriptIdParam);
+  const { hasJournal, journalSlug, publisherId, journalId, loading } = useEditorContext();
 
-  useEffect(() => {
-    if (!manuscriptIdParam) {
-      setLoadingManuscript(false);
-      return;
-    }
-
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/manuscripts/${manuscriptIdParam}`);
-        const data = await res.json();
-        if (res.ok && data.manuscript) {
-          const ms = data.manuscript;
-          setManuscriptData({
-            manuscriptId: ms.id,
-            title: ms.title,
-            abstract: ms.abstract || "",
-            keywords: ms.keywords || [],
-            authors: (ms.authors || []).map(
-              (a: { fullName?: string; name?: string }) => ({
-                name: a.fullName || a.name || "",
-              })
-            ),
-          });
-          sessionStorage.setItem("active_manuscript_id", ms.id);
-        }
-      } catch (err) {
-        console.error("Failed to load manuscript:", err);
-      } finally {
-        setLoadingManuscript(false);
-      }
-    };
-    load();
-  }, [manuscriptIdParam]);
-
-  if (loading || loadingManuscript) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
@@ -57,7 +17,7 @@ function EditorReviewersContent() {
     );
   }
 
-  if (!hasJournal) {
+  if (!hasJournal || !journalSlug) {
     return (
       <Card className="max-w-lg mx-auto mt-12">
         <CardHeader>
@@ -81,22 +41,12 @@ function EditorReviewersContent() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Find reviewers</h1>
-        <p className="text-gray-600 mt-1">
-          Provide your manuscript or research topic, then discover matching experts.
-        </p>
-      </div>
-
-      <ManuscriptInputPanel
-        publisherId={publisherId}
-        journalId={journalId}
-        onReady={(data) => setManuscriptData(data)}
-      />
-
-      <SimpleReviewerFinder manuscriptData={manuscriptData} />
-    </div>
+    <ReviewerSearchContent
+      journalSlug={journalSlug}
+      coiHref="/dashboard/editor/coi"
+      publisherId={publisherId}
+      journalId={journalId}
+    />
   );
 }
 
