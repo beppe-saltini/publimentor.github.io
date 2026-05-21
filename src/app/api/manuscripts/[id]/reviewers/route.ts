@@ -132,7 +132,7 @@ export async function POST(
             verificationUrls: reviewer.verificationUrls ?? undefined,
             llmAnalysis: reviewer.llmAnalysis ?? undefined,
             coiSummary: reviewer.coiSummary ?? undefined,
-            status: "SUGGESTED",
+            // Preserve SHORTLISTED / REJECTED when re-saving search results
           },
           create: {
             manuscriptId: id,

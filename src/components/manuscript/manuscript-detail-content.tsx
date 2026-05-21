@@ -327,6 +327,12 @@ export function ManuscriptDetailContent({
     [manuscriptExpertise, expertiseCoverage]
   );
 
+  const sortedReviewers = useMemo(() => {
+    const rank = (r: PersistedReviewer) =>
+      r.status === "SHORTLISTED" ? 0 : r.status === "SUGGESTED" ? 1 : 2;
+    return [...reviewers].sort((a, b) => rank(a) - rank(b));
+  }, [reviewers]);
+
   const toggleExpertise = (reviewerId: string, expertise: string) => {
     setAssignedExpertise(prev => {
       const current = prev[reviewerId] || [];
@@ -551,7 +557,7 @@ export function ManuscriptDetailContent({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {reviewers.slice(0, 6).map((reviewer) => (
+                  {sortedReviewers.slice(0, 6).map((reviewer) => (
                     <div key={reviewer.id} className={`border rounded-lg p-3 space-y-2 ${
                       reviewer.coiSummary?.hasConflict
                         ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)
@@ -921,7 +927,7 @@ export function ManuscriptDetailContent({
             </Card>
           ) : (
             <div className="space-y-3">
-              {reviewers.map((reviewer) => (
+              {sortedReviewers.map((reviewer) => (
                 <Card key={reviewer.id} className={
                   reviewer.coiSummary?.hasConflict
                     ? getCardBorderClass(reviewer.coiSummary.worstSeverity as ConflictSeverity, true)

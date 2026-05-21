@@ -143,6 +143,45 @@ interface DiscoveryResult {
   selectionCriteria: Record<string, string | boolean>;
 }
 
+type DbReviewerIndex = Record<string, { id: string; status: string }>;
+
+function normalizeReviewerName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function buildFlagsFromDbReviewers(
+  reviewers: Array<{ id: string; name: string; status: string }>
+): Record<string, "up" | "down" | null> {
+  const flags: Record<string, "up" | "down" | null> = {};
+  for (const r of reviewers) {
+    if (r.status === "SHORTLISTED") flags[r.id] = "up";
+    else if (r.status === "REJECTED") flags[r.id] = "down";
+  }
+  return flags;
+}
+
+function reviewerSortRank(
+  reviewer: { id: string; name: string },
+  flags: Record<string, "up" | "down" | null>,
+  dbIndex: DbReviewerIndex
+): number {
+  const key = normalizeReviewerName(reviewer.name);
+  if (flags[reviewer.id] === "up" || dbIndex[key]?.status === "SHORTLISTED") return 0;
+  if (flags[reviewer.id] === "down") return 2;
+  return 1;
+}
+
+function sortReviewersByShortlist<T extends { id: string; name: string }>(
+  reviewers: T[],
+  flags: Record<string, "up" | "down" | null>,
+  dbIndex: DbReviewerIndex
+): T[] {
+  return [...reviewers].sort(
+    (a, b) =>
+      reviewerSortRank(a, flags, dbIndex) - reviewerSortRank(b, flags, dbIndex)
+  );
+}
+
 export interface ReviewerSearchContentProps {
   journalSlug: string;
   /** COI route (journal shell vs editor shell) */
@@ -226,8 +265,9 @@ export function ReviewerSearchContent({
   const isRestoringFormRef = useRef(false);
   const restoredManuscriptRef = useRef<string | null>(null);
 
-  // Thumbs up/down flagging state
+  // Thumbs up/down flagging state (synced to DB status SHORTLISTED / REJECTED)
   const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | "down" | null>>({});
+  const [dbReviewerIndex, setDbReviewerIndex] = useState<DbReviewerIndex>({});
 
   // Reviewer responsiveness scoring (persisted in localStorage)
   const [reviewerScores, setReviewerScores] = useState<Record<string, { score: 1 | 2 | 3 | 4 | 5; note?: string }>>({});
@@ -255,11 +295,94 @@ export function ReviewerSearchContent({
     });
   };
 
-  const toggleFlag = (reviewerId: string, direction: "up" | "down") => {
-    setFlaggedReviewers(prev => ({
-      ...prev,
-      [reviewerId]: prev[reviewerId] === direction ? null : direction,
-    }));
+  const findReviewerNameById = useCallback(
+    (reviewerId: string): string | null => {
+      const fromDiscovery = discoveryResult?.reviewers.find((r) => r.id === reviewerId);
+      if (fromDiscovery) return fromDiscovery.name;
+      const fromQuick = candidateReviewers.find((r) => r.id === reviewerId);
+      if (fromQuick) return fromQuick.name;
+      return null;
+    },
+    [discoveryResult, candidateReviewers]
+  );
+
+  const toggleFlag = async (reviewerId: string, direction: "up" | "down") => {
+    const name = findReviewerNameById(reviewerId);
+    if (!name) return;
+
+    const current = flaggedReviewers[reviewerId];
+    const nextFlag: "up" | "down" | null = current === direction ? null : direction;
+    const dbId =
+      dbReviewerIndex[normalizeReviewerName(name)]?.id ?? reviewerId;
+
+    if (!selectedManuscriptId) {
+      setFlaggedReviewers((prev) => ({
+        ...prev,
+        [reviewerId]: nextFlag,
+      }));
+      return;
+    }
+
+    const status =
+      nextFlag === "up"
+        ? "SHORTLISTED"
+        : nextFlag === "down"
+          ? "REJECTED"
+          : "SUGGESTED";
+
+    setFlaggedReviewers((prev) => {
+      const updated = { ...prev };
+      delete updated[reviewerId];
+      if (dbId !== reviewerId) delete updated[dbId];
+      if (nextFlag) updated[dbId] = nextFlag;
+      return updated;
+    });
+
+    try {
+      const response = await fetch(
+        `/api/manuscripts/${selectedManuscriptId}/reviewers/${dbId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update reviewer");
+      }
+
+      setDbReviewerIndex((prev) => ({
+        ...prev,
+        [normalizeReviewerName(name)]: { id: dbId, status },
+      }));
+
+      if (status === "REJECTED") {
+        setDiscoveryResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                reviewers: prev.reviewers.filter(
+                  (r) => normalizeReviewerName(r.name) !== normalizeReviewerName(name)
+                ),
+              }
+            : null
+        );
+        setCandidateReviewers((prev) =>
+          prev.filter(
+            (r) => normalizeReviewerName(r.name) !== normalizeReviewerName(name)
+          )
+        );
+      }
+    } catch (err) {
+      console.error("[toggleFlag]", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to save reviewer preference"
+      );
+      if (selectedManuscriptId) {
+        loadPersistedReviewers(selectedManuscriptId);
+      }
+    }
   };
 
   // Expertise coverage tracking — keyed by reviewer ID
@@ -391,6 +514,25 @@ export function ReviewerSearchContent({
     [manuscriptExpertise, expertiseCoverage]
   );
 
+  const sortedDiscoveryReviewers = useMemo(() => {
+    if (!discoveryResult?.reviewers.length) return [];
+    return sortReviewersByShortlist(
+      discoveryResult.reviewers,
+      flaggedReviewers,
+      dbReviewerIndex
+    );
+  }, [discoveryResult, flaggedReviewers, dbReviewerIndex]);
+
+  const sortedCandidateReviewers = useMemo(
+    () =>
+      sortReviewersByShortlist(
+        candidateReviewers,
+        flaggedReviewers,
+        dbReviewerIndex
+      ),
+    [candidateReviewers, flaggedReviewers, dbReviewerIndex]
+  );
+
   const toggleExpertise = (reviewerId: string, expertise: string) => {
     setAssignedExpertise(prev => {
       const current = prev[reviewerId] || [];
@@ -445,51 +587,102 @@ export function ReviewerSearchContent({
       const response = await fetch(`/api/manuscripts/${manuscriptId}/reviewers`);
       const data = await response.json();
       if (response.ok && data.reviewers) {
-        const allReviewers = data.reviewers as Record<string, unknown>[];
-        const active = allReviewers.filter(r => r.status !== "REJECTED");
+        const allReviewers = data.reviewers as Array<{
+          id: string;
+          name: string;
+          status: string;
+          assignedExpertise?: string[] | null;
+          [key: string]: unknown;
+        }>;
+        const active = allReviewers.filter((r) => r.status !== "REJECTED");
+
+        const index: DbReviewerIndex = {};
+        for (const r of allReviewers) {
+          index[normalizeReviewerName(r.name)] = { id: r.id, status: r.status };
+        }
+        setDbReviewerIndex(index);
+
+        const flags = buildFlagsFromDbReviewers(allReviewers);
+        setFlaggedReviewers(flags);
 
         if (active.length > 0) {
           const mapped = active.map(mapDbReviewerToAdvanced);
-          const countries = [...new Set(mapped.map(r => r.country).filter(Boolean))];
+          const dbByName = new Map(
+            mapped.map((r) => [normalizeReviewerName(r.name), r])
+          );
+          const countries = [...new Set(mapped.map((r) => r.country).filter(Boolean))];
 
-          setDiscoveryResult(prev => {
-            const keptPrev = prev
-              ? prev.reviewers.filter(existing =>
-                  !mapped.some(m => m.name === existing.name))
-              : [];
-            const merged = [...keptPrev, ...mapped];
+          setDiscoveryResult((prev) => {
+            const mergedMap = new Map<string, AdvancedReviewer>();
+            for (const db of mapped) {
+              mergedMap.set(normalizeReviewerName(db.name), db);
+            }
+            for (const r of prev?.reviewers ?? []) {
+              const key = normalizeReviewerName(r.name);
+              const db = dbByName.get(key);
+              mergedMap.set(
+                key,
+                db ? { ...r, ...db, id: db.id } : r
+              );
+            }
+            const reviewers = sortReviewersByShortlist(
+              Array.from(mergedMap.values()),
+              flags,
+              index
+            );
+
             return {
-              reviewers: merged,
+              reviewers,
               summary: prev?.summary || {
-                totalFound: merged.length,
-                returned: merged.length,
-                criteria: { minPublications: 0, maxPublications: 100, yearsActive: 5, requireSeniorAuthor: false },
+                totalFound: reviewers.length,
+                returned: reviewers.length,
+                criteria: {
+                  minPublications: 0,
+                  maxPublications: 100,
+                  yearsActive: 5,
+                  requireSeniorAuthor: false,
+                },
                 diversity: { countries, countryCount: countries.length },
-                avgPublications: Math.round(merged.reduce((sum, r) => sum + r.publicationCount, 0) / (merged.length || 1)),
+                avgPublications: Math.round(
+                  reviewers.reduce((sum, r) => sum + r.publicationCount, 0) /
+                    (reviewers.length || 1)
+                ),
                 avgSeniorAuthorships: 0,
               },
               relatedConcepts: prev?.relatedConcepts || [],
-              disclaimer: prev?.disclaimer || "These are persisted reviewer suggestions. Verify suitability before invitation.",
+              disclaimer:
+                prev?.disclaimer ||
+                "These are persisted reviewer suggestions. Verify suitability before invitation.",
               selectionCriteria: prev?.selectionCriteria || {},
             };
           });
 
-          const flags: Record<string, "up" | "down" | null> = {};
-          active.forEach(r => {
-            if (r.status === "SHORTLISTED") flags[r.id as string] = "up";
+          setCandidateReviewers((prev) => {
+            const synced = prev.map((r) => {
+              const db = dbByName.get(normalizeReviewerName(r.name));
+              if (!db) return r;
+              return {
+                ...r,
+                id: db.id,
+                hIndex: db.hIndex ?? r.hIndex,
+                citedByCount: db.citationCount ?? r.citedByCount,
+                worksCount: db.publicationCount ?? r.worksCount,
+                affiliation: db.affiliation || r.affiliation,
+                coiSummary: db.coiSummary ?? r.coiSummary,
+              };
+            });
+            return sortReviewersByShortlist(synced, flags, index);
           });
-          setFlaggedReviewers(prev => ({ ...prev, ...flags }));
         }
 
         const expertiseMap: Record<string, string[]> = {};
-        allReviewers.forEach(r => {
-          const ae = r.assignedExpertise as string[] | null;
-          if (ae && ae.length > 0) {
-            expertiseMap[r.id as string] = ae;
+        allReviewers.forEach((r) => {
+          if (r.assignedExpertise && r.assignedExpertise.length > 0) {
+            expertiseMap[r.id] = r.assignedExpertise;
           }
         });
         if (Object.keys(expertiseMap).length > 0) {
-          setAssignedExpertise(prev => ({ ...prev, ...expertiseMap }));
+          setAssignedExpertise((prev) => ({ ...prev, ...expertiseMap }));
         }
       }
     } catch (error) {
@@ -726,6 +919,7 @@ export function ReviewerSearchContent({
           });
           const saveData = await saveRes.json();
           if (saveRes.ok) {
+            await loadPersistedReviewers(selectedManuscriptId);
             toast.success(
               `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
             );
@@ -822,6 +1016,7 @@ export function ReviewerSearchContent({
           });
           const saveData = await saveRes.json();
           if (saveRes.ok) {
+            await loadPersistedReviewers(msId);
             toast.success(
               `Found ${revCount} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
             );
@@ -1556,7 +1751,7 @@ export function ReviewerSearchContent({
 
               {/* Reviewer Cards */}
               <div className="grid gap-4 md:grid-cols-2">
-                {discoveryResult.reviewers.map((reviewer, index) => (
+                {sortedDiscoveryReviewers.map((reviewer, index) => (
                   <Card 
                     key={reviewer.id} 
                     className={`hover:shadow-md transition-shadow ${
@@ -2037,7 +2232,7 @@ export function ReviewerSearchContent({
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {candidateReviewers.map((reviewer) => {
+                {sortedCandidateReviewers.map((reviewer) => {
                   const coauthorCount = isCoauthor(reviewer.name);
                   const hasCoiConflict = reviewer.coiSummary?.hasConflict;
                   
