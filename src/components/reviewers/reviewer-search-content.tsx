@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,13 @@ import { ManuscriptSelector } from "@/components/manuscript";
 import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails, type ReviewerConflict } from "./coi-details";
 import type { ConflictSeverity } from "./coi-badge";
+import {
+  loadReviewerSearchFormState,
+  saveReviewerSearchFormState,
+  clearReviewerSearchFormState,
+  type ReviewerSearchFormState,
+  type ReviewerSearchActiveTab,
+} from "@/lib/reviewer-search-form-state";
 
 interface ReviewerCandidate {
   id: string;
@@ -198,46 +205,6 @@ export function ReviewerSearchContent({
     fetchDefaultPublisher();
   }, [publisherIdProp]);
 
-  // Auto-load manuscript from URL param, or restore from session
-  useEffect(() => {
-    const idToLoad = manuscriptIdParam || sessionStorage.getItem("active_manuscript_id");
-    if (idToLoad && !manuscriptAutoLoaded) {
-      setManuscriptAutoLoaded(true);
-      setSelectedManuscriptId(idToLoad);
-
-      // Fetch manuscript details and auto-populate keywords + authors
-      const fetchManuscriptData = async () => {
-        try {
-          const response = await fetch(`/api/manuscripts/${idToLoad}`);
-          const data = await response.json();
-          if (response.ok && data.manuscript) {
-            const ms = data.manuscript;
-            // Auto-populate keywords from manuscript
-            if (ms.keywords && ms.keywords.length > 0) {
-              setPrimaryKeywords(ms.keywords.slice(0, 3).join(", "));
-              if (ms.keywords.length > 3) {
-                setSecondaryKeywords(ms.keywords.slice(3).join(", "));
-              }
-              setKeywords(ms.keywords.join(", "));
-            }
-            // Auto-populate author list for COI checking
-            if (ms.authors && ms.authors.length > 0) {
-              setAuthorList(ms.authors.map((a: { fullName: string }) => a.fullName).join(", "));
-            }
-            toast.success(
-              `Loaded manuscript: ${ms.title || ms.fileName}` +
-              (ms.keywords?.length ? ` (${ms.keywords.length} keywords, ${ms.authors?.length || 0} authors)` : "")
-            );
-          }
-        } catch (error) {
-          console.error("Error loading manuscript from URL:", error);
-          toast.error("Could not auto-load manuscript. Please select it manually.");
-        }
-      };
-      fetchManuscriptData();
-    }
-  }, [manuscriptIdParam, manuscriptAutoLoaded]);
-
   // Advanced discovery state
   const [primaryKeywords, setPrimaryKeywords] = useState("");
   const [secondaryKeywords, setSecondaryKeywords] = useState("");
@@ -252,8 +219,12 @@ export function ReviewerSearchContent({
   const [diversifyGeo, setDiversifyGeo] = useState(true);
   const [avoidSameInstitution, setAvoidSameInstitution] = useState(true);
   const [useLLM, setUseLLM] = useState(true); // Use AI ranking
+  const [activeTab, setActiveTab] = useState<ReviewerSearchActiveTab>("advanced");
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
+
+  const isRestoringFormRef = useRef(false);
+  const restoredManuscriptRef = useRef<string | null>(null);
 
   // Thumbs up/down flagging state
   const [flaggedReviewers, setFlaggedReviewers] = useState<Record<string, "up" | "down" | null>>({});
@@ -293,6 +264,94 @@ export function ReviewerSearchContent({
 
   // Expertise coverage tracking — keyed by reviewer ID
   const [assignedExpertise, setAssignedExpertise] = useState<Record<string, string[]>>({});
+
+  const applySavedFormState = useCallback((saved: ReviewerSearchFormState) => {
+    isRestoringFormRef.current = true;
+    setActiveTab(saved.activeTab);
+    setAuthorList(saved.authorList);
+    setKeywords(saved.keywords);
+    setPrimaryKeywords(saved.primaryKeywords);
+    setSecondaryKeywords(saved.secondaryKeywords);
+    setKeywordOperator(saved.keywordOperator);
+    setMinHIndex(saved.minHIndex);
+    setMaxHIndex(saved.maxHIndex);
+    setMinPublications(saved.minPublications);
+    setMaxPublications(saved.maxPublications);
+    setYearsActive(saved.yearsActive);
+    setRequireSeniorAuthor(saved.requireSeniorAuthor);
+    setMaxResults(saved.maxResults);
+    setDiversifyGeo(saved.diversifyGeo);
+    setAvoidSameInstitution(saved.avoidSameInstitution);
+    setUseLLM(saved.useLLM);
+    setCandidateReviewers(saved.candidateReviewers as ReviewerCandidate[]);
+    setCoauthorWarnings(saved.coauthorWarnings);
+    setDiscoveryResult(saved.discoveryResult as DiscoveryResult | null);
+    setFlaggedReviewers(saved.flaggedReviewers);
+    setAssignedExpertise(saved.assignedExpertise);
+    isRestoringFormRef.current = false;
+  }, []);
+
+  const resetFormToDefaults = useCallback(() => {
+    setActiveTab("advanced");
+    setAuthorList("");
+    setKeywords("");
+    setPrimaryKeywords("");
+    setSecondaryKeywords("");
+    setKeywordOperator("AND");
+    setMinHIndex(0);
+    setMaxHIndex(100);
+    setMinPublications(3);
+    setMaxPublications(100);
+    setYearsActive(5);
+    setRequireSeniorAuthor(true);
+    setMaxResults(10);
+    setDiversifyGeo(true);
+    setAvoidSameInstitution(true);
+    setUseLLM(true);
+    setCandidateReviewers([]);
+    setCoauthorWarnings([]);
+    setDiscoveryResult(null);
+    setFlaggedReviewers({});
+    setAssignedExpertise({});
+  }, []);
+
+  const populateFromManuscriptApi = useCallback(async (manuscriptId: string) => {
+    try {
+      const response = await fetch(`/api/manuscripts/${manuscriptId}`);
+      const data = await response.json();
+      if (response.ok && data.manuscript) {
+        const ms = data.manuscript;
+        if (ms.keywords && ms.keywords.length > 0) {
+          setPrimaryKeywords(ms.keywords.slice(0, 3).join(", "));
+          if (ms.keywords.length > 3) {
+            setSecondaryKeywords(ms.keywords.slice(3).join(", "));
+          }
+          setKeywords(ms.keywords.join(", "));
+        }
+        if (ms.authors && ms.authors.length > 0) {
+          setAuthorList(ms.authors.map((a: { fullName: string }) => a.fullName).join(", "));
+        }
+        toast.success(
+          `Loaded manuscript: ${ms.title || ms.fileName}` +
+            (ms.keywords?.length
+              ? ` (${ms.keywords.length} keywords, ${ms.authors?.length || 0} authors)`
+              : "")
+        );
+      }
+    } catch (error) {
+      console.error("Error loading manuscript:", error);
+      toast.error("Could not auto-load manuscript. Please select it manually.");
+    }
+  }, []);
+
+  // Auto-select manuscript from URL param or session
+  useEffect(() => {
+    const idToLoad = manuscriptIdParam || sessionStorage.getItem("active_manuscript_id");
+    if (idToLoad && !manuscriptAutoLoaded) {
+      setManuscriptAutoLoaded(true);
+      setSelectedManuscriptId(idToLoad);
+    }
+  }, [manuscriptIdParam, manuscriptAutoLoaded]);
 
   const manuscriptExpertise = useMemo(() => {
     const all = [
@@ -440,14 +499,93 @@ export function ReviewerSearchContent({
     }
   };
 
+  // Restore full form state or populate from manuscript; then merge DB reviewers
   useEffect(() => {
-    if (selectedManuscriptId) {
-      loadPersistedReviewers(selectedManuscriptId);
-    } else {
+    if (!selectedManuscriptId) {
       setDiscoveryResult(null);
+      restoredManuscriptRef.current = null;
+      return;
     }
+
+    if (restoredManuscriptRef.current !== selectedManuscriptId) {
+      restoredManuscriptRef.current = selectedManuscriptId;
+      const saved = loadReviewerSearchFormState(selectedManuscriptId);
+      if (saved) {
+        applySavedFormState(saved);
+      } else {
+        resetFormToDefaults();
+        populateFromManuscriptApi(selectedManuscriptId);
+      }
+    }
+
+    loadPersistedReviewers(selectedManuscriptId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedManuscriptId]);
+  }, [
+    selectedManuscriptId,
+    applySavedFormState,
+    resetFormToDefaults,
+    populateFromManuscriptApi,
+  ]);
+
+  // Persist full form state (sliders, keywords, in-memory results, flags)
+  useEffect(() => {
+    if (isRestoringFormRef.current) return;
+
+    const manuscriptKey = selectedManuscriptId;
+    const timeout = window.setTimeout(() => {
+      saveReviewerSearchFormState({
+        version: 1,
+        manuscriptId: manuscriptKey,
+        activeTab,
+        authorList,
+        keywords,
+        primaryKeywords,
+        secondaryKeywords,
+        keywordOperator,
+        minHIndex,
+        maxHIndex,
+        minPublications,
+        maxPublications,
+        yearsActive,
+        requireSeniorAuthor,
+        maxResults,
+        diversifyGeo,
+        avoidSameInstitution,
+        useLLM,
+        candidateReviewers,
+        coauthorWarnings,
+        discoveryResult,
+        flaggedReviewers,
+        assignedExpertise,
+        savedAt: Date.now(),
+      });
+    }, 400);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    selectedManuscriptId,
+    activeTab,
+    authorList,
+    keywords,
+    primaryKeywords,
+    secondaryKeywords,
+    keywordOperator,
+    minHIndex,
+    maxHIndex,
+    minPublications,
+    maxPublications,
+    yearsActive,
+    requireSeniorAuthor,
+    maxResults,
+    diversifyGeo,
+    avoidSameInstitution,
+    useLLM,
+    candidateReviewers,
+    coauthorWarnings,
+    discoveryResult,
+    flaggedReviewers,
+    assignedExpertise,
+  ]);
 
   // Export flagged reviewers as CSV
   const exportFlaggedReviewers = () => {
@@ -529,6 +667,9 @@ export function ReviewerSearchContent({
     setSecondaryKeywords("");
     setKeywords("");
     setAuthorList("");
+    if (selectedManuscriptId) {
+      clearReviewerSearchFormState(selectedManuscriptId);
+    }
   };
 
   // Find reviewers automatically from PubMed and OpenAlex
@@ -901,7 +1042,7 @@ export function ReviewerSearchContent({
         </Card>
       )}
 
-      <Tabs defaultValue="advanced" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ReviewerSearchActiveTab)} className="space-y-4">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="advanced">
             <FlaskConical className="h-4 w-4 mr-2" />
@@ -936,8 +1077,16 @@ export function ReviewerSearchContent({
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
                   onChange={(m) => {
+                    const prevId = selectedManuscriptId;
+                    if (m?.id && m.id !== prevId) {
+                      restoredManuscriptRef.current = null;
+                    }
                     setSelectedManuscriptId(m?.id || null);
-                    if (!m) clearKeywordsAndAuthors();
+                    if (!m) {
+                      if (prevId) clearReviewerSearchFormState(prevId);
+                      clearKeywordsAndAuthors();
+                      restoredManuscriptRef.current = null;
+                    }
                   }}
                   onManuscriptData={(data) => {
                     if (data.keywords.length > 0) {
@@ -1757,8 +1906,16 @@ export function ReviewerSearchContent({
                 <ManuscriptSelector
                   value={selectedManuscriptId || undefined}
                   onChange={(m) => {
+                    const prevId = selectedManuscriptId;
+                    if (m?.id && m.id !== prevId) {
+                      restoredManuscriptRef.current = null;
+                    }
                     setSelectedManuscriptId(m?.id || null);
-                    if (!m) clearKeywordsAndAuthors();
+                    if (!m) {
+                      if (prevId) clearReviewerSearchFormState(prevId);
+                      clearKeywordsAndAuthors();
+                      restoredManuscriptRef.current = null;
+                    }
                   }}
                   onManuscriptData={(data) => {
                     if (data.keywords.length > 0) {
