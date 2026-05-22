@@ -1627,11 +1627,6 @@ export function ReviewerSearchContent({
                           </>
                         )}
                       </div>
-                      {discoveryResult.summary.searchStrategy && (
-                        <p className="text-xs text-purple-600 mt-2 italic">
-                          Strategy: {discoveryResult.summary.searchStrategy}
-                        </p>
-                      )}
                     </div>
                     <div className="flex gap-2">
                       <Button variant="outline" onClick={exportDiscoveryResults}>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { downloadFile } from "@/lib/supabase";
+import { calculateHash } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -195,11 +196,15 @@ async function processManuscriptFromStorage(
     const buffer = await downloadFile(storagePath);
     console.log(`[Process] Downloaded ${buffer.length} bytes`);
 
-    // Update fileSize if it was 0 (set during init before upload)
+    const fileHash = calculateHash(buffer);
+    const sizeUpdate: { fileSize?: number; fileHash?: string } = { fileHash };
     if (manuscript.fileSize === 0) {
+      sizeUpdate.fileSize = buffer.length;
+    }
+    if (!manuscript.fileHash || manuscript.fileSize === 0) {
       await prisma.manuscript.update({
         where: { id: manuscriptId },
-        data: { fileSize: buffer.length },
+        data: sizeUpdate,
       });
     }
 

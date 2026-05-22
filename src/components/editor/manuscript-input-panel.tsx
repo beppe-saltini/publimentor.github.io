@@ -19,6 +19,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DuplicateUploadDialog } from "@/components/manuscript/duplicate-upload-dialog";
+import { useManuscriptFileUpload } from "@/components/manuscript/use-manuscript-file-upload";
 
 export interface ManuscriptReadyData {
   manuscriptId?: string;
@@ -51,7 +53,6 @@ export function ManuscriptInputPanel({
   onReady,
   disabled = false,
 }: ManuscriptInputPanelProps) {
-  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
@@ -99,79 +100,48 @@ export function ManuscriptInputPanel({
     [onReady]
   );
 
+  const {
+    startUpload,
+    confirmDuplicateUpload,
+    cancelDuplicateUpload,
+    duplicatePrompt,
+    uploading,
+    checkingDuplicate,
+    busy,
+  } = useManuscriptFileUpload({
+    publisherId,
+    journalId: journalId || undefined,
+    onProgress: setUploadProgress,
+    onUploadComplete: (id) => {
+      toast.success("File uploaded — processing manuscript...");
+      pollStatus(id);
+    },
+  });
+
   const handleUpload = async (file: File) => {
     if (!publisherId) {
       toast.error("Upload is not available — no organization assigned");
       return;
     }
-
-    setUploading(true);
     setUploadProgress(0);
     setUploadError(null);
     setProcessingStatus(null);
-
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      setUploadError("File is too large. Maximum is 50 MB.");
-      toast.error("File too large. Maximum is 50 MB.");
-      setUploading(false);
-      return;
-    }
-
     try {
-      setUploadProgress(5);
-      const initRes = await fetch("/api/manuscripts/upload/init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          publisherId,
-          journalId: journalId || undefined,
-          fileName: file.name,
-          fileSize: file.size,
-        }),
-      });
-      const initData = await initRes.json();
-      if (!initRes.ok) throw new Error(initData.error || "Failed to initialize upload");
-
-      const { manuscriptId: msId, signedUrl } = initData;
-      setUploadProgress(10);
-
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", signedUrl, true);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-        xhr.setRequestHeader("x-upsert", "false");
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setUploadProgress(Math.round(10 + (e.loaded / e.total) * 70));
-          }
-        };
-        xhr.onload = () =>
-          xhr.status >= 200 && xhr.status < 300
-            ? resolve()
-            : reject(new Error(`Upload failed (HTTP ${xhr.status})`));
-        xhr.onerror = () => reject(new Error("Network error during upload"));
-        xhr.send(file);
-      });
-      setUploadProgress(85);
-
-      const processRes = await fetch(`/api/manuscripts/${msId}/process`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const processData = await processRes.json();
-      if (!processRes.ok) throw new Error(processData.error || "Failed to start processing");
-
-      setUploadProgress(90);
-      toast.success("File uploaded — processing manuscript...");
-      pollStatus(msId);
+      await startUpload(file);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
       setUploadError(message);
       toast.error(message);
-    } finally {
-      setUploading(false);
+    }
+  };
+
+  const handleConfirmDuplicate = async () => {
+    try {
+      await confirmDuplicateUpload();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      setUploadError(message);
+      toast.error(message);
     }
   };
 
@@ -185,7 +155,7 @@ export function ManuscriptInputPanel({
     },
     maxFiles: 1,
     maxSize: 50 * 1024 * 1024,
-    disabled: disabled || uploading || !publisherId,
+    disabled: disabled || busy || !publisherId,
   });
 
   const parseKeywords = (text: string) =>
@@ -300,6 +270,14 @@ export function ManuscriptInputPanel({
           </TabsList>
 
           <TabsContent value="upload" className="space-y-4">
+            <DuplicateUploadDialog
+              open={!!duplicatePrompt}
+              fileName={duplicatePrompt?.file.name ?? ""}
+              check={duplicatePrompt?.check ?? null}
+              onConfirm={handleConfirmDuplicate}
+              onCancel={cancelDuplicateUpload}
+              confirming={uploading}
+            />
             {!publisherId && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3">
                 File upload requires an organization assignment. Use abstract or keywords instead.
@@ -317,14 +295,18 @@ export function ManuscriptInputPanel({
                 isDragActive
                   ? "border-blue-400 bg-blue-50"
                   : "border-gray-300 hover:border-gray-400"
-              } ${disabled || uploading || !publisherId ? "opacity-50 cursor-not-allowed" : ""}`}
+              } ${disabled || busy || !publisherId ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <input {...getInputProps()} />
-              {uploading ? (
+              {busy && !processingStatus?.isComplete ? (
                 <div className="space-y-3">
                   <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
-                  <p className="text-sm text-gray-600">Uploading...</p>
-                  <Progress value={uploadProgress} className="max-w-xs mx-auto" />
+                  <p className="text-sm text-gray-600">
+                    {checkingDuplicate ? "Checking for duplicates…" : "Uploading…"}
+                  </p>
+                  {!checkingDuplicate && (
+                    <Progress value={uploadProgress} className="max-w-xs mx-auto" />
+                  )}
                 </div>
               ) : processingStatus && !processingStatus.isComplete ? (
                 <div className="space-y-3">

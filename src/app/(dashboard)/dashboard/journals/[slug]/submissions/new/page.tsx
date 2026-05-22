@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Upload, FileText, Loader2, CheckCircle, AlertCircle, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useDropzone } from "react-dropzone";
+import { DuplicateUploadDialog } from "@/components/manuscript/duplicate-upload-dialog";
+import { useManuscriptFileUpload } from "@/components/manuscript/use-manuscript-file-upload";
 
 interface Author {
   name: string;
@@ -43,8 +45,6 @@ export default function NewSubmissionPage() {
     { name: "", email: "", orcid: "", affiliation: "" },
   ]);
   
-  // Upload and extraction state
-  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
   const [manuscriptId, setManuscriptId] = useState<string | null>(null);
@@ -119,75 +119,53 @@ export default function NewSubmissionPage() {
     }
   };
 
-  // Handle file upload — two-step Supabase direct upload
+  const {
+    startUpload,
+    confirmDuplicateUpload,
+    cancelDuplicateUpload,
+    duplicatePrompt,
+    uploading,
+    checkingDuplicate,
+    busy,
+  } = useManuscriptFileUpload({
+    publisherId: defaultPublisherId,
+    onProgress: setUploadProgress,
+    onUploadComplete: (id) => {
+      setManuscriptId(id);
+      toast.success("File uploaded! Processing manuscript...");
+      pollStatus(id);
+    },
+  });
+
   const handleUpload = async (file: File) => {
     if (!defaultPublisherId) {
       toast.error("Please wait while we set up your account...");
       return;
     }
-
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      toast.error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum is 50 MB.`);
-      return;
-    }
-
-    setUploading(true);
     setUploadProgress(0);
     setPdfFile(file);
-
     try {
-      // Step 1: Init
-      setUploadProgress(5);
-      const initRes = await fetch("/api/manuscripts/upload/init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publisherId: defaultPublisherId, fileName: file.name, fileSize: file.size }),
-      });
-      const initText = await initRes.text();
-      const initData = JSON.parse(initText);
-      if (!initRes.ok) throw new Error(initData.error || "Failed to initialize upload");
-      const { manuscriptId: msId, signedUrl } = initData;
-      setUploadProgress(10);
-
-      // Step 2: Upload to Supabase
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", signedUrl, true);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-        xhr.setRequestHeader("x-upsert", "false");
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setUploadProgress(Math.round(10 + (e.loaded / e.total) * 70));
-          }
-        };
-        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (HTTP ${xhr.status})`));
-        xhr.onerror = () => reject(new Error("Network error during upload"));
-        xhr.send(file);
-      });
-      setUploadProgress(85);
-
-      // Step 3: Trigger processing
-      const processRes = await fetch(`/api/manuscripts/${msId}/process`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const processText = await processRes.text();
-      const processData = JSON.parse(processText);
-      if (!processRes.ok) throw new Error(processData.error || "Failed to start processing");
-      setUploadProgress(90);
-
-      setManuscriptId(msId);
-      toast.success("File uploaded! Processing manuscript...");
-      pollStatus(msId);
+      await startUpload(file);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
       toast.error(message);
       setPdfFile(null);
-    } finally {
-      setUploading(false);
     }
+  };
+
+  const handleConfirmDuplicate = async () => {
+    try {
+      await confirmDuplicateUpload();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      toast.error(message);
+      setPdfFile(null);
+    }
+  };
+
+  const handleCancelDuplicate = () => {
+    cancelDuplicateUpload();
+    setPdfFile(null);
   };
 
   // Dropzone
@@ -198,7 +176,7 @@ export default function NewSubmissionPage() {
     accept: { "application/pdf": [".pdf"] },
     maxFiles: 1,
     maxSize: 50 * 1024 * 1024,
-    disabled: uploading || !!processingStatus,
+    disabled: busy || !!processingStatus,
   });
 
   const addAuthor = () => {
@@ -260,6 +238,7 @@ export default function NewSubmissionPage() {
   };
 
   const resetUpload = () => {
+    cancelDuplicateUpload();
     setPdfFile(null);
     setManuscriptId(null);
     setProcessingStatus(null);
@@ -285,6 +264,15 @@ export default function NewSubmissionPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <DuplicateUploadDialog
+              open={!!duplicatePrompt}
+              fileName={duplicatePrompt?.file.name ?? ""}
+              check={duplicatePrompt?.check ?? null}
+              onConfirm={handleConfirmDuplicate}
+              onCancel={handleCancelDuplicate}
+              confirming={uploading}
+            />
+
             {/* Processing status */}
             {processingStatus && !processingStatus.isComplete && !processingStatus.hasError && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
@@ -336,16 +324,20 @@ export default function NewSubmissionPage() {
                   border-2 border-dashed rounded-lg p-8 text-center cursor-pointer
                   transition-colors duration-200
                   ${isDragActive ? "border-blue-500 bg-blue-50" : "border-gray-300 hover:border-gray-400"}
-                  ${uploading ? "opacity-50 cursor-not-allowed" : ""}
+                  ${busy ? "opacity-50 cursor-not-allowed" : ""}
                 `}
               >
                 <input {...getInputProps()} />
                 
-                {uploading ? (
+                {busy ? (
                   <div className="space-y-3">
                     <Loader2 className="h-10 w-10 mx-auto text-blue-500 animate-spin" />
-                    <p className="text-gray-600">Uploading...</p>
-                    <Progress value={uploadProgress} className="w-48 mx-auto" />
+                    <p className="text-gray-600">
+                      {checkingDuplicate ? "Checking for duplicates…" : "Uploading…"}
+                    </p>
+                    {!checkingDuplicate && (
+                      <Progress value={uploadProgress} className="w-48 mx-auto" />
+                    )}
                   </div>
                 ) : (
                   <>

@@ -11,6 +11,7 @@ import {
 } from "@/lib/security";
 import { createSignedUploadUrl, isSupabaseConfigured } from "@/lib/supabase";
 import { generateStoragePath, getStorageProviderName } from "@/lib/storage";
+import { findDuplicateManuscripts } from "@/lib/manuscript/find-duplicate-manuscripts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,11 +52,13 @@ export async function POST(request: Request) {
 
     // Parse JSON body
     const body = await request.json();
-    const { publisherId, fileName, fileSize, journalId } = body as {
+    const { publisherId, fileName, fileSize, journalId, fileHash, confirmDuplicate } = body as {
       publisherId?: string;
       fileName?: string;
       fileSize?: number;
       journalId?: string;
+      fileHash?: string;
+      confirmDuplicate?: boolean;
     };
 
     console.log("[UploadInit] request", { publisherId: !!publisherId, fileName, fileSize });
@@ -126,6 +129,30 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!confirmDuplicate) {
+      const duplicate = await findDuplicateManuscripts({
+        publisherId,
+        uploaderId: session.user.id,
+        fileHash,
+        fileName: sanitizedFileName,
+        fileSize: fileSize || 0,
+      });
+
+      if (duplicate.isDuplicate) {
+        return NextResponse.json(
+          {
+            error: "This file appears to be a duplicate upload",
+            reason: duplicate.reason,
+            matches: duplicate.matches.map((m) => ({
+              ...m,
+              createdAt: m.createdAt.toISOString(),
+            })),
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Create manuscript record (status: UPLOADING — file not yet received)
     const manuscript = await prisma.manuscript.create({
       data: {
@@ -138,6 +165,7 @@ export async function POST(request: Request) {
         fileMimeType: mimeType,
         fileSize: fileSize || 0,
         filePath: "", // Will be set after processing
+        fileHash: fileHash || null,
         status: "UPLOADED", // Using UPLOADED as initial state
         storageProvider: "supabase",
       },
