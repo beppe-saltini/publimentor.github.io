@@ -7,7 +7,8 @@ import {
   sanitizeString, 
   checkRateLimit, 
   getRateLimitResponse,
-  AUTH_RATE_LIMIT,
+  REGISTER_RATE_LIMIT,
+  REGISTER_IP_RATE_LIMIT,
   getClientIp,
   auditLog,
   getUserAgent,
@@ -30,22 +31,6 @@ const registerSchema = z.object({
 export async function POST(request: Request) {
   try {
     const clientIp = getClientIp(request);
-    
-    // Rate limiting - strict for registration
-    const rateLimit = checkRateLimit(`register:${clientIp}`, AUTH_RATE_LIMIT);
-    if (!rateLimit.allowed) {
-      auditLog({
-        userId: null,
-        action: "RATE_LIMIT_EXCEEDED",
-        resource: "auth",
-        resourceId: "register",
-        ip: clientIp,
-        userAgent: getUserAgent(request),
-        severity: "warning",
-      });
-      return getRateLimitResponse(rateLimit.resetIn);
-    }
-
     const body = await request.json();
     
     // Validate input schema
@@ -59,6 +44,38 @@ export async function POST(request: Request) {
 
     const { name, email, password, institution, orcid, role, gender, primaryExpertise, secondaryExpertise, betaCode } = result.data;
     const userRole = role ?? "EDITOR";
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Rate limit by email (not IP) so shared networks / unknown IPs don't block beta testers
+    const emailRateLimit = checkRateLimit(`register:email:${normalizedEmail}`, REGISTER_RATE_LIMIT);
+    if (!emailRateLimit.allowed) {
+      auditLog({
+        userId: null,
+        action: "RATE_LIMIT_EXCEEDED",
+        resource: "auth",
+        resourceId: normalizedEmail,
+        ip: clientIp,
+        userAgent: getUserAgent(request),
+        severity: "warning",
+      });
+      return getRateLimitResponse(emailRateLimit.resetIn);
+    }
+
+    if (clientIp !== "unknown") {
+      const ipRateLimit = checkRateLimit(`register:ip:${clientIp}`, REGISTER_IP_RATE_LIMIT);
+      if (!ipRateLimit.allowed) {
+        auditLog({
+          userId: null,
+          action: "RATE_LIMIT_EXCEEDED",
+          resource: "auth",
+          resourceId: clientIp,
+          ip: clientIp,
+          userAgent: getUserAgent(request),
+          severity: "warning",
+        });
+        return getRateLimitResponse(ipRateLimit.resetIn);
+      }
+    }
 
     // Validate beta access code against one-time-use codes in DB
     const betaCodeRecord = await prisma.betaCode.findUnique({
@@ -85,9 +102,6 @@ export async function POST(request: Request) {
     const sanitizedName = sanitizeString(name);
     const sanitizedInstitution = institution ? sanitizeString(institution) : undefined;
     
-    // Normalize email
-    const normalizedEmail = email.toLowerCase().trim();
-
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email: normalizedEmail },

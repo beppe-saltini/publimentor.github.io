@@ -38,6 +38,18 @@ const AUTH_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 5,  // 5 attempts per 15 minutes
 };
 
+/** Per-email registration limit (beta-friendly; avoids shared-IP false blocks) */
+const REGISTER_RATE_LIMIT: RateLimitConfig = {
+  windowMs: 60 * 60 * 1000,  // 1 hour
+  maxRequests: 10,
+};
+
+/** Broad IP cap to catch scripted mass signups without blocking normal beta testers */
+const REGISTER_IP_RATE_LIMIT: RateLimitConfig = {
+  windowMs: 60 * 60 * 1000,  // 1 hour
+  maxRequests: 30,
+};
+
 /**
  * Rate limit store interface — implemented by in-memory and Redis adapters.
  */
@@ -202,7 +214,13 @@ export function getRateLimitResponse(resetIn: number): NextResponse {
   );
 }
 
-export { DEFAULT_RATE_LIMIT, STRICT_RATE_LIMIT, AUTH_RATE_LIMIT };
+export {
+  DEFAULT_RATE_LIMIT,
+  STRICT_RATE_LIMIT,
+  AUTH_RATE_LIMIT,
+  REGISTER_RATE_LIMIT,
+  REGISTER_IP_RATE_LIMIT,
+};
 
 // ============================================================
 // Input Sanitization
