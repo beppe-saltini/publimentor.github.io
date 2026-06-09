@@ -35,6 +35,11 @@ export default async function OnboardingPage() {
     redirect("/dashboard");
   }
 
+  // Editors use the simplified workspace UI
+  if (user?.role === "EDITOR") {
+    redirect("/dashboard/editor/reviewers");
+  }
+
   return (
     <div className="py-8">
       <Onboarding userName={session.user.name?.split(" ")[0]} userEmail={session.user.email} />

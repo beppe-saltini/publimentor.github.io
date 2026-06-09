@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -19,7 +18,6 @@ export default function RegisterPage() {
     confirmPassword: "",
     institution: "",
     orcid: "",
-    role: "",
     primaryExpertise: "",
     secondaryExpertise: "",
     betaCode: "",
@@ -31,13 +29,6 @@ export default function RegisterPage() {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
-    }));
-  };
-
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
     }));
   };
 
@@ -68,7 +59,6 @@ export default function RegisterPage() {
           password: formData.password,
           institution: formData.institution || undefined,
           orcid: formData.orcid || undefined,
-          role: formData.role || undefined,
           primaryExpertise: formData.primaryExpertise || undefined,
           secondaryExpertise: formData.secondaryExpertise || undefined,
           betaCode: formData.betaCode.trim(),
@@ -81,7 +71,7 @@ export default function RegisterPage() {
         throw new Error(data.error || "Registration failed");
       }
 
-      router.push("/login?registered=true");
+      router.push("/login?registered=true&callbackUrl=/dashboard/editor/reviewers");
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -142,25 +132,6 @@ export default function RegisterPage() {
                 required
                 disabled={isLoading}
               />
-            </div>
-
-            {/* Role Selection */}
-            <div className="space-y-2">
-              <Label htmlFor="role">I am a...</Label>
-              <Select
-                value={formData.role}
-                onValueChange={(value) => handleSelectChange("role", value)}
-                disabled={isLoading}
-              >
-                <SelectTrigger id="role">
-                  <SelectValue placeholder="Select your primary role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="AUTHOR">Author</SelectItem>
-                  <SelectItem value="EDITOR">Editor</SelectItem>
-                  <SelectItem value="PUBLISHER">Publisher</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
 
             <div className="space-y-2">

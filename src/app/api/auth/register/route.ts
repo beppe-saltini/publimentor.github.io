@@ -12,6 +12,7 @@ import {
   auditLog,
   getUserAgent,
 } from "@/lib/security";
+import { provisionEditorWorkspace } from "@/lib/editor-workspace";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters").max(100),
@@ -57,6 +58,7 @@ export async function POST(request: Request) {
     }
 
     const { name, email, password, institution, orcid, role, gender, primaryExpertise, secondaryExpertise, betaCode } = result.data;
+    const userRole = role ?? "EDITOR";
 
     // Validate beta access code against one-time-use codes in DB
     const betaCodeRecord = await prisma.betaCode.findUnique({
@@ -121,7 +123,7 @@ export async function POST(request: Request) {
     const sanitizedSecondaryExpertise = secondaryExpertise ? sanitizeString(secondaryExpertise) : undefined;
     const sanitizedOrcid = orcid ? sanitizeString(orcid) : undefined;
 
-    // Create user
+    // Create user (default role: editor with simplified workspace UI)
     const user = await prisma.user.create({
       data: {
         name: sanitizedName,
@@ -129,12 +131,16 @@ export async function POST(request: Request) {
         password: hashedPassword,
         institution: sanitizedInstitution,
         orcid: sanitizedOrcid,
-        role: role || undefined,
+        role: userRole,
         gender: gender || undefined,
         primaryExpertise: sanitizedPrimaryExpertise,
         secondaryExpertise: sanitizedSecondaryExpertise,
       },
     });
+
+    if (userRole === "EDITOR") {
+      await provisionEditorWorkspace(user.id, sanitizedName);
+    }
 
     // Consume the beta code (mark as used) now that registration succeeded
     await prisma.betaCode.update({
