@@ -29,6 +29,11 @@ import {
   type ReviewerDisplay,
   flagsFromReviewerStatuses,
 } from "@/components/reviewers/reviewer-display";
+import {
+  normalizeReviewerName,
+  computeExpertiseCoverage,
+  sortReviewersDisplayOrder,
+} from "@/lib/reviewers/reviewer-list-utils";
 import type { ConflictSeverity } from "@/components/reviewers/coi-badge";
 import type { ReviewerConflict } from "@/components/reviewers/coi-details";
 
@@ -175,20 +180,6 @@ function mapPersistedToDisplay(r: PersistedReviewer): ReviewerDisplay {
         }
       : undefined,
   };
-}
-
-function sortReviewersForDisplay(
-  reviewers: ReviewerDisplay[],
-  flagged: Record<string, "up" | "down" | null>
-): ReviewerDisplay[] {
-  return [...reviewers].sort((a, b) => {
-    const rank = (r: ReviewerDisplay) => {
-      if (flagged[r.id] === "up") return 0;
-      if (flagged[r.id] === "down") return 2;
-      return 1;
-    };
-    return rank(a) - rank(b);
-  });
 }
 
 export interface ManuscriptDetailRoutes {
@@ -385,43 +376,49 @@ export function ManuscriptDetailContent({
     return [...new Set(manuscript.keywords)];
   }, [manuscript?.keywords]);
 
-  const expertiseCoverage = useMemo(() => {
-    const coverage: Record<string, { reviewerIds: string[]; reviewerNames: string[] }> = {};
-    for (const exp of manuscriptExpertise) {
-      coverage[exp] = { reviewerIds: [], reviewerNames: [] };
-    }
-    for (const r of reviewers) {
-      const assigned = assignedExpertise[r.id] || [];
-      for (const exp of assigned) {
-        if (coverage[exp]) {
-          coverage[exp].reviewerIds.push(r.id);
-          coverage[exp].reviewerNames.push(r.name);
-        }
-      }
-    }
-    return coverage;
-  }, [manuscriptExpertise, assignedExpertise, reviewers]);
-
-  const coveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) > 0),
-    [manuscriptExpertise, expertiseCoverage]
+  const activeReviewers = useMemo(
+    () => reviewers.filter((r) => r.status !== "REJECTED"),
+    [reviewers]
   );
 
-  const uncoveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) === 0),
-    [manuscriptExpertise, expertiseCoverage]
-  );
+  const expertiseCoverageState = useMemo(() => {
+    const namesById: Record<string, string> = {};
+    for (const r of activeReviewers) {
+      namesById[r.id] = r.name;
+    }
+    return computeExpertiseCoverage(
+      manuscriptExpertise,
+      assignedExpertise,
+      activeReviewers.map((r) => r.id),
+      namesById
+    );
+  }, [manuscriptExpertise, assignedExpertise, activeReviewers]);
+
+  const expertiseCoverage = expertiseCoverageState.coverage;
+  const coveredExpertise = expertiseCoverageState.coveredExpertise;
+  const uncoveredExpertise = expertiseCoverageState.uncoveredExpertise;
 
   const flaggedReviewers = useMemo(
     () => flagsFromReviewerStatuses(reviewers),
     [reviewers]
   );
 
+  const dbReviewerIndex = useMemo(() => {
+    const index: Record<string, { id: string; status: string }> = {};
+    for (const r of reviewers) {
+      index[normalizeReviewerName(r.name)] = { id: r.id, status: r.status };
+    }
+    return index;
+  }, [reviewers]);
+
   const displayReviewers = useMemo(() => {
-    const active = reviewers.filter((r) => r.status !== "REJECTED");
-    const mapped = active.map(mapPersistedToDisplay);
-    return sortReviewersForDisplay(mapped, flaggedReviewers);
-  }, [reviewers, flaggedReviewers]);
+    const mapped = activeReviewers.map(mapPersistedToDisplay);
+    return sortReviewersDisplayOrder(mapped, {
+      assignedExpertise,
+      flags: flaggedReviewers,
+      dbIndex: dbReviewerIndex,
+    });
+  }, [activeReviewers, assignedExpertise, flaggedReviewers, dbReviewerIndex]);
 
   const handleToggleFlag = (reviewerId: string, direction: "up" | "down") => {
     const reviewer = reviewers.find((r) => r.id === reviewerId);

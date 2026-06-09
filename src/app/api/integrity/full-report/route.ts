@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { detectTorturedPhrases } from "@/lib/tortured-phrases";
 import { verifyAuthors, type AuthorIdentityCheck } from "@/lib/identity-verifier";
-import { parseReferences, validateReferences } from "@/lib/reference-validator";
+import {
+  parseReferencesForMetadata,
+  validateReferencesByMetadata,
+} from "@/lib/references/reference-metadata-validator";
 import { z } from "zod";
 import {
   checkRateLimit,
@@ -79,10 +82,9 @@ export type FullIntegrityReportResponse = {
     ran: boolean;
     result?: {
       total: number;
-      valid: number;
-      notFound: number;
-      retracted: number;
-      suspicious: number;
+      validated: number;
+      fake: number;
+      unsure: number;
     };
     error?: string;
   };
@@ -147,9 +149,9 @@ export async function POST(request: Request) {
         : Promise.resolve(null),
       shouldRunReferences
         ? (async () => {
-            const refs = parseReferences(referenceText!);
+            const refs = parseReferencesForMetadata(referenceText!);
             if (refs.length === 0) return null;
-            return validateReferences(refs);
+            return validateReferencesByMetadata(refs);
           })()
         : Promise.resolve(null),
     ]);
@@ -238,17 +240,16 @@ export async function POST(request: Request) {
       if (referenceResult.status === "fulfilled" && referenceResult.value) {
         const r = referenceResult.value;
         checksCompleted++;
-        totalIndicators += r.summary.retracted + r.summary.notFound;
-        dataSources.push("Crossref API", "PubMed E-utilities");
-        limitations.push("Retraction checks may not capture all retractions");
+        totalIndicators += r.summary.fake + r.summary.unsure;
+        dataSources.push("OpenAlex API", "Crossref Works API", "PubMed E-utilities");
+        limitations.push("Reference validation uses title/author/year matching, not DOI alone");
         referenceReport = {
           ran: true,
           result: {
             total: r.summary.total,
-            valid: r.summary.valid,
-            notFound: r.summary.notFound,
-            retracted: r.summary.retracted,
-            suspicious: r.summary.suspicious,
+            validated: r.summary.validated,
+            fake: r.summary.fake,
+            unsure: r.summary.unsure,
           },
         };
       } else {
@@ -266,8 +267,7 @@ export async function POST(request: Request) {
     let riskLevel: "clear" | "review" | "attention" = "clear";
     if (totalIndicators > 0) riskLevel = "review";
     if (totalIndicators >= 3) riskLevel = "attention";
-    // Retracted references always escalate to attention
-    if (referenceReport?.result?.retracted && referenceReport.result.retracted > 0) {
+    if (referenceReport?.result?.fake && referenceReport.result.fake > 0) {
       riskLevel = "attention";
     }
 

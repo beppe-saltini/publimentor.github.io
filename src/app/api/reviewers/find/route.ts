@@ -4,6 +4,7 @@ import { parseAuthorList } from "@/lib/author-parser";
 import { findReviewersByTopic, findCoAuthors, PubMedAuthor } from "@/lib/pubmed";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ConflictSeverity } from "@/lib/coi-detector";
+import { enrichReviewerEmailsBatch, extractDomainFromUrl } from "@/lib/reviewers/email-enrichment";
 
 export const dynamic = "force-dynamic";
 
@@ -12,12 +13,19 @@ interface ReviewerCandidate {
   name: string;
   firstName: string;
   lastName: string;
+  email?: string | null;
   affiliation?: string;
+  orcid?: string | null;
   source: "pubmed" | "openalex" | "both";
+  verificationUrls?: {
+    institutionSearchUrl?: string;
+    institutionProfileUrl?: string;
+    semanticScholarUrl?: string;
+    openAlexUrl?: string;
+  };
   worksCount?: number;
   citedByCount?: number;
   hIndex?: number;
-  orcid?: string;
   coauthorCount?: number;
   topics?: string[];
   // COI check results
@@ -40,7 +48,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { authorList, keywords, excludeAuthors, checkCOI = true } = body;
+    const { authorList, keywords, focusKeywords, excludeAuthors, checkCOI = true } = body;
 
     if (!authorList && !keywords) {
       return NextResponse.json(
@@ -57,10 +65,15 @@ export async function POST(request: Request) {
       ...(excludeAuthors || []),
     ];
 
-    // Extract keywords from author names or use provided keywords
-    const searchKeywords = keywords || [];
+    const allKeywords = Array.isArray(keywords) ? keywords : [];
+    const focus =
+      Array.isArray(focusKeywords) && focusKeywords.length > 0
+        ? focusKeywords
+        : null;
+    const searchKeywords = focus || allKeywords;
     
     const reviewerMap = new Map<string, ReviewerCandidate>();
+    const institutionDomainCache = new Map<string, string | null>();
 
     // Search PubMed for potential reviewers
     if (searchKeywords.length > 0) {
@@ -119,12 +132,31 @@ export async function POST(request: Request) {
               (t: { display_name: string }) => t.display_name
             );
           } else {
+            const affiliation = result.last_known_institutions?.[0]?.display_name;
+            const instId = result.last_known_institutions?.[0]?.id || null;
+            let instDomain: string | null = null;
+            if (instId) {
+              if (institutionDomainCache.has(instId)) {
+                instDomain = institutionDomainCache.get(instId)!;
+              } else {
+                const inst = await openAlex.getInstitution(instId);
+                instDomain = inst?.homepage_url
+                  ? extractDomainFromUrl(inst.homepage_url)
+                  : null;
+                institutionDomainCache.set(instId, instDomain);
+              }
+            }
+            const instSearchUrl = instDomain
+              ? `https://www.google.com/search?q=site:${encodeURIComponent(instDomain)}+"${encodeURIComponent(result.display_name)}"`
+              : undefined;
+
             reviewerMap.set(key, {
               id: result.id,
               name: result.display_name,
               firstName,
               lastName,
-              affiliation: result.last_known_institutions?.[0]?.display_name,
+              email: null,
+              affiliation,
               source: "openalex",
               worksCount: result.works_count,
               citedByCount: result.cited_by_count,
@@ -133,6 +165,10 @@ export async function POST(request: Request) {
               topics: result.topics?.slice(0, 5).map(
                 (t: { display_name: string }) => t.display_name
               ),
+              verificationUrls: {
+                openAlexUrl: result.id,
+                institutionSearchUrl: instSearchUrl,
+              },
             });
           }
         }
@@ -178,6 +214,21 @@ export async function POST(request: Request) {
         return bCitations - aCitations;
       })
       .slice(0, 50);
+
+    const orcidByName: Record<string, string> = {};
+    for (const r of reviewers) {
+      if (r.orcid) {
+        orcidByName[r.name.toLowerCase().trim()] = r.orcid.replace(
+          /^https?:\/\/orcid\.org\//i,
+          ""
+        );
+      }
+    }
+    const needsEmail = reviewers.filter((r) => !r.email).length;
+    if (needsEmail > 0) {
+      console.log(`[Find] Enriching emails for ${needsEmail} reviewers...`);
+      await enrichReviewerEmailsBatch(reviewers, { orcidByName });
+    }
 
     // Run COI checks if authors are provided and checkCOI is enabled
     if (checkCOI && parsedAuthors.length > 0 && reviewers.length > 0) {

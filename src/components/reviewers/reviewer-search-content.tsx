@@ -32,13 +32,27 @@ import {
   type ReviewerSearchFormState,
   type ReviewerSearchActiveTab,
 } from "@/lib/reviewer-search-form-state";
+import {
+  normalizeReviewerName,
+  buildFlagsFromDbReviewers,
+  computeExpertiseCoverage,
+  computeFocusKeywords,
+  filterActiveReviewers,
+  mergeReviewerLists,
+  tagNewReviewers,
+  sortReviewersDisplayOrder,
+  collectKnownReviewerNames,
+  type DbReviewerIndex,
+} from "@/lib/reviewers/reviewer-list-utils";
 
 interface ReviewerCandidate {
   id: string;
   name: string;
   firstName: string;
   lastName: string;
+  email?: string | null;
   affiliation?: string;
+  isNewThisRun?: boolean;
   source: "pubmed" | "openalex" | "both";
   worksCount?: number;
   citedByCount?: number;
@@ -108,6 +122,7 @@ interface AdvancedReviewer {
     conflicts: ReviewerConflict[];
   };
   inferredGender?: "likely_male" | "likely_female" | "unknown";
+  isNewThisRun?: boolean;
 }
 
 type DiscoveryReviewer = AdvancedReviewer;
@@ -143,45 +158,6 @@ interface DiscoveryResult {
   relatedConcepts: { id: string; display_name: string; relevance: number }[];
   disclaimer: string;
   selectionCriteria: Record<string, string | boolean>;
-}
-
-type DbReviewerIndex = Record<string, { id: string; status: string }>;
-
-function normalizeReviewerName(name: string): string {
-  return name.trim().toLowerCase();
-}
-
-function buildFlagsFromDbReviewers(
-  reviewers: Array<{ id: string; name: string; status: string }>
-): Record<string, "up" | "down" | null> {
-  const flags: Record<string, "up" | "down" | null> = {};
-  for (const r of reviewers) {
-    if (r.status === "SHORTLISTED") flags[r.id] = "up";
-    else if (r.status === "REJECTED") flags[r.id] = "down";
-  }
-  return flags;
-}
-
-function reviewerSortRank(
-  reviewer: { id: string; name: string },
-  flags: Record<string, "up" | "down" | null>,
-  dbIndex: DbReviewerIndex
-): number {
-  const key = normalizeReviewerName(reviewer.name);
-  if (flags[reviewer.id] === "up" || dbIndex[key]?.status === "SHORTLISTED") return 0;
-  if (flags[reviewer.id] === "down") return 2;
-  return 1;
-}
-
-function sortReviewersByShortlist<T extends { id: string; name: string }>(
-  reviewers: T[],
-  flags: Record<string, "up" | "down" | null>,
-  dbIndex: DbReviewerIndex
-): T[] {
-  return [...reviewers].sort(
-    (a, b) =>
-      reviewerSortRank(a, flags, dbIndex) - reviewerSortRank(b, flags, dbIndex)
-  );
 }
 
 export interface ReviewerSearchContentProps {
@@ -486,54 +462,77 @@ export function ReviewerSearchContent({
     return [...new Set(all)];
   }, [primaryKeywords, secondaryKeywords]);
 
-  const expertiseCoverage = useMemo(() => {
-    const allReviewers = [
+  const quickFindExpertise = useMemo(
+    () =>
+      [...new Set(keywords.split(",").map((k) => k.trim()).filter(Boolean))],
+    [keywords]
+  );
+
+  const allReviewersForCoverage = useMemo(
+    () => [
       ...(discoveryResult?.reviewers || []),
       ...(candidateReviewers || []),
-    ];
-    const coverage: Record<string, { reviewerIds: string[]; reviewerNames: string[] }> = {};
-    for (const exp of manuscriptExpertise) {
-      coverage[exp] = { reviewerIds: [], reviewerNames: [] };
-    }
-    for (const r of allReviewers) {
-      const assigned = assignedExpertise[r.id] || [];
-      for (const exp of assigned) {
-        if (coverage[exp]) {
-          coverage[exp].reviewerIds.push(r.id);
-          coverage[exp].reviewerNames.push(r.name);
-        }
-      }
-    }
-    return coverage;
-  }, [manuscriptExpertise, assignedExpertise, discoveryResult, candidateReviewers]);
-
-  const coveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) > 0),
-    [manuscriptExpertise, expertiseCoverage]
+    ],
+    [discoveryResult, candidateReviewers]
   );
-  const uncoveredExpertise = useMemo(
-    () => manuscriptExpertise.filter(e => (expertiseCoverage[e]?.reviewerIds.length || 0) === 0),
-    [manuscriptExpertise, expertiseCoverage]
+
+  const expertiseCoverageState = useMemo(() => {
+    const expertiseList =
+      activeTab === "auto-find" ? quickFindExpertise : manuscriptExpertise;
+    const namesById: Record<string, string> = {};
+    for (const r of allReviewersForCoverage) {
+      namesById[r.id] = r.name;
+    }
+    return computeExpertiseCoverage(
+      expertiseList,
+      assignedExpertise,
+      allReviewersForCoverage.map((r) => r.id),
+      namesById
+    );
+  }, [
+    activeTab,
+    quickFindExpertise,
+    manuscriptExpertise,
+    assignedExpertise,
+    allReviewersForCoverage,
+  ]);
+
+  const expertiseCoverage = expertiseCoverageState.coverage;
+  const coveredExpertise = expertiseCoverageState.coveredExpertise;
+  const uncoveredExpertise = expertiseCoverageState.uncoveredExpertise;
+
+  const sortOptions = useMemo(
+    () => ({
+      assignedExpertise,
+      flags: flaggedReviewers,
+      dbIndex: dbReviewerIndex,
+    }),
+    [assignedExpertise, flaggedReviewers, dbReviewerIndex]
   );
 
   const sortedDiscoveryReviewers = useMemo(() => {
     if (!discoveryResult?.reviewers.length) return [];
-    return sortReviewersByShortlist(
-      discoveryResult.reviewers,
+    return sortReviewersDisplayOrder(
+      filterActiveReviewers(discoveryResult.reviewers, flaggedReviewers, dbReviewerIndex),
+      sortOptions
+    );
+  }, [discoveryResult, flaggedReviewers, dbReviewerIndex, sortOptions]);
+
+  const sortedCandidateReviewers = useMemo(() => {
+    const active = filterActiveReviewers(
+      candidateReviewers,
       flaggedReviewers,
       dbReviewerIndex
     );
-  }, [discoveryResult, flaggedReviewers, dbReviewerIndex]);
+    return sortReviewersDisplayOrder(active, sortOptions);
+  }, [candidateReviewers, flaggedReviewers, dbReviewerIndex, sortOptions]);
 
-  const sortedCandidateReviewers = useMemo(
-    () =>
-      sortReviewersByShortlist(
-        candidateReviewers,
-        flaggedReviewers,
-        dbReviewerIndex
-      ),
-    [candidateReviewers, flaggedReviewers, dbReviewerIndex]
-  );
+  const getKnownNamesBeforeRun = useCallback(() => {
+    return collectKnownReviewerNames([
+      ...(discoveryResult?.reviewers || []),
+      ...candidateReviewers,
+    ]);
+  }, [discoveryResult, candidateReviewers]);
 
   const toggleExpertise = (reviewerId: string, expertise: string) => {
     setAssignedExpertise(prev => {
@@ -607,6 +606,16 @@ export function ReviewerSearchContent({
         const flags = buildFlagsFromDbReviewers(allReviewers);
         setFlaggedReviewers(flags);
 
+        const expertiseMap: Record<string, string[]> = {};
+        allReviewers.forEach((r) => {
+          if (r.assignedExpertise && r.assignedExpertise.length > 0) {
+            expertiseMap[r.id] = r.assignedExpertise as string[];
+          }
+        });
+        if (Object.keys(expertiseMap).length > 0) {
+          setAssignedExpertise((prev) => ({ ...prev, ...expertiseMap }));
+        }
+
         if (active.length > 0) {
           const mapped = active.map(mapDbReviewerToAdvanced);
           const dbByName = new Map(
@@ -627,10 +636,17 @@ export function ReviewerSearchContent({
                 db ? { ...r, ...db, id: db.id } : r
               );
             }
-            const reviewers = sortReviewersByShortlist(
-              Array.from(mergedMap.values()),
-              flags,
-              index
+            const mergedList = Array.from(mergedMap.values()).map((r) => ({
+              ...r,
+              isNewThisRun: false,
+            }));
+            const reviewers = sortReviewersDisplayOrder(
+              filterActiveReviewers(mergedList, flags, index),
+              {
+                assignedExpertise: { ...expertiseMap },
+                flags,
+                dbIndex: index,
+              }
             );
 
             return {
@@ -673,18 +689,11 @@ export function ReviewerSearchContent({
                 coiSummary: db.coiSummary ?? r.coiSummary,
               };
             });
-            return sortReviewersByShortlist(synced, flags, index);
+            return sortReviewersDisplayOrder(
+              filterActiveReviewers(synced, flags, index),
+              { assignedExpertise: expertiseMap, flags, dbIndex: index }
+            );
           });
-        }
-
-        const expertiseMap: Record<string, string[]> = {};
-        allReviewers.forEach((r) => {
-          if (r.assignedExpertise && r.assignedExpertise.length > 0) {
-            expertiseMap[r.id] = r.assignedExpertise;
-          }
-        });
-        if (Object.keys(expertiseMap).length > 0) {
-          setAssignedExpertise((prev) => ({ ...prev, ...expertiseMap }));
         }
       }
     } catch (error) {
@@ -879,8 +888,32 @@ export function ReviewerSearchContent({
     }
 
     setIsFindingReviewers(true);
-    setCandidateReviewers([]);
     setCoauthorWarnings([]);
+
+    const keywordList = keywords.split(",").map((k: string) => k.trim()).filter(Boolean);
+    const namesById: Record<string, string> = {};
+    for (const r of candidateReviewers) {
+      namesById[r.id] = r.name;
+    }
+    const quickCoverage = computeExpertiseCoverage(
+      quickFindExpertise,
+      assignedExpertise,
+      candidateReviewers.map((r) => r.id),
+      namesById
+    );
+    const focusKeywords = computeFocusKeywords(
+      quickFindExpertise,
+      quickCoverage.coveredExpertise,
+      quickCoverage.uncoveredExpertise
+    );
+    if (
+      focusKeywords.length > 0 &&
+      quickCoverage.uncoveredExpertise.length > 0 &&
+      quickCoverage.coveredExpertise.length > 0
+    ) {
+      toast.info(`Focusing search on: ${focusKeywords.join(", ")}`);
+    }
+    const knownBefore = getKnownNamesBeforeRun();
 
     try {
       const response = await fetch("/api/reviewers/find", {
@@ -888,7 +921,12 @@ export function ReviewerSearchContent({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           authorList: authorList.trim() || undefined,
-          keywords: keywords.split(",").map((k: string) => k.trim()).filter(Boolean),
+          keywords: keywordList,
+          focusKeywords:
+            focusKeywords.length > 0 &&
+            quickCoverage.coveredExpertise.length > 0
+              ? focusKeywords
+              : undefined,
         }),
       });
 
@@ -898,15 +936,28 @@ export function ReviewerSearchContent({
         throw new Error(data.error || "Failed to find reviewers");
       }
 
-      setCandidateReviewers(data.reviewers);
+      const incoming: ReviewerCandidate[] = (data.reviewers || []).map(
+        (r: ReviewerCandidate & { email?: string | null }) => ({
+          ...r,
+          email: r.email ?? null,
+          isNewThisRun: !knownBefore.has(normalizeReviewerName(r.name)),
+        })
+      );
+      const merged = mergeReviewerLists(candidateReviewers, incoming);
+      const sorted = sortReviewersDisplayOrder(
+        filterActiveReviewers(merged, flaggedReviewers, dbReviewerIndex),
+        sortOptions
+      );
+      setCandidateReviewers(sorted);
       setCoauthorWarnings(data.coauthors || []);
 
       if (selectedManuscriptId && data.reviewers?.length > 0) {
         try {
-          const mapped = data.reviewers.map((r: ReviewerCandidate) => ({
+          const mapped = sorted.map((r) => ({
             name: r.name,
             firstName: r.firstName,
             lastName: r.lastName,
+            email: r.email,
             affiliation: r.affiliation,
             hIndex: r.hIndex,
             citationCount: r.citedByCount,
@@ -956,17 +1007,38 @@ export function ReviewerSearchContent({
     }
 
     setIsDiscovering(true);
-    setDiscoveryResult(null);
+
+    const primaryList = primaryKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const focusKeywords = computeFocusKeywords(
+      manuscriptExpertise,
+      coveredExpertise,
+      uncoveredExpertise
+    );
+    if (
+      focusKeywords.length > 0 &&
+      uncoveredExpertise.length > 0 &&
+      coveredExpertise.length > 0
+    ) {
+      toast.info(`Focusing search on: ${focusKeywords.join(", ")}`);
+    }
+    const knownBefore = getKnownNamesBeforeRun();
+    const previousReviewers = discoveryResult?.reviewers ?? [];
 
     try {
       const response = await fetch("/api/reviewers/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          primaryKeywords: primaryKeywords.split(",").map(k => k.trim()).filter(Boolean),
-          secondaryKeywords: secondaryKeywords 
-            ? secondaryKeywords.split(",").map(k => k.trim()).filter(Boolean) 
+          primaryKeywords: primaryList,
+          secondaryKeywords: secondaryKeywords
+            ? secondaryKeywords.split(",").map((k) => k.trim()).filter(Boolean)
             : undefined,
+          focusKeywords:
+            coveredExpertise.length > 0 && uncoveredExpertise.length > 0
+              ? focusKeywords
+              : undefined,
+          coveredExpertise:
+            coveredExpertise.length > 0 ? coveredExpertise : undefined,
           keywordOperator,
           minHIndex,
           maxHIndex,
@@ -988,17 +1060,30 @@ export function ReviewerSearchContent({
         throw new Error(data.error || "Failed to discover reviewers");
       }
 
-      setDiscoveryResult(data);
+      const incoming = tagNewReviewers(
+        (data.reviewers || []) as AdvancedReviewer[],
+        knownBefore
+      );
+      const merged = mergeReviewerLists(previousReviewers, incoming);
+      const sorted = sortReviewersDisplayOrder(
+        filterActiveReviewers(merged, flaggedReviewers, dbReviewerIndex),
+        sortOptions
+      );
+      setDiscoveryResult({
+        ...data,
+        reviewers: sorted,
+      });
 
       const msId = selectedManuscriptId;
-      const revCount = data.reviewers?.length ?? 0;
+      const revCount = incoming.length;
 
       if (msId && revCount > 0) {
         try {
-          const mapped = data.reviewers.map((r: DiscoveryReviewer) => ({
+          const mapped = sorted.map((r) => ({
             name: r.name,
             firstName: r.firstName,
             lastName: r.lastName,
+            email: r.email,
             affiliation: r.affiliation,
             country: r.country,
             hIndex: r.hIndex,
@@ -1020,7 +1105,7 @@ export function ReviewerSearchContent({
           if (saveRes.ok) {
             await loadPersistedReviewers(msId);
             toast.success(
-              `Found ${revCount} reviewers from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved to manuscript`
+              `Added ${revCount} reviewers (${sorted.length} total) from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved`
             );
           } else {
             toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
@@ -1049,13 +1134,14 @@ export function ReviewerSearchContent({
       return;
     }
 
-    let reviewersToSave: { name: string; firstName?: string; lastName?: string; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; recentArticles?: Record<string, unknown>[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
+    let reviewersToSave: { name: string; firstName?: string; lastName?: string; email?: string | null; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; recentArticles?: Record<string, unknown>[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
 
     if (discoveryResult?.reviewers.length) {
       reviewersToSave = discoveryResult.reviewers.map(r => ({
         name: r.name,
         firstName: r.firstName,
         lastName: r.lastName,
+        email: r.email,
         affiliation: r.affiliation,
         country: r.country,
         hIndex: r.hIndex,
@@ -1073,6 +1159,7 @@ export function ReviewerSearchContent({
         name: r.name,
         firstName: r.firstName,
         lastName: r.lastName,
+        email: r.email,
         affiliation: r.affiliation,
         hIndex: r.hIndex,
         citationCount: r.citedByCount,

@@ -86,6 +86,11 @@ export function ReviewerDiscoveryCard({
                 {sources[0]}
               </Badge>
             ) : null}
+            {reviewer.isNewThisRun && (
+              <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 text-xs">
+                New
+              </Badge>
+            )}
             <COIBadge
               severity={reviewer.coiSummary?.worstSeverity || null}
               conflictCount={reviewer.coiSummary?.conflictCount || 0}

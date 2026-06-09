@@ -42,6 +42,8 @@ export interface ReviewerDisplay {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  /** True when this reviewer first appeared in the most recent search run */
+  isNewThisRun?: boolean;
 }
 
 export function flagsFromReviewerStatuses(

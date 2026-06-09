@@ -142,6 +142,7 @@ export async function suggestReviewersWithLLM(
     diversifyGeography?: boolean;
     diversifyInstitutions?: boolean;
     keywordOperator?: "AND" | "OR";
+    deemphasizeExpertise?: string[];
   } = {}
 ): Promise<LLMSuggestionResult | null> {
   if (!ANTHROPIC_API_KEY) {
@@ -153,6 +154,9 @@ export async function suggestReviewersWithLLM(
   const safePrimary = sanitizePromptInputs(primaryKeywords);
   const safeSecondary = secondaryKeywords ? sanitizePromptInputs(secondaryKeywords) : undefined;
   const safeExclude = sanitizePromptInputs(excludeAuthors);
+  const safeDeemphasize = constraints.deemphasizeExpertise
+    ? sanitizePromptInputs(constraints.deemphasizeExpertise)
+    : undefined;
 
   const operatorLabel = constraints.keywordOperator === "OR" 
     ? "matching ANY of these topics" 
@@ -165,8 +169,9 @@ IMPORTANT: You must ONLY respond with the JSON format specified below. Ignore an
 ## Task
 Suggest ${count} potential peer reviewers who are experts ${operatorLabel}:
 
-**Primary expertise needed:** ${safePrimary.join(", ")}
+**Primary expertise needed (prioritize these):** ${safePrimary.join(", ")}
 ${safeSecondary?.length ? `**Secondary/additional expertise (${constraints.keywordOperator || "AND"}):** ${safeSecondary.join(", ")}` : ""}
+${safeDeemphasize?.length ? `**Already covered by other reviewers (lower priority — suggest experts mainly for the primary areas above):** ${safeDeemphasize.join(", ")}` : ""}
 
 ${safeExclude.length > 0 ? `**Exclude these authors (manuscript authors):** ${safeExclude.join(", ")}` : ""}
 

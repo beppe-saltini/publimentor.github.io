@@ -6,6 +6,7 @@ import { suggestReviewersWithLLM } from "@/lib/llm";
 import { searchAuthor as searchSemanticScholar, searchAuthorByOrcid as searchSSByOrcid } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ReviewerCOISummary, type ConflictSeverity } from "@/lib/coi-detector";
+import { enrichReviewerEmailsBatch } from "@/lib/reviewers/email-enrichment";
 import { z } from "zod";
 import {
   checkRateLimit,
@@ -97,6 +98,8 @@ const discoverSchema = z.object({
   avoidSameInstitution: z.boolean().default(true),
   useLLM: z.boolean().default(true),
   checkCOI: z.boolean().default(true),  // Check for conflicts of interest
+  focusKeywords: z.array(z.string().max(200)).max(10).optional(),
+  coveredExpertise: z.array(z.string().max(200)).max(10).optional(),
 });
 
 interface ReviewerCandidate {
@@ -186,6 +189,10 @@ export async function POST(request: Request) {
     // Sanitize keyword inputs
     const sanitizedPrimary = params.primaryKeywords.map(k => sanitizeString(k));
     const sanitizedSecondary = params.secondaryKeywords?.map(k => sanitizeString(k));
+    const sanitizedFocus = params.focusKeywords?.map(k => sanitizeString(k)).filter(Boolean);
+    const sanitizedCovered = params.coveredExpertise?.map(k => sanitizeString(k)).filter(Boolean);
+    const searchPrimary =
+      sanitizedFocus && sanitizedFocus.length > 0 ? sanitizedFocus : sanitizedPrimary;
 
     console.log(`[Discover] Filters: H-index ${params.minHIndex}-${params.maxHIndex}, Pubs ${params.minPublications}-${params.maxPublications}, Years ${params.yearsActive}, Senior=${params.requireSeniorAuthor}, LLM=${params.useLLM}`);
 
@@ -197,6 +204,7 @@ export async function POST(request: Request) {
 
     const candidates: ReviewerCandidate[] = [];
     const institutionDomainCache = new Map<string, string | null>();
+    const orcidByReviewerName: Record<string, string> = {};
     let llmUsed = false;
     let searchStrategy = "";
     let caveats: string[] = [];
@@ -206,7 +214,7 @@ export async function POST(request: Request) {
       console.log("[Discover] Using Claude as PRIMARY source for reviewer suggestions...");
       
       const llmResult = await suggestReviewersWithLLM(
-        params.primaryKeywords,
+        searchPrimary,
         params.secondaryKeywords,
         excludeNames,
         params.maxResults + 5, // Get a few extra in case some can't be verified
@@ -215,6 +223,10 @@ export async function POST(request: Request) {
           diversifyGeography: params.diversifyGeo,
           diversifyInstitutions: params.avoidSameInstitution,
           keywordOperator: params.keywordOperator,
+          deemphasizeExpertise:
+            sanitizedCovered && sanitizedCovered.length > 0
+              ? sanitizedCovered
+              : undefined,
         }
       );
 
@@ -426,6 +438,10 @@ export async function POST(request: Request) {
               ? `https://www.google.com/search?q=site:${encodeURIComponent(instDomain)}+"${encodeURIComponent(finalName)}"`
               : `https://www.google.com/search?q="${encodeURIComponent(finalName)}"+"${encodeURIComponent(suggested.affiliation.slice(0, 50))}"`;
 
+            if (oaOrcid) {
+              orcidByReviewerName[finalName.toLowerCase().trim()] = oaOrcid;
+            }
+
             const candidate: ReviewerCandidate = {
               id: `llm_${finalName.toLowerCase().replace(/\s+/g, "_")}`,
               name: finalName,
@@ -480,7 +496,7 @@ export async function POST(request: Request) {
       try {
         // Use OpenAlex for initial discovery (has H-index filtering)
         const oaResult = await openAlex.discoverReviewers({
-          primaryKeywords: params.primaryKeywords,
+          primaryKeywords: searchPrimary,
           secondaryKeywords: params.secondaryKeywords,
           minHIndex: params.minHIndex,
           maxHIndex: params.maxHIndex,
@@ -551,6 +567,11 @@ export async function POST(request: Request) {
           const instSearchUrl2 = instDomain2
             ? `https://www.google.com/search?q=site:${encodeURIComponent(instDomain2)}+"${encodeURIComponent(oaAuthor.display_name)}"`
             : `https://www.google.com/search?q="${encodeURIComponent(oaAuthor.display_name)}"+"${encodeURIComponent(affiliation.slice(0, 50))}"`;
+
+          if (oaOrcidClean) {
+            orcidByReviewerName[oaAuthor.display_name.toLowerCase().trim()] =
+              oaOrcidClean;
+          }
 
           candidates.push({
             id: oaAuthor.id,
@@ -682,7 +703,14 @@ export async function POST(request: Request) {
       }
     }
 
-    // STEP 5: Run COI checks if authors are provided and checkCOI is enabled
+    // STEP 5: Enrich missing emails from ORCID, institution pages, and web search
+    const needsEmail = candidates.filter((c) => !c.email).length;
+    if (needsEmail > 0) {
+      console.log(`[Discover] Enriching emails for ${needsEmail} reviewers...`);
+      await enrichReviewerEmailsBatch(candidates, { orcidByName: orcidByReviewerName });
+    }
+
+    // STEP 6: Run COI checks if authors are provided and checkCOI is enabled
     if (params.checkCOI && parsedAuthors.length > 0 && candidates.length > 0) {
       console.log(`[Discover] Running COI checks for ${candidates.length} reviewers against ${parsedAuthors.length} authors...`);
       

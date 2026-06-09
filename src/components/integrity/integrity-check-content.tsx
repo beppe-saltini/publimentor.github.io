@@ -63,43 +63,51 @@ interface AuthorInput {
   affiliation: string;
 }
 
-interface ReferenceValidation {
-  input: { raw: string; doi?: string; pmid?: string };
-  doi: {
-    found: boolean;
-    valid: boolean | null;
-    resolvedTitle?: string;
-    resolvedAuthors?: string[];
-    resolvedYear?: number;
-    resolvedJournal?: string;
-    issues: string[];
-  };
-  pmid: {
-    found: boolean;
-    valid: boolean | null;
+interface BestMatchInfo {
+  title: string;
+  authors: string[];
+  year?: number;
+  journal?: string;
+  doi?: string;
+  source: string;
+  compositeScore: number;
+  titleScore: number;
+  authorScore: number;
+  yearScore: number;
+}
+
+interface ReferenceMetadataItem {
+  input: {
+    raw: string;
+    doi?: string;
+    pmid?: string;
     title?: string;
-    issues: string[];
+    authors?: string;
+    year?: number;
+    journal?: string;
   };
-  retraction: {
-    checked: boolean;
-    isRetracted: boolean | null;
-    retractionDate?: string;
-  };
-  status: "valid" | "not_found" | "retracted" | "suspicious" | "unchecked";
-  confidence: "high" | "medium" | "low" | "unverified";
+  parsed: { title?: string; authors?: string; year?: number; journal?: string };
+  classification: "validated" | "fake" | "unsure";
+  bestMatch?: BestMatchInfo;
+  alternativeCandidates: BestMatchInfo[];
+  sourcesQueried: string[];
+  sourcesReached: number;
+  isRetracted: boolean;
+  retractionDate?: string;
   issues: string[];
 }
 
 interface ReferenceResult {
-  references: ReferenceValidation[];
+  validated: ReferenceMetadataItem[];
+  fake: ReferenceMetadataItem[];
+  unsure: ReferenceMetadataItem[];
   summary: {
     total: number;
-    valid: number;
-    notFound: number;
-    retracted: number;
-    suspicious: number;
-    unchecked: number;
+    validated: number;
+    fake: number;
+    unsure: number;
   };
+  disclaimer?: string;
 }
 
 interface IdentityResult {
@@ -161,7 +169,15 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
 
   // Reference validation state
   const [referenceText, setReferenceText] = useState("");
-  const [manuscriptRefs, setManuscriptRefs] = useState<{raw: string; doi?: string; pmid?: string}[]>([]);
+  const [manuscriptRefs, setManuscriptRefs] = useState<{
+    raw: string;
+    doi?: string;
+    pmid?: string;
+    title?: string;
+    authors?: string;
+    year?: number;
+    journal?: string;
+  }[]>([]);
   const [isValidatingRefs, setIsValidatingRefs] = useState(false);
   const [referenceResult, setReferenceResult] = useState<ReferenceResult | null>(null);
 
@@ -285,12 +301,12 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
       setReferenceResult(data);
       
       const { summary } = data;
-      if (summary.retracted > 0) {
-        toast.error(`⚠️ ${summary.retracted} RETRACTED reference(s) found!`);
-      } else if (summary.notFound > 0) {
-        toast.warning(`${summary.notFound} reference(s) could not be verified`);
+      if (summary.fake > 0) {
+        toast.error(`${summary.fake} reference(s) flagged as likely fake or retracted`);
+      } else if (summary.unsure > 0) {
+        toast.warning(`${summary.unsure} reference(s) need manual review (unsure)`);
       } else {
-        toast.info(`${summary.valid} of ${summary.total} references validated`);
+        toast.success(`${summary.validated} of ${summary.total} references validated`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Validation failed");
@@ -299,19 +315,93 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
     }
   };
 
-  const getStatusBadge = (status: ReferenceValidation["status"]) => {
-    switch (status) {
-      case "valid":
-        return <Badge className="bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Valid</Badge>;
-      case "not_found":
-        return <Badge className="bg-amber-100 text-amber-800"><AlertCircle className="h-3 w-3 mr-1" />Not Found</Badge>;
-      case "retracted":
-        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />RETRACTED</Badge>;
-      case "suspicious":
-        return <Badge className="bg-orange-100 text-orange-800"><AlertTriangle className="h-3 w-3 mr-1" />Suspicious</Badge>;
-      default:
-        return <Badge className="bg-gray-100 text-gray-800">Unchecked</Badge>;
+  const getClassificationBadge = (classification: ReferenceMetadataItem["classification"]) => {
+    switch (classification) {
+      case "validated":
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Validated</Badge>;
+      case "unsure":
+        return <Badge className="bg-amber-100 text-amber-800"><AlertCircle className="h-3 w-3 mr-1" />Unsure</Badge>;
+      case "fake":
+        return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Fake</Badge>;
     }
+  };
+
+  const renderReferenceCard = (ref: ReferenceMetadataItem) => (
+    <div
+      key={ref.input.raw.slice(0, 80) + ref.classification}
+      className={`rounded-lg border p-3 ${
+        ref.classification === "fake" || ref.isRetracted
+          ? "border-red-300 bg-red-50"
+          : ref.classification === "unsure"
+            ? "border-amber-200 bg-amber-50"
+            : "bg-white"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-gray-700 line-clamp-2">{ref.input.raw}</p>
+          {ref.parsed.title && (
+            <p className="text-xs text-gray-500 mt-1">
+              Parsed title: {ref.parsed.title}
+              {ref.parsed.year ? ` (${ref.parsed.year})` : ""}
+            </p>
+          )}
+          {ref.bestMatch && (
+            <div className="mt-2 text-xs text-gray-600 space-y-0.5">
+              <p className="font-medium text-green-800">Best match ({ref.bestMatch.source})</p>
+              <p>{ref.bestMatch.title}</p>
+              <p>
+                {ref.bestMatch.authors.slice(0, 3).join(", ")}
+                {ref.bestMatch.authors.length > 3 ? " et al." : ""}
+                {ref.bestMatch.year ? ` · ${ref.bestMatch.year}` : ""}
+              </p>
+              <p>
+                Score: {Math.round(ref.bestMatch.compositeScore * 100)}%
+                (title {Math.round(ref.bestMatch.titleScore * 100)}%,
+                authors {Math.round(ref.bestMatch.authorScore * 100)}%,
+                year {Math.round(ref.bestMatch.yearScore * 100)}%)
+              </p>
+            </div>
+          )}
+          {ref.isRetracted && (
+            <p className="text-xs text-red-700 font-medium mt-1">
+              Retracted{ref.retractionDate ? ` on ${ref.retractionDate}` : ""}
+            </p>
+          )}
+          {ref.issues.length > 0 && (
+            <div className="mt-1">
+              {ref.issues.map((issue, i) => (
+                <p key={i} className="text-xs text-orange-700">{issue}</p>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-gray-400 mt-1">
+            Sources: {ref.sourcesQueried.join(", ") || "none"}
+            {ref.sourcesReached > 0 && ` (${ref.sourcesReached} with hits)`}
+          </p>
+        </div>
+        <div className="flex-shrink-0">{getClassificationBadge(ref.classification)}</div>
+      </div>
+    </div>
+  );
+
+  const renderReferenceSection = (
+    title: string,
+    items: ReferenceMetadataItem[],
+    borderClass: string,
+    titleClass: string
+  ) => {
+    if (items.length === 0) return null;
+    return (
+      <Card className={borderClass}>
+        <CardHeader className="py-3">
+          <CardTitle className={`text-base ${titleClass}`}>
+            {title} ({items.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 pt-0">{items.map(renderReferenceCard)}</CardContent>
+      </Card>
+    );
   };
 
   const getConfidenceBadge = (confidence: "high" | "medium" | "low" | "unverified") => {
@@ -425,6 +515,10 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
               if (data.references && data.references.length > 0) {
                 const structured = data.references.map(r => ({
                   raw: r.rawText,
+                  ...(r.title ? { title: r.title } : {}),
+                  ...(r.authors ? { authors: r.authors } : {}),
+                  ...(r.year != null ? { year: r.year } : {}),
+                  ...(r.journal ? { journal: r.journal } : {}),
                   ...(r.doi ? { doi: r.doi } : {}),
                   ...(r.pmid ? { pmid: r.pmid } : {}),
                 }));
@@ -908,8 +1002,9 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                 <div className="text-sm text-blue-800">
                   <p className="font-medium">About Reference Validation</p>
                   <p className="text-blue-700">
-                    Validates DOIs and PubMed IDs against Crossref and PubMed databases. 
-                    Checks for retracted papers. Cannot verify citation context or relevance.
+                    Searches OpenAlex, Crossref, and PubMed by article title, authors, and year.
+                    DOI is not required; it is only used for optional corroboration and retraction checks.
+                    Results are grouped as validated, fake, or unsure.
                   </p>
                 </div>
               </div>
@@ -923,7 +1018,7 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                 Reference Validation
               </CardTitle>
               <CardDescription>
-                Paste the reference list from the manuscript to validate DOIs and check for retractions
+                Paste the reference list or load from a manuscript to validate citations by title and metadata
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -931,7 +1026,7 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                 <Label htmlFor="refText">Reference List</Label>
                 <Textarea
                   id="refText"
-                  placeholder="Paste the reference list here. Each reference should be on a new line. DOIs and PMIDs will be automatically extracted..."
+                  placeholder="Paste the reference list here. Each reference on its own line. Title, authors, year, DOI, and PMID are used when present..."
                   value={referenceText}
                   onChange={(e) => { setReferenceText(e.target.value); setManuscriptRefs([]); }}
                   rows={10}
@@ -971,46 +1066,41 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                   <CardTitle className="text-base">Validation Summary</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                     <div className="bg-gray-50 rounded-lg p-3">
                       <p className="text-2xl font-bold">{referenceResult.summary.total}</p>
                       <p className="text-xs text-gray-500">Total</p>
                     </div>
                     <div className="bg-green-50 rounded-lg p-3">
-                      <p className="text-2xl font-bold text-green-700">{referenceResult.summary.valid}</p>
-                      <p className="text-xs text-green-600">Valid</p>
+                      <p className="text-2xl font-bold text-green-700">{referenceResult.summary.validated}</p>
+                      <p className="text-xs text-green-600">Validated</p>
+                    </div>
+                    <div className={`rounded-lg p-3 ${referenceResult.summary.fake > 0 ? "bg-red-100" : "bg-gray-50"}`}>
+                      <p className={`text-2xl font-bold ${referenceResult.summary.fake > 0 ? "text-red-700" : "text-gray-400"}`}>
+                        {referenceResult.summary.fake}
+                      </p>
+                      <p className={`text-xs ${referenceResult.summary.fake > 0 ? "text-red-600 font-medium" : "text-gray-500"}`}>
+                        Fake
+                      </p>
                     </div>
                     <div className="bg-amber-50 rounded-lg p-3">
-                      <p className="text-2xl font-bold text-amber-700">{referenceResult.summary.notFound}</p>
-                      <p className="text-xs text-amber-600">Not Found</p>
-                    </div>
-                    <div className={`rounded-lg p-3 ${referenceResult.summary.retracted > 0 ? "bg-red-100" : "bg-gray-50"}`}>
-                      <p className={`text-2xl font-bold ${referenceResult.summary.retracted > 0 ? "text-red-700" : "text-gray-400"}`}>
-                        {referenceResult.summary.retracted}
-                      </p>
-                      <p className={`text-xs ${referenceResult.summary.retracted > 0 ? "text-red-600 font-medium" : "text-gray-500"}`}>
-                        Retracted
-                      </p>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <p className="text-2xl font-bold text-gray-500">{referenceResult.summary.unchecked}</p>
-                      <p className="text-xs text-gray-500">Unchecked</p>
+                      <p className="text-2xl font-bold text-amber-700">{referenceResult.summary.unsure}</p>
+                      <p className="text-xs text-amber-600">Unsure</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Retracted papers warning */}
-              {referenceResult.summary.retracted > 0 && (
+              {referenceResult.summary.fake > 0 && (
                 <Card className="border-red-300 bg-red-50">
                   <CardContent className="py-4">
                     <div className="flex items-start gap-2">
                       <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
                       <div>
-                        <p className="font-medium text-red-800">⚠️ Retracted Reference(s) Detected</p>
+                        <p className="font-medium text-red-800">Likely fake or retracted references</p>
                         <p className="text-sm text-red-700">
-                          {referenceResult.summary.retracted} reference(s) appear to cite retracted papers. 
-                          This requires immediate editorial attention.
+                          {referenceResult.summary.fake} reference(s) could not be matched to real works or cite retracted papers.
+                          Editorial review is recommended.
                         </p>
                       </div>
                     </div>
@@ -1018,63 +1108,29 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                 </Card>
               )}
 
-              {/* Individual references */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Reference Details</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {referenceResult.references.map((ref, index) => (
-                    <div 
-                      key={index} 
-                      className={`rounded-lg border p-3 ${
-                        ref.status === "retracted" ? "border-red-300 bg-red-50" :
-                        ref.status === "valid" ? "bg-white" :
-                        ref.status === "not_found" ? "border-amber-200 bg-amber-50" :
-                        "bg-gray-50"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-700 line-clamp-2">{ref.input.raw}</p>
-                          {ref.doi.resolvedTitle && (
-                            <p className="text-xs text-gray-500 mt-1">
-                              Resolved: {ref.doi.resolvedTitle}
-                            </p>
-                          )}
-                          {ref.input.doi && (
-                            <p className="text-xs text-blue-600 mt-1">
-                              DOI: {ref.input.doi}
-                            </p>
-                          )}
-                          {ref.retraction.isRetracted && (
-                            <p className="text-xs text-red-700 font-medium mt-1">
-                              ⚠️ This paper was RETRACTED
-                              {ref.retraction.retractionDate && ` on ${ref.retraction.retractionDate}`}
-                            </p>
-                          )}
-                          {ref.issues.length > 0 && (
-                            <div className="mt-1">
-                              {ref.issues.map((issue, i) => (
-                                <p key={i} className="text-xs text-orange-700">{issue}</p>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex-shrink-0">
-                          {getStatusBadge(ref.status)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
+              {renderReferenceSection(
+                "Validated references",
+                referenceResult.validated,
+                "border-green-200",
+                "text-green-800"
+              )}
+              {renderReferenceSection(
+                "Fake references",
+                referenceResult.fake,
+                "border-red-200",
+                "text-red-800"
+              )}
+              {renderReferenceSection(
+                "Unsure — needs manual review",
+                referenceResult.unsure,
+                "border-amber-200",
+                "text-amber-800"
+              )}
 
               <Card className="bg-gray-50">
                 <CardContent className="py-3 text-xs text-gray-600 italic">
-                  Reference validation checks DOIs and PMIDs against Crossref and PubMed databases. 
-                  It cannot verify citation context, relevance, or accuracy of claims. 
-                  Retraction checks may not be comprehensive. All findings require editorial review.
+                  {referenceResult.disclaimer ||
+                    "Automated screening by title/author/year across OpenAlex, Crossref, and PubMed. Cannot verify citation context or relevance. All findings require editorial review."}
                 </CardContent>
               </Card>
             </div>
