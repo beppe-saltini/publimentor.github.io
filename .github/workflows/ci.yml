@@ -1,0 +1,42 @@
+name: CI
+
+# Production deploys are handled by Vercel's GitHub integration on push to `app`.
+# This workflow runs tests and a production build check only.
+on:
+  push:
+    branches:
+      - app
+  pull_request:
+    branches:
+      - app
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --run
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/publimentor_test
+          NEXTAUTH_SECRET: test-secret-at-least-16-chars-long
+          NEXTAUTH_URL: http://localhost:3000
+
+      - name: Verify production build
+        run: npm run build:verify
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/publimentor_test
+          DIRECT_URL: postgresql://test:test@localhost:5432/publimentor_test
+          NEXTAUTH_SECRET: test-secret-at-least-16-chars-long
+          NEXTAUTH_URL: http://localhost:3000
+          AUTH_SECRET: test-secret-at-least-16-chars-long
+          AUTH_TRUST_HOST: "true"

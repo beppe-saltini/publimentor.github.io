@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import { ManuscriptSelector } from "../manuscript-selector";
@@ -21,12 +21,13 @@ import { ManuscriptSelector } from "../manuscript-selector";
 // Mocks (vi.hoisted ensures correct hoisting for vi.mock)
 // ============================================================
 
-const { mockToast, mockOnDrop } = vi.hoisted(() => ({
+const { mockToast, mockOnDrop, mockUploadManuscriptFile } = vi.hoisted(() => ({
   mockToast: {
     success: vi.fn(),
     error: vi.fn(),
     info: vi.fn(),
   },
+  mockUploadManuscriptFile: vi.fn(),
   // Store the onDrop callback so tests can trigger file drops
   mockOnDrop: { current: null as ((files: File[]) => void) | null },
 }));
@@ -38,6 +39,16 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("sonner", () => ({
   toast: mockToast,
+}));
+
+vi.mock("@/lib/manuscript/manuscript-upload-flow.client", () => ({
+  MAX_MANUSCRIPT_UPLOAD_BYTES: 50 * 1024 * 1024,
+  computeFileHash: vi.fn().mockResolvedValue("test-file-hash"),
+  checkManuscriptDuplicate: vi.fn().mockResolvedValue({
+    isDuplicate: false,
+    matches: [],
+  }),
+  uploadManuscriptFile: mockUploadManuscriptFile,
 }));
 
 // Mock react-dropzone: capture the onDrop and expose a testable element
@@ -86,10 +97,12 @@ function mockFetchResponses(
     const u = typeof url === "string" ? url : String(url);
     for (const [pattern, resp] of Object.entries(responses)) {
       if (u.includes(pattern)) {
+        const body = JSON.stringify(resp.data);
         return Promise.resolve({
           ok: resp.ok,
           status: resp.status || (resp.ok ? 200 : 400),
           json: () => Promise.resolve(resp.data),
+          text: () => Promise.resolve(body),
         });
       }
     }
@@ -97,6 +110,7 @@ function mockFetchResponses(
       ok: true,
       status: 200,
       json: () => Promise.resolve({}),
+      text: () => Promise.resolve("{}"),
     });
   });
   global.fetch = fetchMock as any;
@@ -139,6 +153,7 @@ describe("ManuscriptSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockOnDrop.current = null;
+    mockUploadManuscriptFile.mockResolvedValue({ manuscriptId: "ms-new-123" });
 
     mockFetchResponses({
       "/api/manuscripts?status=READY": {
@@ -153,7 +168,8 @@ describe("ManuscriptSelector", () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers(); // Ensure fake timers never leak between tests
+    cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -228,60 +244,22 @@ describe("ManuscriptSelector", () => {
     it("sends upload request with file and publisherId", async () => {
       const user = userEvent.setup();
 
-      mockFetchResponses({
-        "/api/manuscripts?status=READY": {
-          ok: true,
-          data: { manuscripts: [] },
-        },
-        "/api/publishers": {
-          ok: true,
-          data: { publishers: [{ id: "pub-123" }] },
-        },
-        "/api/manuscripts/upload": {
-          ok: true,
-          data: {
-            success: true,
-            manuscriptId: "ms-new-123",
-            status: "EXTRACTING",
-          },
-        },
-        "/api/manuscripts/ms-new-123/status": {
-          ok: true,
-          data: {
-            id: "ms-new-123",
-            status: "READY",
-            progress: 100,
-            stage: "Complete",
-            title: "Uploaded Manuscript Title",
-            isComplete: true,
-            hasError: false,
-          },
-        },
-      });
-
       render(
         <ManuscriptSelector {...defaultProps} publisherId="pub-test-99" />
       );
       await openUploadTab(user);
 
-      // Drop a file
       await act(async () => {
         simulateFileDrop();
       });
 
-      // Verify the upload API call
       await waitFor(() => {
-        const uploadCall = fetchMock.mock.calls.find(
-          (call: any[]) =>
-            typeof call[0] === "string" &&
-            call[0].includes("/api/manuscripts/upload")
+        expect(mockUploadManuscriptFile).toHaveBeenCalledWith(
+          expect.objectContaining({
+            publisherId: "pub-test-99",
+            file: expect.any(File),
+          })
         );
-        expect(uploadCall).toBeDefined();
-        expect(uploadCall![1].method).toBe("POST");
-
-        const formData = uploadCall![1].body as FormData;
-        expect(formData.get("publisherId")).toBe("pub-test-99");
-        expect(formData.get("file")).toBeInstanceOf(File);
       });
     });
 
@@ -293,55 +271,39 @@ describe("ManuscriptSelector", () => {
       global.fetch = vi.fn((url: string) => {
         const u = typeof url === "string" ? url : String(url);
 
+        const jsonBody = (data: unknown) => {
+          const body = JSON.stringify(data);
+          return {
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(data),
+            text: () => Promise.resolve(body),
+          };
+        };
+
         if (u.includes("/api/manuscripts?status=READY"))
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve({ manuscripts: [] }),
-          });
+          return Promise.resolve(jsonBody({ manuscripts: [] }));
         if (u.includes("/api/publishers"))
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () =>
-              Promise.resolve({ publishers: [{ id: "pub-123" }] }),
-          });
-        if (u.includes("/api/manuscripts/upload"))
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () =>
-              Promise.resolve({
-                success: true,
-                manuscriptId: "ms-poll",
-                status: "EXTRACTING",
-              }),
-          });
+          return Promise.resolve(jsonBody({ publishers: [{ id: "pub-123" }] }));
         if (u.includes("/api/manuscripts/ms-poll/status")) {
           pollCount++;
-          // First call: still processing. Subsequent: complete.
           const isComplete = pollCount > 1;
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () =>
-              Promise.resolve({
-                id: "ms-poll",
-                status: isComplete ? "READY" : "EXTRACTING",
-                progress: isComplete ? 100 : 50,
-                stage: isComplete ? "Complete" : "Extracting text...",
-                title: isComplete ? "Finished Manuscript" : undefined,
-                isComplete,
-                hasError: false,
-              }),
-          });
+          return Promise.resolve(
+            jsonBody({
+              id: "ms-poll",
+              status: isComplete ? "READY" : "EXTRACTING",
+              progress: isComplete ? 100 : 50,
+              stage: isComplete ? "Complete" : "Extracting text...",
+              title: isComplete ? "Finished Manuscript" : undefined,
+              isComplete,
+              hasError: false,
+            })
+          );
         }
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({}),
-        });
+        return Promise.resolve(jsonBody({}));
       }) as any;
+
+      mockUploadManuscriptFile.mockResolvedValue({ manuscriptId: "ms-poll" });
 
       // Use real timers for UI interactions, they are fast
       const user = userEvent.setup();
@@ -385,23 +347,7 @@ describe("ManuscriptSelector", () => {
   // ----------------------------------------------------------
 
   describe("Upload error handling", () => {
-    it("shows error toast when API returns error", async () => {
-      mockFetchResponses({
-        "/api/manuscripts?status=READY": {
-          ok: true,
-          data: { manuscripts: [] },
-        },
-        "/api/publishers": {
-          ok: true,
-          data: { publishers: [{ id: "pub-123" }] },
-        },
-        "/api/manuscripts/upload": {
-          ok: false,
-          status: 400,
-          data: { error: "File too large. Maximum size is 50MB" },
-        },
-      });
-
+    it("shows error toast when file exceeds size limit", async () => {
       const user = userEvent.setup();
       render(<ManuscriptSelector {...defaultProps} />);
       await openUploadTab(user);
@@ -412,7 +358,7 @@ describe("ManuscriptSelector", () => {
 
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith(
-          "File too large. Maximum size is 50MB"
+          expect.stringContaining("too large")
         );
       });
     });
@@ -468,7 +414,7 @@ describe("ManuscriptSelector", () => {
 
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith(
-          "Upload not available - publisher ID required"
+          "Upload not available — publisher ID not loaded. Try refreshing the page."
         );
       });
     });

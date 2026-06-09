@@ -10,6 +10,7 @@
  */
 
 import { LocalStorageProvider, StorageProvider, StorageFile, UploadOptions } from "./local";
+import { SupabaseStorageProvider } from "./supabase";
 
 // Re-export types
 export type { StorageProvider, StorageFile, UploadOptions };
@@ -23,16 +24,11 @@ function getStorageProvider(): StorageProvider {
 
   switch (providerType) {
     case "supabase":
-      // Supabase Storage - recommended for serverless
-      const { SupabaseStorageProvider } = require("./supabase");
       return new SupabaseStorageProvider();
     case "s3":
-      // Lazy import to avoid loading AWS SDK when not needed
-      const { S3StorageProvider } = require("./s3");
-      return new S3StorageProvider();
+      throw new Error("S3 storage provider is not configured in this build");
     case "r2":
-      const { R2StorageProvider } = require("./r2");
-      return new R2StorageProvider();
+      throw new Error("R2 storage provider is not configured in this build");
     case "local":
     default:
       return new LocalStorageProvider();

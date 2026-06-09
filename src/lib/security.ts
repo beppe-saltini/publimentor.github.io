@@ -5,6 +5,7 @@
 
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import path from "path";
 
 // ============================================================
 // Rate Limiting (In-Memory with Redis adapter support)
@@ -306,7 +307,6 @@ export function sanitizeObject<T extends Record<string, unknown>>(obj: T): T {
  * Validate that a path is within a base directory (prevent path traversal)
  */
 export function isPathWithinBase(basePath: string, targetPath: string): boolean {
-  const path = require("path");
   const resolvedBase = path.resolve(basePath);
   const resolvedTarget = path.resolve(basePath, targetPath);
   

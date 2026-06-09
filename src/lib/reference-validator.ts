@@ -280,7 +280,7 @@ async function validateReference(ref: ReferenceInput): Promise<ReferenceValidati
   const issues: string[] = [];
   
   // DOI validation
-  let doiResult = {
+  const doiResult = {
     found: !!ref.doi,
     valid: null as boolean | null,
     resolvedTitle: undefined as string | undefined,
@@ -305,7 +305,7 @@ async function validateReference(ref: ReferenceInput): Promise<ReferenceValidati
   }
   
   // PMID validation
-  let pmidResult = {
+  const pmidResult = {
     found: !!ref.pmid,
     valid: null as boolean | null,
     title: undefined as string | undefined,
@@ -324,7 +324,7 @@ async function validateReference(ref: ReferenceInput): Promise<ReferenceValidati
   }
   
   // Retraction check (only if DOI is valid)
-  let retractionResult = {
+  const retractionResult = {
     checked: false,
     isRetracted: null as boolean | null,
     retractionDate: undefined as string | undefined,
