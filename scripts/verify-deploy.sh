@@ -4,17 +4,22 @@ set -e
 echo "=== Vercel-compatible build verification ==="
 echo ""
 
-echo "1/3  Generating Prisma client..."
+echo "1/4  Generating build info..."
+node scripts/generate-build-info.js
+echo "    ✓ build-info.ts generated"
+echo ""
+
+echo "2/4  Generating Prisma client..."
 npx prisma generate
 echo "    ✓ Prisma client generated"
 echo ""
 
-echo "2/3  Running TypeScript type-check..."
+echo "3/4  Running TypeScript type-check..."
 npx tsc --noEmit
 echo "    ✓ TypeScript passes"
 echo ""
 
-echo "3/3  Running Next.js production build..."
+echo "4/4  Running Next.js production build..."
 npx next build
 echo "    ✓ Next.js build passed"
 echo ""
