@@ -22,7 +22,13 @@ import { toast } from "sonner";
 import { ManuscriptSelector } from "@/components/manuscript";
 import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails, type ReviewerConflict } from "./coi-details";
+import { ReputationDetails } from "./reputation-details";
 import type { ConflictSeverity } from "./coi-badge";
+import type {
+  EmailConfidence,
+  EmailSource,
+} from "@/lib/reviewers/email-enrichment";
+import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 import { ReviewerResultsList } from "./reviewer-results-list";
 import type { ReviewerDisplay } from "./reviewer-display";
 import {
@@ -66,6 +72,7 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  reputationSummary?: ReputationSummary;
 }
 
 interface CoauthorWarning {
@@ -80,6 +87,8 @@ interface AdvancedReviewer {
   firstName: string;
   lastName: string;
   email: string | null;
+  emailSource?: EmailSource;
+  emailConfidence?: EmailConfidence;
   affiliation: string;
   country: string;
   hIndex: number | null;
@@ -104,6 +113,8 @@ interface AdvancedReviewer {
     institutionProfileUrl?: string;
     semanticScholarUrl?: string;
     openAlexUrl?: string;
+    emailSource?: EmailSource;
+    emailConfidence?: EmailConfidence;
   };
   // LLM-enhanced fields
   llmAnalysis?: {
@@ -121,6 +132,7 @@ interface AdvancedReviewer {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  reputationSummary?: ReputationSummary;
   inferredGender?: "likely_male" | "likely_female" | "unknown";
   isNewThisRun?: boolean;
 }
@@ -150,6 +162,11 @@ interface DiscoverySummary {
     pubMed?: number;
   };
   searchStrategy?: string;
+  emailMetrics?: {
+    emailsFound: number;
+    emailsMissing: number;
+    bySource?: Record<string, number>;
+  };
 }
 
 interface DiscoveryResult {
@@ -561,6 +578,12 @@ export function ReviewerSearchContent({
     firstName: (r.firstName as string) || "",
     lastName: (r.lastName as string) || "",
     email: (r.email as string) || null,
+    emailSource:
+      (r.emailSource as EmailSource) ||
+      (r.verificationUrls as AdvancedReviewer["verificationUrls"])?.emailSource,
+    emailConfidence:
+      (r.emailConfidence as EmailConfidence) ||
+      (r.verificationUrls as AdvancedReviewer["verificationUrls"])?.emailConfidence,
     affiliation: (r.affiliation as string) || "",
     country: (r.country as string) || "",
     hIndex: (r.hIndex as number) ?? null,
@@ -579,6 +602,8 @@ export function ReviewerSearchContent({
     },
     llmAnalysis: (r.llmAnalysis as AdvancedReviewer["llmAnalysis"]) || undefined,
     coiSummary: (r.coiSummary as AdvancedReviewer["coiSummary"]) || undefined,
+    reputationSummary:
+      (r.reputationSummary as AdvancedReviewer["reputationSummary"]) || undefined,
     inferredGender: (r.inferredGender as AdvancedReviewer["inferredGender"]) || undefined,
   });
 
@@ -687,6 +712,7 @@ export function ReviewerSearchContent({
                 worksCount: db.publicationCount ?? r.worksCount,
                 affiliation: db.affiliation || r.affiliation,
                 coiSummary: db.coiSummary ?? r.coiSummary,
+                reputationSummary: db.reputationSummary ?? r.reputationSummary,
               };
             });
             return sortReviewersDisplayOrder(
@@ -964,6 +990,7 @@ export function ReviewerSearchContent({
             publicationCount: r.worksCount,
             sources: r.source ? [r.source] : undefined,
             coiSummary: r.coiSummary,
+            reputationSummary: r.reputationSummary,
           }));
           const saveRes = await fetch(`/api/manuscripts/${selectedManuscriptId}/reviewers`, {
             method: "POST",
@@ -973,8 +1000,11 @@ export function ReviewerSearchContent({
           const saveData = await saveRes.json();
           if (saveRes.ok) {
             await loadPersistedReviewers(selectedManuscriptId);
+            const concernCount = sorted.filter((r) => r.reputationSummary?.hasConcerns).length;
             toast.success(
-              `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
+              concernCount > 0
+                ? `Found ${data.reviewers.length} reviewers — ${concernCount} flagged for integrity review`
+                : `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
             );
           } else {
             toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
@@ -1091,9 +1121,14 @@ export function ReviewerSearchContent({
             publicationCount: r.publicationCount,
             sources: r.sources,
             recentArticles: r.recentArticles,
-            verificationUrls: r.verificationUrls,
+            verificationUrls: {
+              ...r.verificationUrls,
+              ...(r.emailSource ? { emailSource: r.emailSource } : {}),
+              ...(r.emailConfidence ? { emailConfidence: r.emailConfidence } : {}),
+            },
             llmAnalysis: r.llmAnalysis,
             coiSummary: r.coiSummary,
+            reputationSummary: r.reputationSummary,
             inferredGender: r.inferredGender,
           }));
           const saveRes = await fetch(`/api/manuscripts/${msId}/reviewers`, {
@@ -1134,7 +1169,7 @@ export function ReviewerSearchContent({
       return;
     }
 
-    let reviewersToSave: { name: string; firstName?: string; lastName?: string; email?: string | null; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; recentArticles?: Record<string, unknown>[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
+    let reviewersToSave: { name: string; firstName?: string; lastName?: string; email?: string | null; affiliation?: string; hIndex?: number | null; citationCount?: number | null; publicationCount?: number; country?: string; sources?: string[]; recentArticles?: Record<string, unknown>[]; verificationUrls?: Record<string, string>; llmAnalysis?: Record<string, unknown>; coiSummary?: Record<string, unknown>; reputationSummary?: Record<string, unknown>; inferredGender?: string }[] = [];
 
     if (discoveryResult?.reviewers.length) {
       reviewersToSave = discoveryResult.reviewers.map(r => ({
@@ -1149,9 +1184,14 @@ export function ReviewerSearchContent({
         publicationCount: r.publicationCount,
         sources: r.sources,
         recentArticles: r.recentArticles as Record<string, unknown>[] | undefined,
-        verificationUrls: r.verificationUrls,
+        verificationUrls: {
+          ...r.verificationUrls,
+          ...(r.emailSource ? { emailSource: r.emailSource } : {}),
+          ...(r.emailConfidence ? { emailConfidence: r.emailConfidence } : {}),
+        },
         llmAnalysis: r.llmAnalysis as Record<string, unknown> | undefined,
         coiSummary: r.coiSummary as Record<string, unknown> | undefined,
+        reputationSummary: r.reputationSummary as Record<string, unknown> | undefined,
         inferredGender: r.inferredGender,
       }));
     } else if (candidateReviewers.length) {
@@ -1166,6 +1206,7 @@ export function ReviewerSearchContent({
         publicationCount: r.worksCount,
         sources: r.source ? [r.source] : undefined,
         coiSummary: r.coiSummary as Record<string, unknown> | undefined,
+        reputationSummary: r.reputationSummary as Record<string, unknown> | undefined,
       }));
     }
 
@@ -1688,6 +1729,14 @@ export function ReviewerSearchContent({
                         <li>✓ Avg {discoveryResult.summary.avgPublications} publications per reviewer</li>
                         <li>✓ Avg {discoveryResult.summary.avgSeniorAuthorships} senior author papers</li>
                         <li>✓ {discoveryResult.summary.diversity.countryCount} countries represented</li>
+                        {discoveryResult.summary.emailMetrics && (
+                          <li>
+                            ✓ Emails found:{" "}
+                            {discoveryResult.summary.emailMetrics.emailsFound}/
+                            {discoveryResult.summary.emailMetrics.emailsFound +
+                              discoveryResult.summary.emailMetrics.emailsMissing}
+                          </li>
+                        )}
                       </ul>
                       <div className="flex gap-2 mt-2 flex-wrap">
                         {discoveryResult.summary.llmEnhanced && (
@@ -1950,12 +1999,15 @@ export function ReviewerSearchContent({
                 {sortedCandidateReviewers.map((reviewer) => {
                   const coauthorCount = isCoauthor(reviewer.name);
                   const hasCoiConflict = reviewer.coiSummary?.hasConflict;
+                  const hasReputationConcerns = reviewer.reputationSummary?.hasConcerns;
                   
                   return (
                     <Card 
                       key={reviewer.id} 
                       className={`${
-                        hasCoiConflict 
+                        hasReputationConcerns
+                          ? "border-orange-300 bg-orange-50/40"
+                          : hasCoiConflict 
                           ? getCardBorderClass(reviewer.coiSummary?.worstSeverity || null, true)
                           : coauthorCount 
                           ? "border-amber-300 bg-amber-50" 
@@ -2093,6 +2145,13 @@ export function ReviewerSearchContent({
                           <COIDetails 
                             conflicts={reviewer.coiSummary.conflicts}
                             worstSeverity={reviewer.coiSummary.worstSeverity}
+                            className="mt-3"
+                          />
+                        )}
+
+                        {reviewer.reputationSummary?.hasConcerns && (
+                          <ReputationDetails
+                            reputation={reviewer.reputationSummary}
                             className="mt-3"
                           />
                         )}

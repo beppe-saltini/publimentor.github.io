@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails } from "./coi-details";
+import { ReputationDetails } from "./reputation-details";
+import { emailSourceLabel } from "@/lib/reviewers/email-enrichment";
 import type { ReviewerDisplay } from "./reviewer-display";
 
 interface ReviewerDiscoveryCardProps {
@@ -45,9 +47,11 @@ export function ReviewerDiscoveryCard({
   return (
     <Card
       className={`hover:shadow-md transition-shadow ${
-        reviewer.coiSummary?.hasConflict
-          ? getCardBorderClass(reviewer.coiSummary.worstSeverity, true)
-          : ""
+        reviewer.reputationSummary?.hasConcerns
+          ? "border-orange-300 bg-orange-50/40"
+          : reviewer.coiSummary?.hasConflict
+            ? getCardBorderClass(reviewer.coiSummary.worstSeverity, true)
+            : ""
       }`}
     >
       <CardContent className="pt-4">
@@ -286,18 +290,36 @@ export function ReviewerDiscoveryCard({
           />
         )}
 
+        {reviewer.reputationSummary?.hasConcerns && (
+          <ReputationDetails reputation={reviewer.reputationSummary} className="mb-3" />
+        )}
+
         <Separator className="my-3" />
 
         <div className="flex flex-col gap-1 text-sm">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />
             {reviewer.email ? (
-              <a
-                href={`mailto:${reviewer.email}`}
-                className="text-blue-600 hover:underline truncate"
-              >
-                {reviewer.email}
-              </a>
+              <>
+                <a
+                  href={`mailto:${reviewer.email}`}
+                  className="text-blue-600 hover:underline truncate"
+                >
+                  {reviewer.email}
+                </a>
+                {(reviewer.emailSource ||
+                  reviewer.verificationUrls?.emailSource) && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1.5 py-0 h-5 font-normal text-gray-600"
+                  >
+                    {emailSourceLabel(
+                      reviewer.emailSource ||
+                        reviewer.verificationUrls?.emailSource
+                    )}
+                  </Badge>
+                )}
+              </>
             ) : (
               <span className="text-gray-400 italic">No public email</span>
             )}

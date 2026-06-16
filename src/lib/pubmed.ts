@@ -14,6 +14,20 @@ export interface PubMedAuthor {
   fullName: string;
 }
 
+/** Author hit from topic search with PMIDs for email enrichment */
+export interface PubMedReviewerHit extends PubMedAuthor {
+  recentPmids: string[];
+  email: string | null;
+}
+
+function emailFromAffiliation(affiliation?: string): string | null {
+  if (!affiliation?.includes("@")) return null;
+  const match = affiliation.match(
+    /\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/
+  );
+  return match ? match[1].toLowerCase() : null;
+}
+
 export interface PubMedArticle {
   pmid: string;
   title: string;
@@ -179,7 +193,14 @@ function parsePubMedXml(xmlText: string): PubMedArticle[] {
       const lastNameMatch = authorXml.match(/<LastName>([^<]+)<\/LastName>/);
       const foreNameMatch = authorXml.match(/<ForeName>([^<]+)<\/ForeName>/);
       const initialsMatch = authorXml.match(/<Initials>([^<]+)<\/Initials>/);
-      const affiliationMatch = authorXml.match(/<Affiliation>([^<]+)<\/Affiliation>/);
+      const affiliationMatches = [
+        ...authorXml.matchAll(/<Affiliation>([^<]+)<\/Affiliation>/g),
+      ].map((m) => m[1]);
+      const affiliationWithEmail = affiliationMatches.find((a) => a.includes("@"));
+      const affiliation =
+        affiliationWithEmail ||
+        affiliationMatches[0] ||
+        undefined;
       
       const lastName = lastNameMatch?.[1] || "";
       const foreName = foreNameMatch?.[1] || "";
@@ -190,7 +211,7 @@ function parsePubMedXml(xmlText: string): PubMedArticle[] {
           lastName,
           foreName,
           initials,
-          affiliation: affiliationMatch?.[1],
+          affiliation,
           fullName: foreName ? `${foreName} ${lastName}` : lastName,
         });
       }
@@ -219,7 +240,7 @@ export async function findReviewersByTopic(
   keywords: string[],
   excludeAuthors: string[] = [],
   maxResults: number = 50
-): Promise<PubMedAuthor[]> {
+): Promise<PubMedReviewerHit[]> {
   // Build search query
   const query = keywords.map(k => `"${k}"[Title/Abstract]`).join(" OR ");
   
@@ -231,20 +252,43 @@ export async function findReviewersByTopic(
   // Fetch article details
   const articles = await fetchPubMedArticles(pmids);
   
-  // Extract unique authors
-  const authorMap = new Map<string, PubMedAuthor>();
+  // Extract unique authors, keeping PMIDs and best affiliation (prefer ones with email)
+  const authorMap = new Map<string, PubMedReviewerHit>();
   const excludeSet = new Set(excludeAuthors.map(a => a.toLowerCase()));
   
   for (const article of articles) {
     for (const author of article.authors) {
       const key = `${author.lastName.toLowerCase()}_${author.foreName.toLowerCase()}`;
       
-      // Skip if already in map or in exclude list
-      if (authorMap.has(key)) continue;
       if (excludeSet.has(author.fullName.toLowerCase())) continue;
       if (excludeSet.has(author.lastName.toLowerCase())) continue;
-      
-      authorMap.set(key, author);
+
+      const authorEmail = emailFromAffiliation(author.affiliation);
+      const existing = authorMap.get(key);
+
+      if (!existing) {
+        authorMap.set(key, {
+          ...author,
+          recentPmids: [article.pmid],
+          email: authorEmail,
+        });
+        continue;
+      }
+
+      if (!existing.recentPmids.includes(article.pmid)) {
+        existing.recentPmids.push(article.pmid);
+      }
+      if (!existing.email && authorEmail) {
+        existing.email = authorEmail;
+        if (author.affiliation) existing.affiliation = author.affiliation;
+      } else if (
+        authorEmail &&
+        author.affiliation &&
+        !existing.affiliation?.includes("@")
+      ) {
+        existing.affiliation = author.affiliation;
+        existing.email = authorEmail;
+      }
     }
   }
   

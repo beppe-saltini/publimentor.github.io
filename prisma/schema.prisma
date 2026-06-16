@@ -922,6 +922,7 @@ model ManuscriptReviewer {
   verificationUrls Json? // { pubmedSearchUrl, googleScholarUrl, ... }
   llmAnalysis      Json? // { relevanceScore, reasoning, topicalMatch, ... }
   coiSummary       Json? // { hasConflict, worstSeverity, conflictCount, conflicts }
+  reputationSummary Json? // { hasConcerns, entries[], checkedAt, disclaimer } — PubPeer / FBS
 
   // Editor-assigned expertise areas (string[])
   assignedExpertise Json?

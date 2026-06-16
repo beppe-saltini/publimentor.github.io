@@ -132,6 +132,7 @@ export async function POST(
             verificationUrls: reviewer.verificationUrls ?? undefined,
             llmAnalysis: reviewer.llmAnalysis ?? undefined,
             coiSummary: reviewer.coiSummary ?? undefined,
+            reputationSummary: reviewer.reputationSummary ?? undefined,
             // Preserve SHORTLISTED / REJECTED when re-saving search results
           },
           create: {
@@ -151,6 +152,7 @@ export async function POST(
             verificationUrls: reviewer.verificationUrls ?? null,
             llmAnalysis: reviewer.llmAnalysis ?? null,
             coiSummary: reviewer.coiSummary ?? null,
+            reputationSummary: reviewer.reputationSummary ?? null,
             status: "SUGGESTED",
           },
         });

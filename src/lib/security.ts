@@ -458,7 +458,7 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self'",
-    "connect-src 'self' https://*.supabase.co https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org",
+    "connect-src 'self' https://*.supabase.co https://api.anthropic.com https://api.openalex.org https://api.semanticscholar.org https://eutils.ncbi.nlm.nih.gov https://pub.orcid.org https://google.serper.dev https://api.search.brave.com https://html.duckduckgo.com https://dblp.org https://www.ebi.ac.uk",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

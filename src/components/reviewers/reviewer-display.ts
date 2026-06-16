@@ -1,5 +1,10 @@
 import type { ConflictSeverity } from "./coi-badge";
 import type { ReviewerConflict } from "./coi-details";
+import type {
+  EmailConfidence,
+  EmailSource,
+} from "@/lib/reviewers/email-enrichment";
+import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export interface ReviewerDisplay {
   id: string;
@@ -7,6 +12,8 @@ export interface ReviewerDisplay {
   affiliation?: string;
   country?: string;
   email?: string | null;
+  emailSource?: EmailSource;
+  emailConfidence?: EmailConfidence;
   hIndex?: number | null;
   citationCount?: number | null;
   publicationCount?: number;
@@ -28,6 +35,8 @@ export interface ReviewerDisplay {
     openAlexUrl?: string;
     institutionSearchUrl?: string;
     institutionProfileUrl?: string;
+    emailSource?: EmailSource;
+    emailConfidence?: EmailConfidence;
   };
   llmAnalysis?: {
     relevanceScore: number;
@@ -44,6 +53,8 @@ export interface ReviewerDisplay {
   };
   /** True when this reviewer first appeared in the most recent search run */
   isNewThisRun?: boolean;
+  /** PubPeer / For Better Science integrity screening */
+  reputationSummary?: ReputationSummary;
 }
 
 export function flagsFromReviewerStatuses(

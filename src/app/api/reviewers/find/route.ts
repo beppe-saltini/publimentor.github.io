@@ -4,7 +4,16 @@ import { parseAuthorList } from "@/lib/author-parser";
 import { findReviewersByTopic, findCoAuthors, PubMedAuthor } from "@/lib/pubmed";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ConflictSeverity } from "@/lib/coi-detector";
-import { enrichReviewerEmailsBatch, extractDomainFromUrl } from "@/lib/reviewers/email-enrichment";
+import {
+  enrichReviewerEmailsBatch,
+  extractDomainFromUrl,
+  extractEmailFromAffiliation,
+  type EmailBatchMetrics,
+  type EmailConfidence,
+  type EmailSource,
+} from "@/lib/reviewers/email-enrichment";
+import { enrichReviewerReputationBatch } from "@/lib/reviewers/reputation-check";
+import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export const dynamic = "force-dynamic";
 
@@ -14,14 +23,21 @@ interface ReviewerCandidate {
   firstName: string;
   lastName: string;
   email?: string | null;
+  emailSource?: EmailSource;
+  emailConfidence?: EmailConfidence;
   affiliation?: string;
   orcid?: string | null;
   source: "pubmed" | "openalex" | "both";
   verificationUrls?: {
     institutionSearchUrl?: string;
     institutionProfileUrl?: string;
+    institutionDomain?: string;
     semanticScholarUrl?: string;
+    semanticScholarHomepage?: string;
     openAlexUrl?: string;
+    orcidProfileUrls?: string[];
+    emailSource?: EmailSource;
+    emailConfidence?: EmailConfidence;
   };
   worksCount?: number;
   citedByCount?: number;
@@ -35,6 +51,8 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  reputationSummary?: ReputationSummary;
+  recentArticles?: Array<{ pmid?: string; doi?: string; title?: string }>;
   // Gender diversity
   inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
@@ -92,8 +110,10 @@ export async function POST(request: Request) {
             name: author.fullName,
             firstName: author.foreName,
             lastName: author.lastName,
+            email: author.email,
             affiliation: author.affiliation,
             source: "pubmed",
+            recentArticles: author.recentPmids.slice(0, 8).map((pmid) => ({ pmid })),
           });
         }
       } catch (error) {
@@ -128,9 +148,18 @@ export async function POST(request: Request) {
             if (result.last_known_institutions?.[0]?.display_name) {
               existing.affiliation = result.last_known_institutions[0].display_name;
             }
+            if (!existing.email && existing.affiliation) {
+              existing.email = extractEmailFromAffiliation(existing.affiliation);
+            }
             existing.topics = result.topics?.slice(0, 5).map(
               (t: { display_name: string }) => t.display_name
             );
+            if (!existing.verificationUrls?.openAlexUrl) {
+              existing.verificationUrls = {
+                ...existing.verificationUrls,
+                openAlexUrl: result.id,
+              };
+            }
           } else {
             const affiliation = result.last_known_institutions?.[0]?.display_name;
             const instId = result.last_known_institutions?.[0]?.id || null;
@@ -168,6 +197,7 @@ export async function POST(request: Request) {
               verificationUrls: {
                 openAlexUrl: result.id,
                 institutionSearchUrl: instSearchUrl,
+                institutionDomain: instDomain || undefined,
               },
             });
           }
@@ -225,9 +255,38 @@ export async function POST(request: Request) {
       }
     }
     const needsEmail = reviewers.filter((r) => !r.email).length;
+    const hasEmailBefore = reviewers.length - needsEmail;
+    console.log(`[Find] Emails: ${hasEmailBefore}/${reviewers.length} found before enrichment`);
+    let emailMetrics: EmailBatchMetrics = {
+      emailsFound: hasEmailBefore,
+      emailsMissing: needsEmail,
+      bySource: {},
+    };
+    for (const r of reviewers) {
+      if (r.email && r.emailSource) {
+        emailMetrics.bySource[r.emailSource] =
+          (emailMetrics.bySource[r.emailSource] || 0) + 1;
+      } else if (r.email) {
+        emailMetrics.bySource.affiliation =
+          (emailMetrics.bySource.affiliation || 0) + 1;
+      }
+    }
     if (needsEmail > 0) {
       console.log(`[Find] Enriching emails for ${needsEmail} reviewers...`);
-      await enrichReviewerEmailsBatch(reviewers, { orcidByName });
+      emailMetrics = await enrichReviewerEmailsBatch(reviewers, { orcidByName });
+      console.log(
+        `[Find] Emails after enrichment: ${emailMetrics.emailsFound}/${reviewers.length}`,
+        emailMetrics.bySource
+      );
+    }
+
+    if (reviewers.length > 0) {
+      console.log(`[Find] Reputation screening for ${reviewers.length} reviewers...`);
+      try {
+        await enrichReviewerReputationBatch(reviewers);
+      } catch (error) {
+        console.error("[Find] Reputation screening failed:", error);
+      }
     }
 
     // Run COI checks if authors are provided and checkCOI is enabled
@@ -282,6 +341,12 @@ export async function POST(request: Request) {
       }
     }
 
+    reviewers.sort((a, b) => {
+      const aConcerns = a.reputationSummary?.hasConcerns ? 1 : 0;
+      const bConcerns = b.reputationSummary?.hasConcerns ? 1 : 0;
+      return aConcerns - bConcerns;
+    });
+
     return NextResponse.json({
       reviewers,
       coauthors: coauthorsWithCounts,
@@ -289,6 +354,7 @@ export async function POST(request: Request) {
         totalFound: reviewerMap.size,
         returned: reviewers.length,
         excludedAuthors: excludeNames.length,
+        emailMetrics,
       },
       disclaimer: "These are automated suggestions for editorial consideration only. All potential reviewers require verification of independence and suitability before invitation. This is not an automated assignment system.",
       metadata: {

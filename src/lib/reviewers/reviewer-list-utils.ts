@@ -17,6 +17,9 @@ export interface ReviewerWithName {
   id: string;
   name: string;
   isNewThisRun?: boolean;
+  reputationSummary?: {
+    hasConcerns?: boolean;
+  };
 }
 
 export function normalizeReviewerName(name: string): string {
@@ -132,7 +135,7 @@ export function computeFocusKeywords(
 }
 
 /**
- * Sort: (1) expertise assigned, (2) shortlisted, (3) new this run, (4) other.
+ * Sort: (1) expertise assigned, (2) shortlisted, (3) new this run, (4) other, (5) integrity concerns.
  */
 export function reviewerDisplaySortRank(
   reviewer: ReviewerWithName,
@@ -141,6 +144,8 @@ export function reviewerDisplaySortRank(
   dbIndex: DbReviewerIndex,
   newThisRunNames?: Set<string>
 ): number {
+  if (reviewer.reputationSummary?.hasConcerns) return 4;
+
   const hasExpertise = (assignedExpertise[reviewer.id] || []).length > 0;
   if (hasExpertise) return 0;
 

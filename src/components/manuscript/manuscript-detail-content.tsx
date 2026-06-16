@@ -131,6 +131,7 @@ interface PersistedReviewer {
     worstSeverity?: string;
     conflictCount: number;
   };
+  reputationSummary?: ReviewerDisplay["reputationSummary"];
   assignedExpertise?: string[];
   sources?: string[];
   recentArticles?: ReviewerDisplay["recentArticles"];
@@ -179,6 +180,8 @@ function mapPersistedToDisplay(r: PersistedReviewer): ReviewerDisplay {
           conflicts: coiRaw.conflicts || [],
         }
       : undefined,
+    reputationSummary:
+      (r.reputationSummary as ReviewerDisplay["reputationSummary"]) || undefined,
   };
 }
 

@@ -6,7 +6,16 @@ import { suggestReviewersWithLLM } from "@/lib/llm";
 import { searchAuthor as searchSemanticScholar, searchAuthorByOrcid as searchSSByOrcid } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ReviewerCOISummary, type ConflictSeverity } from "@/lib/coi-detector";
-import { enrichReviewerEmailsBatch } from "@/lib/reviewers/email-enrichment";
+import {
+  enrichReviewerEmailsBatch,
+  extractEmailFromAffiliation,
+  resolveEmailFromPubMedArticles,
+  type EmailBatchMetrics,
+  type EmailConfidence,
+  type EmailSource,
+} from "@/lib/reviewers/email-enrichment";
+import { enrichReviewerReputationBatch } from "@/lib/reviewers/reputation-check";
+import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 import { z } from "zod";
 import {
   checkRateLimit,
@@ -108,6 +117,8 @@ interface ReviewerCandidate {
   firstName: string;
   lastName: string;
   email: string | null;
+  emailSource?: EmailSource;
+  emailConfidence?: EmailConfidence;
   affiliation: string;
   country: string;
   hIndex: number | null;
@@ -130,8 +141,13 @@ interface ReviewerCandidate {
     googleScholarUrl: string;
     institutionSearchUrl: string;
     institutionProfileUrl?: string;
+    institutionDomain?: string;
     semanticScholarUrl?: string;
+    semanticScholarHomepage?: string;
     openAlexUrl?: string;
+    orcidProfileUrls?: string[];
+    emailSource?: EmailSource;
+    emailConfidence?: EmailConfidence;
   };
   llmAnalysis?: {
     relevanceScore: number;
@@ -148,6 +164,7 @@ interface ReviewerCandidate {
     conflictCount: number;
     conflicts: ReviewerConflict[];
   };
+  reputationSummary?: ReputationSummary;
   // Gender diversity
   inferredGender?: "likely_male" | "likely_female" | "unknown";
 }
@@ -315,6 +332,7 @@ export async function POST(request: Request) {
             let oaInstitutionId: string | null = null;
             const sources: ("PubMed" | "SemanticScholar" | "OpenAlex")[] = ["PubMed"];
             let semanticScholarUrl: string | undefined;
+            let semanticScholarHomepage: string | undefined;
             let openAlexUrl: string | undefined;
 
             // 3a. OpenAlex FIRST — most reliable author disambiguation
@@ -361,6 +379,7 @@ export async function POST(request: Request) {
                   citationCount = ssAuthor.citationCount;
                 }
                 semanticScholarUrl = ssAuthor.url;
+                if (ssAuthor.homepage) semanticScholarHomepage = ssAuthor.homepage;
                 sources.push("SemanticScholar");
                 console.log(`[Discover] SemanticScholar: ${suggested.name} H-index=${hIndexSS}, papers=${ssAuthor.paperCount}`);
               }
@@ -442,12 +461,31 @@ export async function POST(request: Request) {
               orcidByReviewerName[finalName.toLowerCase().trim()] = oaOrcid;
             }
 
+            const finalLastName = finalNameParts[finalNameParts.length - 1];
+            const pubmedEmail = resolveEmailFromPubMedArticles(
+              articles,
+              finalLastName,
+              finalNameParts.slice(0, -1).join(" ") || undefined
+            );
+            const affEmail = extractEmailFromAffiliation(suggested.affiliation);
+            const resolvedEmail =
+              orcidProfile.email || pubmedEmail || affEmail || null;
+            const resolvedEmailSource = orcidProfile.email
+              ? ("orcid" as const)
+              : pubmedEmail
+                ? ("pubmed" as const)
+                : affEmail
+                  ? ("affiliation" as const)
+                  : undefined;
+
             const candidate: ReviewerCandidate = {
               id: `llm_${finalName.toLowerCase().replace(/\s+/g, "_")}`,
               name: finalName,
               firstName: finalNameParts.slice(0, -1).join(" "),
-              lastName: finalNameParts[finalNameParts.length - 1],
-              email: orcidProfile.email,
+              lastName: finalLastName,
+              email: resolvedEmail,
+              emailSource: resolvedEmailSource,
+              emailConfidence: resolvedEmailSource ? "high" : undefined,
               affiliation: suggested.affiliation,
               country: suggested.country,
               hIndex,
@@ -464,8 +502,14 @@ export async function POST(request: Request) {
                 googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(finalName)}"`,
                 institutionSearchUrl,
                 institutionProfileUrl,
+                institutionDomain: instDomain || undefined,
                 semanticScholarUrl,
+                semanticScholarHomepage,
                 openAlexUrl,
+                orcidProfileUrls:
+                  orcidProfile.profileUrls.length > 0
+                    ? orcidProfile.profileUrls
+                    : undefined,
               },
               llmAnalysis: {
                 relevanceScore: 85, // High score since Claude suggested them
@@ -520,6 +564,7 @@ export async function POST(request: Request) {
           // OpenAlex h-index is the primary source (reliable disambiguation)
           let hIndex = oaAuthor.summary_stats?.h_index || null;
           let semanticScholarUrl: string | undefined;
+          let semanticScholarHomepage: string | undefined;
 
           // Try Semantic Scholar — use ORCID first, then name with paperCount hint
           try {
@@ -530,6 +575,7 @@ export async function POST(request: Request) {
             }
             if (ssAuthor) {
               semanticScholarUrl = ssAuthor.url;
+              if (ssAuthor.homepage) semanticScholarHomepage = ssAuthor.homepage;
               // Only use SS h-index if it's in the same ballpark as OA (cross-validate)
               if (hIndex && ssAuthor.hIndex > 0 && ssAuthor.hIndex < hIndex / 3) {
                 console.log(`[Discover] Fallback: ${oaAuthor.display_name} SS H-index ${ssAuthor.hIndex} looks wrong vs OA ${hIndex}, ignoring SS`);
@@ -573,12 +619,63 @@ export async function POST(request: Request) {
               oaOrcidClean;
           }
 
+          let oaRecentArticles: ReviewerCandidate["recentArticles"] = [];
+          let oaEmail =
+            orcidProfile2.email || extractEmailFromAffiliation(affiliation);
+          let oaEmailSource: EmailSource | undefined = orcidProfile2.email
+            ? "orcid"
+            : oaEmail
+              ? "affiliation"
+              : undefined;
+          try {
+            const oaPmids = await searchPubMed(
+              `${oaAuthor.display_name}[Author]`,
+              25
+            );
+            if (oaPmids.length > 0) {
+              const oaPubmedArticles = await fetchPubMedArticles(oaPmids);
+              const pubmedHit = resolveEmailFromPubMedArticles(
+                oaPubmedArticles,
+                lastName,
+                nameParts.slice(0, -1).join(" ") || undefined
+              );
+              if (pubmedHit) {
+                oaEmail = pubmedHit;
+                oaEmailSource = "pubmed";
+              }
+              oaRecentArticles = oaPubmedArticles.slice(0, 5).map((article) => {
+                const authorIndex = article.authors.findIndex(
+                  (a) => a.lastName.toLowerCase() === lastName.toLowerCase()
+                );
+                let position: "first" | "last" | "middle" = "middle";
+                if (authorIndex === 0) position = "first";
+                else if (
+                  authorIndex === article.authors.length - 1 &&
+                  article.authors.length > 1
+                ) {
+                  position = "last";
+                }
+                return {
+                  title: article.title,
+                  journal: article.journal,
+                  year: article.pubDate,
+                  pmid: article.pmid,
+                  position,
+                };
+              });
+            }
+          } catch {
+            /* PubMed lookup optional for OpenAlex candidates */
+          }
+
           candidates.push({
             id: oaAuthor.id,
             name: oaAuthor.display_name,
             firstName: nameParts.slice(0, -1).join(" "),
             lastName,
-            email: orcidProfile2.email,
+            email: oaEmail,
+            emailSource: oaEmail ? oaEmailSource : undefined,
+            emailConfidence: oaEmail ? "high" : undefined,
             affiliation,
             country,
             hIndex,
@@ -588,15 +685,21 @@ export async function POST(request: Request) {
             lastAuthorCount: 0,
             correspondingCount: 0,
             seniorAuthorCount: 0,
-            recentArticles: [],
+            recentArticles: oaRecentArticles,
             sources: ["OpenAlex"],
             verificationUrls: {
               pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(oaAuthor.display_name)}[Author]`,
               googleScholarUrl: `https://scholar.google.com/scholar?q=author:"${encodeURIComponent(oaAuthor.display_name)}"`,
               institutionSearchUrl: instSearchUrl2,
               institutionProfileUrl: instProfileUrl2,
+              institutionDomain: instDomain2 || undefined,
               semanticScholarUrl,
+              semanticScholarHomepage,
               openAlexUrl: oaAuthor.id,
+              orcidProfileUrls:
+                orcidProfile2.profileUrls.length > 0
+                  ? orcidProfile2.profileUrls
+                  : undefined,
             },
           });
         }
@@ -666,15 +769,32 @@ export async function POST(request: Request) {
             if (pubCount < params.minPublications) continue;
             if (params.requireSeniorAuthor && seniorCount === 0) continue;
             
-            const affiliation = Array.from(stats.affiliations)[0] || "Unknown";
+            const affiliation =
+              [...stats.affiliations].find((a) => a.includes("@")) ||
+              Array.from(stats.affiliations)[0] ||
+              "Unknown";
             const country = extractCountry(affiliation);
-            
+            const pubmedEmail = resolveEmailFromPubMedArticles(
+              stats.articles,
+              stats.lastName,
+              stats.firstName
+            );
+            const fallbackAffEmail = extractEmailFromAffiliation(affiliation);
+            const fallbackEmail = pubmedEmail || fallbackAffEmail || null;
+            const fallbackSource: EmailSource | undefined = pubmedEmail
+              ? "pubmed"
+              : fallbackAffEmail
+                ? "affiliation"
+                : undefined;
+
             candidates.push({
               id: `pubmed_${stats.lastName}_${stats.firstName}`.toLowerCase(),
               name: stats.name,
               firstName: stats.firstName,
               lastName: stats.lastName,
-              email: null,
+              email: fallbackEmail,
+              emailSource: fallbackSource,
+              emailConfidence: fallbackEmail ? "high" : undefined,
               affiliation,
               country,
               hIndex: null,
@@ -703,11 +823,48 @@ export async function POST(request: Request) {
       }
     }
 
-    // STEP 5: Enrich missing emails from ORCID, institution pages, and web search
+    // STEP 5: Enrich any still-missing emails (ORCID, web search, profile pages)
     const needsEmail = candidates.filter((c) => !c.email).length;
+    const hasEmailBefore = candidates.length - needsEmail;
+    console.log(
+      `[Discover] Emails: ${hasEmailBefore}/${candidates.length} found before enrichment`
+    );
+    let emailMetrics: EmailBatchMetrics = {
+      emailsFound: hasEmailBefore,
+      emailsMissing: needsEmail,
+      bySource: {},
+    };
+    for (const c of candidates) {
+      if (c.email && c.emailSource) {
+        emailMetrics.bySource[c.emailSource] =
+          (emailMetrics.bySource[c.emailSource] || 0) + 1;
+      } else if (c.email) {
+        emailMetrics.bySource.affiliation =
+          (emailMetrics.bySource.affiliation || 0) + 1;
+      }
+    }
     if (needsEmail > 0) {
       console.log(`[Discover] Enriching emails for ${needsEmail} reviewers...`);
-      await enrichReviewerEmailsBatch(candidates, { orcidByName: orcidByReviewerName });
+      const batchMetrics = await enrichReviewerEmailsBatch(candidates, {
+        orcidByName: orcidByReviewerName,
+      });
+      emailMetrics = batchMetrics;
+      console.log(
+        `[Discover] Emails after enrichment: ${batchMetrics.emailsFound}/${candidates.length}`,
+        batchMetrics.bySource
+      );
+    }
+
+    // STEP 5.5: PubPeer + For Better Science integrity screening
+    if (candidates.length > 0) {
+      console.log(`[Discover] Reputation screening for ${candidates.length} reviewers...`);
+      try {
+        await enrichReviewerReputationBatch(candidates);
+        const flagged = candidates.filter((c) => c.reputationSummary?.hasConcerns).length;
+        console.log(`[Discover] Reputation screening complete: ${flagged} with potential concerns`);
+      } catch (error) {
+        console.error("[Discover] Reputation screening failed:", error);
+      }
     }
 
     // STEP 6: Run COI checks if authors are provided and checkCOI is enabled
@@ -775,6 +932,12 @@ export async function POST(request: Request) {
       }
     }
 
+    candidates.sort((a, b) => {
+      const aConcerns = a.reputationSummary?.hasConcerns ? 1 : 0;
+      const bConcerns = b.reputationSummary?.hasConcerns ? 1 : 0;
+      return aConcerns - bConcerns;
+    });
+
     // Gender diversity stats
     const genderCounts = { likely_female: 0, likely_male: 0, unknown: 0 };
     for (const c of candidates) {
@@ -810,6 +973,7 @@ export async function POST(request: Request) {
           openAlex: candidates.filter(c => c.sources.includes("OpenAlex")).length,
           pubMed: candidates.filter(c => c.sources.includes("PubMed")).length,
         },
+        emailMetrics,
       },
       disclaimer: llmUsed 
         ? `Claude AI suggested these ${candidates.length} reviewers based on its knowledge of the research field, then verified each against PubMed, Semantic Scholar, and OpenAlex. All require independent verification before invitation.`

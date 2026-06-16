@@ -13,6 +13,13 @@ const SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1";
 // Rate limiting: 100 requests per 5 minutes for unauthenticated
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+function semanticScholarHeaders(): HeadersInit {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const apiKey = process.env.SEMANTIC_SCHOLAR_API_KEY;
+  if (apiKey) headers["x-api-key"] = apiKey;
+  return headers;
+}
+
 export interface SemanticScholarAuthor {
   authorId: string;
   name: string;
@@ -110,7 +117,7 @@ export async function searchAuthor(
     console.log(`[SemanticScholar] Searching for author: ${name}`);
     
     const response = await fetch(url, {
-      headers: { "Accept": "application/json" },
+      headers: semanticScholarHeaders(),
     });
 
     if (!response.ok) {
@@ -157,7 +164,7 @@ export async function searchAuthorByOrcid(orcid: string): Promise<SemanticSchola
     console.log(`[SemanticScholar] Looking up ORCID: ${cleanOrcid}`);
 
     const response = await fetch(url, {
-      headers: { "Accept": "application/json" },
+      headers: semanticScholarHeaders(),
     });
 
     if (!response.ok) {
@@ -193,7 +200,7 @@ export async function getAuthorById(authorId: string): Promise<SemanticScholarAu
     const url = `${SEMANTIC_SCHOLAR_API}/author/${authorId}?fields=${AUTHOR_FIELDS}`;
     
     const response = await fetch(url, {
-      headers: { "Accept": "application/json" },
+      headers: semanticScholarHeaders(),
     });
 
     if (!response.ok) {
@@ -218,7 +225,7 @@ export async function getAuthorPapers(
     const url = `${SEMANTIC_SCHOLAR_API}/author/${authorId}/papers?fields=paperId,title,year,citationCount,journal,authors&limit=${limit}`;
     
     const response = await fetch(url, {
-      headers: { "Accept": "application/json" },
+      headers: semanticScholarHeaders(),
     });
 
     if (!response.ok) {
