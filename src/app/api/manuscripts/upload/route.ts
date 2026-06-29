@@ -15,6 +15,7 @@ import {
   getClientIp,
   getUserAgent,
 } from "@/lib/security";
+import { sanitizeTextForPostgres } from "@/lib/manuscript/sanitize-text";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -320,7 +321,7 @@ async function processManuscriptAsync(
     await prisma.manuscript.update({
       where: { id: manuscriptId },
       data: {
-        extractedText: extractionResult.text,
+        extractedText: sanitizeTextForPostgres(extractionResult.text),
         textExtractionMethod: extractionResult.method,
         wordCount: extractionResult.wordCount,
         pageCount: extractionResult.pageCount,

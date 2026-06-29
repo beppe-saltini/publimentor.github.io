@@ -7,6 +7,8 @@
  * - LaTeX (custom parser) - Phase 2
  */
 
+import { sanitizeTextForPostgres } from "./sanitize-text";
+
 export interface ExtractionResult {
   text: string;
   pageCount?: number;
@@ -61,7 +63,8 @@ async function extractFromPDF(buffer: Buffer): Promise<ExtractionResult> {
 
   const uint8 = new Uint8Array(buffer);
   const doc = await getDocumentProxy(uint8);
-  const { totalPages, text } = await pdfExtractText(doc, { mergePages: true });
+  const { totalPages, text: rawText } = await pdfExtractText(doc, { mergePages: true });
+  const text = sanitizeTextForPostgres(rawText);
   const wordCount = countWords(text);
 
   return {
@@ -81,7 +84,7 @@ async function extractFromDOCX(buffer: Buffer): Promise<ExtractionResult> {
   // Extract raw text (no formatting)
   const result = await mammoth.extractRawText({ buffer });
 
-  const text = result.value;
+  const text = sanitizeTextForPostgres(result.value);
   const wordCount = countWords(text);
 
   // Also get any messages/warnings
@@ -130,10 +133,11 @@ async function extractFromLaTeX(buffer: Buffer): Promise<ExtractionResult> {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  const wordCount = countWords(text);
+  const sanitized = sanitizeTextForPostgres(text);
+  const wordCount = countWords(sanitized);
 
   return {
-    text,
+    text: sanitized,
     wordCount,
     method: "latex-basic",
     metadata: {
