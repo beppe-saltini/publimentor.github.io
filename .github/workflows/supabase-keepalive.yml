@@ -17,8 +17,8 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
-          SUPABASE_URL="$(printf '%s' "${SUPABASE_URL:-}" | tr -d '\r\n' | sed 's:/*$::')"
-          SUPABASE_SERVICE_KEY="$(printf '%s' "${SUPABASE_SERVICE_KEY:-}" | tr -d '\r\n')"
+          SUPABASE_URL="$(printf '%s' "${SUPABASE_URL:-}" | tr -d '\r\n' | sed 's/\\n$//' | sed 's:/*$::')"
+          SUPABASE_SERVICE_KEY="$(printf '%s' "${SUPABASE_SERVICE_KEY:-}" | tr -d '\r\n' | sed 's/\\n$//')"
           if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_SERVICE_KEY}" ]; then
             echo "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY repository secrets."
             exit 1
