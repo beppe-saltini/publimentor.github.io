@@ -4,6 +4,14 @@
  * Uses Claude to extract structured metadata from manuscript text
  */
 
+import {
+  ANTHROPIC_SONNET_MODEL,
+  ANTHROPIC_HAIKU_MODEL,
+  isModelNotFoundResponse,
+  resolveReplacementModel,
+  modelFamily,
+} from "@/lib/anthropic-models";
+
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
@@ -182,25 +190,42 @@ function prepareMetadataText(text: string, refStart: number): string {
 
 /**
  * Call Claude with the given prompt and max_tokens.
+ *
+ * If the configured model has been retired (404 model-not-found), this
+ * automatically resolves the newest live model in the same family and
+ * retries once, so manuscript processing survives model retirements.
  */
-async function callClaude(prompt: string, maxTokens: number, model = "claude-sonnet-4-5-20250929"): Promise<string> {
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_SONNET_MODEL): Promise<string> {
+  const doRequest = (useModel: string) =>
+    fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: useModel,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+  let response = await doRequest(model);
 
   if (!response.ok) {
-    console.error("[MetadataExtractor] API error: status", response.status);
-    throw new Error(`Claude API error: ${response.status}`);
+    const errorBody = await response.text();
+    if (isModelNotFoundResponse(response.status, errorBody)) {
+      const replacement = await resolveReplacementModel(modelFamily(model), ANTHROPIC_API_KEY!);
+      if (replacement && replacement !== model) {
+        console.warn(`[MetadataExtractor] Model ${model} retired; retrying with ${replacement}`);
+        response = await doRequest(replacement);
+      }
+    }
+    if (!response.ok) {
+      console.error("[MetadataExtractor] API error: status", response.status, errorBody.slice(0, 200));
+      throw new Error(`Claude API error: ${response.status}`);
+    }
   }
 
   const data = await response.json();
@@ -227,7 +252,7 @@ Each element: {"n":1,"a":"authors","t":"title","j":"journal","y":2024,"doi":"10.
 Fields: n=number, a=authors, t=title, j=journal (null if none), y=year (int or null), doi (null if none), type=journal|book|preprint|other.
 Omit null fields. Return ONLY the JSON array.`;
 
-  const content = await callClaude(prompt, 16384, "claude-haiku-4-5-20251001");
+  const content = await callClaude(prompt, 16384, ANTHROPIC_HAIKU_MODEL);
   let jsonStr = content.trim();
   if (jsonStr.includes("```json")) {
     jsonStr = jsonStr.split("```json")[1].split("```")[0].trim();

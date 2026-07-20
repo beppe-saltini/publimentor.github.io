@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
+import { ANTHROPIC_HAIKU_MODEL } from "@/lib/anthropic-models";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: ANTHROPIC_HAIKU_MODEL,
         max_tokens: 300,
         messages: [
           {

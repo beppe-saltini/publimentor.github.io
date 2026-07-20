@@ -13,6 +13,7 @@
 import { z } from "zod";
 import { resilientFetch, circuitBreakers } from "@/lib/resilience";
 import { logger } from "@/lib/logger";
+import { ANTHROPIC_SONNET_MODEL } from "@/lib/anthropic-models";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -218,7 +219,7 @@ Respond with ONLY a valid JSON object:
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5-20250929",
+          model: ANTHROPIC_SONNET_MODEL,
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -357,7 +358,7 @@ Only include candidates with relevanceScore >= 50. Order by relevanceScore desce
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5-20250929",
+          model: ANTHROPIC_SONNET_MODEL,
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -450,7 +451,7 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5-20250929",
+          model: ANTHROPIC_SONNET_MODEL,
           max_tokens: 1024,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -545,7 +546,7 @@ Order journals by best fit first. Use the exact official journal name as it appe
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5-20250929",
+          model: ANTHROPIC_SONNET_MODEL,
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
