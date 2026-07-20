@@ -218,7 +218,7 @@ Respond with ONLY a valid JSON object:
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5-20250929",
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -357,7 +357,7 @@ Only include candidates with relevanceScore >= 50. Order by relevanceScore desce
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5-20250929",
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -450,7 +450,7 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5-20250929",
           max_tokens: 1024,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -545,7 +545,7 @@ Order journals by best fit first. Use the exact official journal name as it appe
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5-20250929",
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),

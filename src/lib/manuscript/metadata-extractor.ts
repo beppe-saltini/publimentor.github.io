@@ -183,7 +183,7 @@ function prepareMetadataText(text: string, refStart: number): string {
 /**
  * Call Claude with the given prompt and max_tokens.
  */
-async function callClaude(prompt: string, maxTokens: number, model = "claude-sonnet-4-20250514"): Promise<string> {
+async function callClaude(prompt: string, maxTokens: number, model = "claude-sonnet-4-5-20250929"): Promise<string> {
   const response = await fetch(ANTHROPIC_API_URL, {
     method: "POST",
     headers: {
