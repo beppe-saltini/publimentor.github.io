@@ -1,0 +1,61 @@
+name: Anthropic model check
+
+# Alerts (via workflow failure -> GitHub notification email) when a Claude
+# model the app depends on is retired from the Anthropic API.
+# Context: in July 2026 claude-sonnet-4-20250514 was retired and every
+# manuscript upload silently failed with "Claude API error: 404".
+#
+# The model list is read from src/lib/anthropic-models.ts on the app branch,
+# so this check stays in sync with the code automatically.
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-models:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout app branch
+        uses: actions/checkout@v4
+        with:
+          ref: app
+
+      - name: Verify configured models exist
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          ANTHROPIC_API_KEY="$(printf '%s' "${ANTHROPIC_API_KEY:-}" | tr -d '\r\n' | sed 's/\\n$//')"
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "Missing ANTHROPIC_API_KEY repository secret."
+            exit 1
+          fi
+
+          CONFIG="src/lib/anthropic-models.ts"
+          if [ ! -f "$CONFIG" ]; then
+            echo "Model config $CONFIG not found on app branch."
+            exit 1
+          fi
+
+          # Extract default model ids (the fallback strings after ||)
+          models=$(grep -oE '\|\| *"claude-[a-z0-9.-]+"' "$CONFIG" | grep -oE 'claude-[a-z0-9.-]+' | sort -u)
+          if [ -z "$models" ]; then
+            echo "No models found in $CONFIG — check the extraction pattern."
+            exit 1
+          fi
+
+          failed=0
+          for model in $models; do
+            code=$(curl -s -o /tmp/model-check.txt -w "%{http_code}" \
+              "https://api.anthropic.com/v1/models/${model}" \
+              -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+              -H "anthropic-version: 2023-06-01")
+            echo "${model} -> HTTP ${code}"
+            if [ "$code" != "200" ]; then
+              echo "::error::Model ${model} is not available (HTTP ${code}). Manuscript processing will fail. Update src/lib/anthropic-models.ts or set the ANTHROPIC_*_MODEL env vars in Vercel."
+              cat /tmp/model-check.txt
+              failed=1
+            fi
+          done
+          exit $failed
