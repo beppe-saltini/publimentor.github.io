@@ -1,17 +1,19 @@
 name: Supabase keep-alive
 
 # Prevents Supabase free-tier auto-pause after 7 days of inactivity.
+# Runs 4x daily and generates read + WRITE activity, since a single
+# daily REST read was not enough to stop Supabase pause warnings.
 # Scheduled workflows run from the default branch (main).
 on:
   schedule:
-    - cron: "17 7 * * *"
+    - cron: "17 1,7,13,19 * * *"
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Read beta_codes via Supabase REST API
+      - name: Generate Supabase activity (DB read, storage write, auth ping)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -23,14 +25,49 @@ jobs:
             echo "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY repository secrets."
             exit 1
           fi
-          code=$(curl -s -o /tmp/keepalive-body.txt -w "%{http_code}" \
+
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          failed=0
+
+          # 1. Database READ via REST API.
+          code=$(curl -s -o /tmp/read-body.txt -w "%{http_code}" \
             "${SUPABASE_URL}/rest/v1/beta_codes?select=id&limit=1" \
             -H "apikey: ${SUPABASE_SERVICE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}")
-          echo "Keep-alive ping at $(date -u +%Y-%m-%dT%H:%M:%SZ) -> HTTP ${code}"
+          echo "DB read at ${now} -> HTTP ${code}"
           if [ "$code" != "200" ]; then
-            echo "Response body:"
-            cat /tmp/keepalive-body.txt
+            cat /tmp/read-body.txt
+            failed=1
+          fi
+
+          # 2. Database WRITE via storage upload. Uploading upserts a row in
+          #    the storage.objects table of the same Postgres database, which
+          #    Supabase reliably counts as project activity.
+          code=$(curl -s -o /tmp/write-body.txt -w "%{http_code}" -X POST \
+            "${SUPABASE_URL}/storage/v1/object/manuscripts/keepalive/ping.txt" \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "Content-Type: text/plain" \
+            -H "x-upsert: true" \
+            --data "keep-alive ${now}")
+          echo "Storage write -> HTTP ${code}"
+          if [ "$code" != "200" ]; then
+            cat /tmp/write-body.txt
+            failed=1
+          fi
+
+          # 3. Auth service ping for extra API activity.
+          code=$(curl -s -o /tmp/auth-body.txt -w "%{http_code}" \
+            "${SUPABASE_URL}/auth/v1/health" \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}")
+          echo "Auth ping -> HTTP ${code}"
+          if [ "$code" != "200" ]; then
+            cat /tmp/auth-body.txt
+            failed=1
+          fi
+
+          if [ "$failed" != "0" ]; then
+            echo "One or more keep-alive requests failed."
             exit 1
           fi
-          echo "Supabase database activity recorded successfully."
+          echo "Supabase read + write activity recorded successfully."
