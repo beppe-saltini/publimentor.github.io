@@ -1,0 +1,46 @@
+{
+ "site_url": "https://www.publimentor.com/",
+ "ga_id": "G-12447WP84S",
+ "email": "simona.fiorani@publimentor.com",
+ "copyright": "© 2025 PubliMentor. All rights reserved. v05",
+ "urls": {
+  "booking": "https://outlook.office.com/book/BookaConsult@publimentor.com/?ismsaljsauthenabled",
+  "form_embed": "https://forms.office.com/Pages/ResponsePage.aspx?id=S2yroLJPmkGXOnSZHohTVs77A3w4c-NOnJEvnXsBIbtUREJHRkpBWjlNQzFUQVAzRktJU1lUQ1BWOS4u&embed=true",
+  "form_direct": "https://forms.office.com/e/3jVTUqYy0b",
+  "app": "https://app.publimentor.com"
+ },
+ "alts": {
+  "logo": "PubliMentor logo",
+  "headshot": "Simona Fiorani, PhD headshot",
+  "slide3": "Sample slide: The Research Question Triangle",
+  "slide5": "Sample slide: The Specific Aim Page: Your Hook"
+ },
+ "pages": {
+  "index.html": {
+   "template": "index",
+   "title": "PubliMentor — Publishing Consulting",
+   "description": "PubliMentor helps authors, reviewers, editors, and publishers navigate peer review, research integrity, and COPE-aligned ethics."
+  },
+  "newsletter.html": {
+   "template": "newsletter",
+   "title": "Newsletter — PubliMentor",
+   "description": "PubliMentor newsletter archive — past editions, publishing ethics tips, and course updates."
+  }
+ },
+ "articles": [
+  {
+   "file": "newsletter/building-the-home-for-a-field.html",
+   "slug": "building-the-home-for-a-field",
+   "cover": "art-cover-migrasome",
+   "title": "Building the home for a field: a conversation with Dr. Li Yu — PubliMentor",
+   "description": "Dr. Li Yu, discoverer of the migrasome and founding Editor-in-Chief of Vita Migrasome, on why a young field needs its own journal, editorial independence, and the next five years."
+  },
+  {
+   "file": "newsletter/open-access-invoice-arrived.html",
+   "slug": "open-access-invoice-arrived",
+   "cover": "art-cover-oa",
+   "title": "Open access didn't fail. The invoice arrived. — PubliMentor",
+   "description": "Cancer Research UK stops paying APCs, China builds home-grown OA journals, and who gets to define what replaces the paywall."
+  }
+ ]
+}

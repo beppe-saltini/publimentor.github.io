@@ -1,0 +1,14 @@
+# GitHub Pages (Jekyll) settings for www.publimentor.com.
+# The site is plain HTML; this file only keeps repository housekeeping out of the published site.
+exclude:
+  - README.md
+  - CLAUDE.md
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+  - next.config.ts
+  - eslint.config.mjs
+  - postcss.config.mjs
+  - src
+  - public
+  - newsletters

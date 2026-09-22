@@ -1,0 +1,62 @@
+<a class="skip" href="#main" data-i18n="ui.skip"></a>
+
+[[include:header]]
+
+<main id="main">
+  <section class="page-hero">
+    <div class="wrap page-hero-grid">
+      <div>
+        <h1 class="h-display" data-i18n="arch.title"></h1>
+        <p class="lead" data-i18n="arch.lead"></p>
+      </div>
+      <div class="cover-stack" aria-hidden="true">
+        <div class="cover-stack-item">[[include:art-cover-oa]]</div>
+        <div class="cover-stack-item">[[include:art-cover-migrasome]]</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--surface archive-list">
+    <div class="wrap archive-head">
+      <h2 class="kicker" data-i18n="arch.archive"></h2>
+      <ul class="editions">
+        <li class="edition">
+          <a href="newsletter/building-the-home-for-a-field.html">
+            <div class="edition-cover" aria-hidden="true">[[include:art-cover-migrasome]]</div>
+            <div class="edition-text">
+              <span class="date" data-i18n="arch.date2"></span>
+              <h3 data-i18n="arch.title2"></h3>
+              <p data-i18n="arch.desc2"></p>
+              <span class="read"><span data-i18n="arch.read"></span>[[ic:arrow-right]]</span>
+            </div>
+          </a>
+        </li>
+        <li class="edition">
+          <a href="newsletter/open-access-invoice-arrived.html">
+            <div class="edition-cover" aria-hidden="true">[[include:art-cover-oa]]</div>
+            <div class="edition-text">
+              <span class="date" data-i18n="arch.date1"></span>
+              <h3 data-i18n="arch.title1"></h3>
+              <p data-i18n="arch.desc1"></p>
+              <span class="read"><span data-i18n="arch.read"></span>[[ic:arrow-right]]</span>
+            </div>
+          </a>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section section--paper" id="subscribe">
+    <div class="wrap subscribe-block">
+      <h2 class="h-section" data-i18n="arch.subscribe"></h2>
+      <p class="lead" data-i18n="news.lead"></p>
+      <button class="btn btn-primary btn-lg" type="button" id="subscribeBtn" aria-expanded="false" aria-controls="subscribePanel">[[ic:mail]]<span data-i18n="arch.subscribe"></span></button>
+      <p class="fineprint" data-i18n="news.fallback"></p>
+      <div class="subscribe-panel" id="subscribePanel" hidden>
+        <iframe data-src="[[url:form_embed]]" title="[[t:ui.formtitle]]" loading="lazy" allowfullscreen></iframe>
+      </div>
+    </div>
+  </section>
+</main>
+
+[[include:footer]]
