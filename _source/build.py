@@ -11,6 +11,7 @@ Where things live
                              data-i18n="key"; the English text is filled in at build time and the
                              Chinese text ships in the page's script for the EN / 中文 switch.
   content/site.json          titles, descriptions, URLs, e-mail, copyright line, Analytics id, alt texts.
+  content/palette.json       the two colour palettes (green, blue); becomes the :root tokens and recolours the art.
   content/articles/          the newsletter articles (head + body fragments, HTML).
   templates/, partials/      page structure; partials/art-*.html are drawn by art.py.
   styles.css, script.js      one stylesheet and one script shared by all pages.
@@ -103,6 +104,7 @@ EMBLEM = 'data:image/webp;base64,' + b64('assets', 'emblem-mask.webp')
 EMBLEM_XL = 'data:image/webp;base64,' + b64('assets', 'emblem-xl-460-60.webp')   # the homepage shows the emblem large
 SLIDE_SMALL = 'data:image/webp;base64,' + b64('assets', 'slide-3-800.webp')
 FAVICON = 'data:image/png;base64,' + b64('assets', 'favicon-64.png')
+FAVICON_BLUE = 'data:image/png;base64,' + b64('assets', 'favicon-64-blue.png')
 
 
 def font_face(family, style, weight, filename):
@@ -119,8 +121,46 @@ FONTS = {
                        font_face('Figtree', 'normal', '400 700', 'figtree-roman.woff2'),
                        font_face('Figtree', 'italic', '400 700', 'figtree-italic.woff2')]),
 }
+PALETTE = json.loads(read('content', 'palette.json'))
+TOKENS = PALETTE['tokens']
+
+
+def palette_css():
+    """The :root tokens for the green palette, the overrides for the blue one, and the two swatches."""
+    green = ''.join('--%s:%s;' % (k, v['green']) for k, v in TOKENS.items())
+    blue = ''.join('--%s:%s;' % (k, v['blue']) for k, v in TOKENS.items() if v['blue'] != v['green'])
+    sw = ''.join('.palette button[data-palette="%s"]{--swatch:linear-gradient(135deg,%s 50%%,%s 50%%)}' % (name, a, b)
+                 for name, (a, b) in PALETTE['swatches'].items())
+    return '%s\n}\n:root[data-palette="blue"]{%s}\n%s\n:root{' % (green, blue, sw)
+
+
 CSS = read('styles.css')
+assert CSS.count('/* [[palette]] */') == 1, 'styles.css needs the /* [[palette]] */ marker inside :root'
+CSS = CSS.replace('/* [[palette]] */', palette_css())
 JS = read('script.js')
+
+# The drawings are generated with the green colours; each becomes its token so the switch recolours them.
+ART_TOKEN = {}
+for _k, _v in TOKENS.items():
+    if _v['green'].startswith('#'):
+        assert _v['green'].upper() not in ART_TOKEN, 'duplicate green value for %s' % _k
+        ART_TOKEN[_v['green'].upper()] = _k
+
+
+def tokenise_art(svg):
+    def tag(m):
+        t = m.group(0); styles = []
+        def attr(a):
+            prop, val = a.group(1), a.group(2).upper()
+            if val in ART_TOKEN:
+                styles.append('%s:var(--%s)' % (prop, ART_TOKEN[val])); return ''
+            return a.group(0)
+        t = re.sub(r'\s(fill|stroke|stop-color|flood-color)="(#[0-9A-Fa-f]{6})"', attr, t)
+        if styles:
+            t = t[:-2] + ' style="%s"/>' % ';'.join(styles) if t.endswith('/>') else t[:-1] + ' style="%s">' % ';'.join(styles)
+        return t
+    return re.sub(r'<[a-zA-Z][^>]*>', tag, svg)
+
 
 
 def icon_symbol(name):
@@ -146,6 +186,7 @@ def render(body_tpl, ctx):
             suffix = '-%d' % counter[0]
             for i in re.findall(r'\sid="([^"]+)"', part):
                 part = part.replace('id="%s"' % i, 'id="%s%s"' % (i, suffix)).replace('url(#%s)' % i, 'url(#%s%s)' % (i, suffix))
+            part = tokenise_art(part)
         return part
 
     for _ in range(2):
@@ -205,6 +246,7 @@ def page(title, description, canonical, body_tpl, ctx, fonts, home=False):
     head = (
         '<!doctype html>\n<html lang="en">\n<head>\n' + ga +
         '  <meta charset="utf-8">\n'
+        '  <script>try{if(localStorage.getItem("pm-palette")==="blue"){document.documentElement.setAttribute("data-palette","blue")}}catch(e){}</script>\n'
         '  <meta name="viewport" content="width=device-width,initial-scale=1">\n'
         '  <title>%s</title>\n'
         '  <meta name="description" content="%s">\n'
@@ -216,9 +258,9 @@ def page(title, description, canonical, body_tpl, ctx, fonts, home=False):
         '  <meta property="og:url" content="%s">\n'
         '  <meta name="theme-color" content="#FAF7F0">\n'
         '  <meta name="color-scheme" content="light">\n'
-        '  <link rel="icon" type="image/png" href="%s">\n'
+        '  <link rel="icon" type="image/png" href="%s" data-blue="%s">\n'
         % (html.escape(title, quote=False), html.escape(description), canonical,
-           html.escape(title), html.escape(description), canonical, FAVICON)
+           html.escape(title), html.escape(description), canonical, FAVICON, FAVICON_BLUE)
     )
     root_vars = ':root{--emblem:url(%s)%s}' % (EMBLEM_XL if home else EMBLEM, (';--slide3s:url(%s)' % SLIDE_SMALL) if home else '')
     style = '  <style>\n%s\n%s\n%s\n  </style>\n' % (root_vars, FONTS[fonts], CSS)

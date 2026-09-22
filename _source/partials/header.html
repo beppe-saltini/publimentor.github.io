@@ -18,10 +18,21 @@
         <a class="btn btn-tonal" href="[[url:app]]">[[ic:zap]]<span data-i18n="cta.launchapp"></span></a>
         <a class="btn btn-primary" href="[[home]]#contact" data-i18n="cta.getintouch"></a>
       </div>
+      <div class="menu-palette">
+        <span data-i18n="palette.label"></span>
+        <div class="palette" role="group" aria-label="Colour palette" data-i18n-attr="aria-label:palette.label">
+          <button type="button" data-palette="green" aria-pressed="true" aria-label="Green palette" data-i18n-attr="aria-label:palette.green"></button>
+          <button type="button" data-palette="blue" aria-pressed="false" aria-label="Blue palette" data-i18n-attr="aria-label:palette.blue"></button>
+        </div>
+      </div>
     </div>
     <div class="lang" role="group" aria-label="Language / 语言">
       <button type="button" data-lang="en" aria-pressed="true">EN</button>
       <button type="button" data-lang="zh" aria-pressed="false" lang="zh-Hans">中文</button>
+    </div>
+    <div class="palette" role="group" aria-label="Colour palette" data-i18n-attr="aria-label:palette.label">
+      <button type="button" data-palette="green" aria-pressed="true" aria-label="Green palette" data-i18n-attr="aria-label:palette.green"></button>
+      <button type="button" data-palette="blue" aria-pressed="false" aria-label="Blue palette" data-i18n-attr="aria-label:palette.blue"></button>
     </div>
     <button class="menu-btn" type="button" id="menuBtn" aria-expanded="false" aria-controls="siteMenu" aria-label="Menu" data-i18n-attr="aria-label:ui.menu">
       [[ic:menu ic-open]][[ic:x ic-close]]

@@ -77,6 +77,41 @@
   }
   setLang(readLangFromUrl(), { silent: true });
 
+  /* ------------------------------------------------------------------
+     Colour palette switch (green / blue)
+     The two palettes are token sets in the stylesheet (built from
+     content/palette.json); "blue" is applied as data-palette on <html>.
+     The choice is remembered in this browser; ?palette=blue|green in a
+     link sets it too. A tiny script in <head> applies the saved choice
+     before first paint, this part wires up the buttons and the favicon.
+     ------------------------------------------------------------------ */
+  var PALETTE_KEY = 'pm-palette';
+  var paletteButtons = document.querySelectorAll('.palette button');
+  var iconLink = document.querySelector('link[rel="icon"]');
+  var iconGreen = iconLink ? iconLink.getAttribute('href') : null;
+
+  function setPalette(name, remember) {
+    name = name === 'blue' ? 'blue' : 'green';
+    if (name === 'blue') { root.setAttribute('data-palette', 'blue'); } else { root.removeAttribute('data-palette'); }
+    for (var i = 0; i < paletteButtons.length; i++) {
+      paletteButtons[i].setAttribute('aria-pressed', paletteButtons[i].getAttribute('data-palette') === name ? 'true' : 'false');
+    }
+    if (iconLink && iconLink.getAttribute('data-blue')) {
+      iconLink.setAttribute('href', name === 'blue' ? iconLink.getAttribute('data-blue') : iconGreen);
+    }
+    if (remember) { try { localStorage.setItem(PALETTE_KEY, name); } catch (e) { /* private mode */ } }
+  }
+  (function () {
+    var fromUrl = null, saved = null;
+    try { fromUrl = new URLSearchParams(window.location.search).get('palette'); } catch (e) { /* old browser */ }
+    try { saved = localStorage.getItem(PALETTE_KEY); } catch (e) { /* storage blocked */ }
+    if (fromUrl === 'blue' || fromUrl === 'green') { setPalette(fromUrl, true); }
+    else { setPalette(saved || (root.getAttribute('data-palette') === 'blue' ? 'blue' : 'green'), false); }
+  })();
+  for (var pb = 0; pb < paletteButtons.length; pb++) {
+    paletteButtons[pb].addEventListener('click', function () { setPalette(this.getAttribute('data-palette'), true); });
+  }
+
   /* ---------------- Header: shadow on scroll, mobile menu ---------------- */
   var header = document.getElementById('siteHeader');
   var menuBtn = document.getElementById('menuBtn');

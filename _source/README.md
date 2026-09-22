@@ -27,8 +27,9 @@ on the Mac, where nothing inside the folder can be deleted: git's lock and tempo
 | --- | --- |
 | Edit wording | `content/en.json` and `content/zh.json`. Keys match the `data-i18n` attributes in `templates/` and `partials/`. Every key needs English; a key without Chinese simply stays in English. |
 | Titles, descriptions, links, e-mail, copyright line, Google Analytics id | `content/site.json` |
+| Colours | `content/palette.json` — two palettes, *green* (the original teal/mint) and *blue* (from the logo). The header switch flips between them and remembers the choice in the browser; `?palette=blue` in a link sets it too. `build.py` writes the tokens into the stylesheet and recolours the drawings, so `styles.css` and the art only ever use `var(--token)`. Favicons: `python3 _source/tools/favicon.py` (needs Pillow). |
 | Add a newsletter edition | Put the article fragments in `content/articles/<slug>.head.html` and `<slug>.body.html`, list it in `content/site.json` → `articles`, add its date/title/summary strings to both JSON files, and add the edition to `templates/index.body.html` and `templates/newsletter.body.html`. Draw or reuse a cover partial (`partials/art-cover-*.html`). |
-| Layout and styling | `templates/*.body.html`, `partials/header.html`, `partials/footer.html`, `styles.css`, `script.js` |
+| Layout and styling | `templates/*.body.html`, `partials/header.html`, `partials/footer.html`, `styles.css` (colours only through tokens), `script.js` |
 | Illustrations | `art.py` draws every `partials/art-*.html` except the globe (`tools/globe.mjs`, needs `npm i d3-geo topojson-client world-atlas`). Run `python3 _source/art.py` after editing. |
 | Pictures and fonts | `assets/` (WebP/PNG, already optimised) and `fonts/` (subset WOFF2). They are inlined into the pages at build time. |
 | Icons | `icons/` — the Lucide icons in use. Reference one with `[[ic:name]]` in a template. |

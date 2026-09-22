@@ -19,6 +19,8 @@ owner previously used Cursor.
 
 - Copy is the owner's: never change wording unless asked. New interface strings get a key in both
   `content/en.json` and `content/zh.json`; keep English and Chinese in step.
+- Colours: only through the tokens in `content/palette.json` (two palettes, switched from the header; the
+  build recolours the drawings too). Never put a hex colour in `styles.css` or a template.
 - Keep each page a single self-contained file; keep the four URLs and the `assets/training/` slide files.
 - Always run `python3 _source/check.py` before deploying. After deploying, fetch the live page and
   confirm it matches the built file.
@@ -65,3 +67,6 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
   the previous site apart from a few interface labels. Deployed as b4417a4 (previous site: 0f762c1).
 - 2026-09-22 — deploy.sh / rollback.sh rewritten around `git-env.sh` so they also work from the sandbox;
   rollback now restores only the published pages.
+- 2026-09-22 — Second palette built from the logo's blue (#08445F) with a green/blue switch in the header
+  (remembered per browser, `?palette=blue` in links); testimonial bylines: course participants instead of
+  "Anonymous participant".
