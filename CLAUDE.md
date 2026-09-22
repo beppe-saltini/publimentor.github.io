@@ -31,15 +31,29 @@ owner previously used Cursor.
 ## Deploying from a Claude session
 
 1. Connect the folder `~/Projects/project publimentor` (it contains the repository and `.deploy/`).
-2. Run, in the sandbox shell on the Mac:
+2. Edit `_source` on the Mac (send changed files with device_commit_files, then compare sha256 on both
+   sides: the tool has served a stale copy of a previously sent path — use a fresh staged path if so).
+3. Run, in the sandbox shell on the Mac:
    `cd "$HOME/mnt/project publimentor/publimentor" && _source/tools/deploy.sh "message"`
    The script fetches, fast-forwards, builds, checks, commits and pushes over SSH with the deploy key.
    It keeps the sandbox's own `GIT_SSH_COMMAND` (the proxy) and only adds the key and known_hosts.
-3. Verify: `https://www.publimentor.com/` should serve the new `index.html` within a couple of minutes.
+4. Verify: `https://www.publimentor.com/` should serve the new `index.html` within a couple of minutes
+   (WebFetch works; the cloud shell cannot reach the domain, and the built-in browser on the Mac can).
 
-The owner can do the same by double-clicking `Deploy website.command` (next to the repository), and can
-preview the current `_source` at http://localhost:8765 with `Preview website in localhost.command`.
-Rollback: `_source/tools/rollback.sh` (or `Roll back website.command`) reverts the latest commit on main and pushes; the pages return exactly to the previous version. Re-deploy later with deploy.sh.
+Rollback: `_source/tools/rollback.sh [commit]` publishes the pages as they were before the latest commit
+(or at the given commit) as a new commit; `_source` stays as it is. Re-deploy later with deploy.sh.
+The owner can do both by double-clicking `Deploy website.command` / `Roll back website.command` (next to
+the repository) and can preview the current `_source` at http://localhost:8765 with
+`Preview website in localhost.command`.
+
+Sandbox quirks (handled by `_source/tools/git-env.sh`, so use the scripts rather than raw git for anything
+that writes): nothing inside the connected folder can be deleted, so git leaves `.git/HEAD.lock`,
+`index.lock`, `objects/maintenance.lock` and `tmp_obj_*` files behind — a stale `HEAD.lock` blocks the
+next commit — and `checkout`/`merge`/`revert` fail because they delete files before recreating them. The
+scripts keep the index outside the folder, replace files by overwriting, and move the leftovers to
+`../_to_delete/git-leftovers/`. For read-only git commands in the sandbox, set
+`GIT_INDEX_FILE` to a copy of `.git/index` outside the folder (e.g. `cp .git/index "$HOME/i"`) to avoid
+leaving an `index.lock` behind. Never print the environment (the proxy variables carry credentials).
 
 To revoke Claude's push access: GitHub → repository → Settings → Deploy keys → delete "claude-deploy-key".
 
@@ -47,4 +61,7 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 
 - 2026-09-22 — Redesign: new visual identity (Newsreader + Figtree, brand teal/green palette, illustration
   set drawn in `_source/art.py`), always-visible EN/中文 switch, pictures throughout, newsletter covers,
-  fifth testimonial. Wording unchanged from the previous site apart from a few interface labels.
+  fifth testimonial, Simona's three editorial roles in the hero and About section. Wording unchanged from
+  the previous site apart from a few interface labels. Deployed as b4417a4 (previous site: 0f762c1).
+- 2026-09-22 — deploy.sh / rollback.sh rewritten around `git-env.sh` so they also work from the sandbox;
+  rollback now restores only the published pages.

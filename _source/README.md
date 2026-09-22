@@ -9,11 +9,17 @@ underscore so GitHub Pages leaves it out of the published site.
 python3 _source/build.py            # writes index.html, newsletter.html, newsletter/*.html into the repo root
 python3 _source/check.py            # confirms the pages match _source, links resolve, strings exist
 _source/tools/deploy.sh "message"   # fetch → build → check → commit → push to main (GitHub Pages)
-_source/tools/rollback.sh [commit]  # revert the latest (or a given) commit on main and push — the site goes back as it was
+_source/tools/rollback.sh [commit]  # publish the pages as they were before the latest commit (or at a given commit)
 ```
 
 Python 3.8+ is all the build and check need. Deploying needs the SSH deploy key in `../.deploy/`
 (next to the repository, not inside it).
+
+A rollback is a new commit that restores only the published pages (`index.html`, `newsletter.html`,
+`newsletter/*.html`); `_source` and these tools stay as they are, so the problem can be fixed in `_source`
+and deployed again. Both scripts share `tools/git-env.sh`, which also lets them run from Claude's sandbox
+on the Mac, where nothing inside the folder can be deleted: git's lock and temporary files are moved to
+`../_to_delete/git-leftovers/` (safe to trash) and files are replaced by overwriting them.
 
 ## Changing things
 
