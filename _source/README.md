@@ -40,7 +40,7 @@ on the Mac, where nothing inside the folder can be deleted: git's lock and tempo
 `[[img:…]]`, `[[alt:…]]` and `[[t:…]]` slots, fills every `data-i18n` element with its English
 text, inlines the stylesheet, fonts and images, and embeds the Chinese dictionary for the keys that
 page uses so the EN / 中文 switch works without a network request. A few strings get extra markup for
-presentation (the highlighted words in the hero and mission, the "Coming soon" badge, the durations,
+presentation (the highlighted words in the hero and mission, the durations,
 the form fallback link); the build refuses to run if that markup drifts from the JSON wording.
 
 Each page is a single self-contained file. The only external files are the two full-size sample

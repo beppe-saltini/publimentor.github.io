@@ -289,6 +289,32 @@ def role_editors():
     return tile(b, 'reS')
 
 
+def role_institutions():
+    b = '<g filter="url(#rnS)">' + '<path d="M28 40L66 17L104 40Z" fill="%s"/>' % PINE + circle(66, 31, 4.5, AMBER) + rrect(28, 40, 76, 6, 2, INK)
+    for i in range(5):
+        b += rrect(34 + i * 14, 49, 9, 28, 2, WHITE)
+    b += rrect(26, 77, 80, 6, 2, INK) + rrect(20, 84, 92, 5, 2.5, TEAL) + '</g>'
+    return tile(b, 'rnS')
+
+
+def role_training():
+    b = '<g filter="url(#rtS)">'
+    for x1, x2 in ((52, 42), (80, 90)):
+        b += '<line x1="%s" y1="70" x2="%s" y2="92" stroke="%s" stroke-width="4" stroke-linecap="round"/>' % (x1, x2, INK)
+    b += rrect(20, 12, 92, 60, 6, WHITE) + bar(30, 22, 40, 6, INK) + bar(30, 33, 26, 4, TEAL2)
+    b += '<path d="M70 62L84 38L98 62Z" fill="none" stroke="%s" stroke-width="3" stroke-linejoin="round"/>' % TEAL
+    b += bar(30, 46, 30, 3.6, GREY2) + bar(30, 54, 24, 3.6, GREY2) + circle(84, 38, 4, AMBER) + '</g>'
+    return tile(b, 'rtS')
+
+
+def role_journals():
+    b = '<g filter="url(#rjS)">' + rrect(30, 12, 48, 74, 4, BRAND) + rrect(38, 22, 32, 6, 3, WHITE) + rrect(38, 32, 20, 4, 2, WHITE, 'opacity=".55"')
+    b += rrect(38, 64, 32, 12, 2, TEAL2)
+    b += '<path d="M64 80L84 58L94 66L108 40" fill="none" stroke="%s" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>' % TEAL
+    b += spark(108, 33, 7, AMBER) + rrect(22, 86, 96, 4, 2, INK) + '</g>'
+    return tile(b, 'rjS')
+
+
 def role_ai():
     b = rrect(0, 0, 132, 100, 18, '#1B4C5C')
     b += '<g transform="translate(30 10)" filter="url(#riS)">%s</g>' % mini_page(w=60, h=80, seed=31)
@@ -498,6 +524,7 @@ if __name__ == '__main__':
         'art-hero-back': hero_back(), 'art-hero-front': hero_front(),
         'art-role-authors': role_authors(), 'art-role-reviewers': role_reviewers(),
         'art-role-publishers': role_publishers(), 'art-role-editors': role_editors(), 'art-role-ai': role_ai(),
+        'art-role-institutions': role_institutions(), 'art-role-training': role_training(), 'art-role-journals': role_journals(),
         'art-workshop': workshop(), 'art-lifecycle': lifecycle(), 'art-newsletter': newsletter_art(), 'art-quotes': quotes_art(), 'art-cover-migrasome': cover_migrasome(), 'art-cover-oa': cover_oa(),
     }
     for name, markup in parts.items():

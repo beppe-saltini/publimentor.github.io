@@ -247,7 +247,7 @@ mark {
   @keyframes art-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 }
 
-/* What we do: five points on one sheet, straddling the hero and the next section */
+/* In brief: five points on one sheet, straddling the hero and the next section */
 .whatwedo { background: linear-gradient(to bottom, var(--paper) 0, var(--paper) 50%, var(--surface) 50%, var(--surface) 100%); }
 .wwd-panel {
   position: relative; display: flex; flex-direction: column; gap: 22px; padding: clamp(24px, 3vw, 36px) clamp(22px, 3vw, 40px) clamp(26px, 3vw, 38px);
@@ -512,15 +512,15 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
 .kicker:lang(zh), .mission h2:lang(zh), .edition .date:lang(zh), .soon:lang(zh) { letter-spacing: .04em; }
 
 /* ---------- Responsive ---------- */
-/* Narrow desktops (1241–1320px): the full navigation only just fits, so everything in the header is a notch smaller */
-@media (max-width: 1320px) {
+/* Narrow desktops (1341–1440px): the full navigation only just fits, so everything in the header is a notch smaller */
+@media (max-width: 1440px) {
   .emblem { width: 56px; }
   .brand-name { font-size: 1.5rem; }
   .nav { gap: 7px; }
   .nav a { font-size: .875rem; }
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1340px) {
   .menu-btn { display: inline-flex; }
   .header-panel {
     position: absolute; top: 100%; left: 0; right: 0; display: none; flex-direction: column; align-items: stretch; gap: 8px;
@@ -634,8 +634,32 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
   .contact h2, .ai-panel h3, .contact-email, .site-footer a, .footer-brand .brand-name { color: #000 !important; }
 }
 
+/* ---------- Links on cards, three-up "What we do", Journal Launch & Growth ---------- */
+.role { scroll-margin-top: calc(var(--header-h) + 24px); }
+.role-links { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: auto; padding-top: 4px; font-size: .96875rem; font-weight: 600; }
+.role-links a { display: inline-flex; align-items: center; gap: 6px; color: var(--teal); text-decoration: none; }
+.role-links a:hover { text-decoration: underline; text-decoration-color: var(--mint); text-decoration-thickness: 3px; text-underline-offset: 4px; }
+.role-links .ic { width: 1em; height: 1em; }
+.roles--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.roles--three .role, .roles--three .role:nth-child(odd), .roles--three .role:nth-child(even) { padding: 30px clamp(16px, 2vw, 28px) 34px; border-top: 0; border-left: 1px solid var(--line); }
+.roles--three .role:first-child { padding-left: 0; border-left: 0; }
+.roles--three .role:last-child { padding-right: 0; }
+@media (max-width: 1100px) {
+  .roles--three { grid-template-columns: minmax(0, 1fr); }
+  .roles--three .role, .roles--three .role:nth-child(odd), .roles--three .role:nth-child(even) { padding: 30px 0 34px; border-left: 0; }
+  .roles--three .role + .role { border-top: 1px solid var(--line); }
+}
+.section--mint { background: var(--mint-wash); }
+.j-cred { font-size: 1rem; line-height: 1.6; color: var(--ink-soft); max-width: 46ch; }
+.j-cred strong { color: var(--ink); font-weight: 700; }
+.j-text { font-size: 1rem; line-height: 1.6; color: var(--ink-soft); max-width: 60ch; }
+.phase-no { font-family: var(--serif); font-size: 2.75rem; line-height: 1; color: var(--teal); margin-bottom: 4px; }
+.index-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.index-chips li { padding: 5px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong); font-size: .875rem; font-weight: 600; color: var(--brand); }
+#journals .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+
   </style>
-  <noscript><style>@media (max-width:1240px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}.header-panel{position:static;display:flex;padding:0 0 16px;border:0;box-shadow:none;background:none}}</style></noscript>
+  <noscript><style>@media (max-width:1340px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}.header-panel{position:static;display:flex;padding:0 0 16px;border:0;box-shadow:none;background:none}}</style></noscript>
 </head>
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><symbol id="i-zap" viewBox="0 0 24 24"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></symbol><symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 5h16" /> <path d="M4 12h16" /> <path d="M4 19h16" /></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol><symbol id="i-mail" viewBox="0 0 24 24"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" /> <rect x="2" y="4" width="20" height="16" rx="2" /></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v3" /> <path d="M16 2v3" /> <rect x="3" y="3" width="18" height="18" rx="2" /> <path d="M3 9h18" /></symbol></svg>
@@ -650,6 +674,7 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
     <div class="header-panel" id="siteMenu">
       <nav class="nav" aria-label="Primary">
         <a href="../index.html#services" data-i18n="nav.services">Services</a>
+        <a href="../index.html#journals" data-i18n="nav.journals">Journal Launch</a>
         <a href="../index.html#training" data-i18n="nav.training">Training</a>
         <a href="../index.html#testimonials" data-i18n="nav.testimonials">Testimonials</a>
         <a href="../index.html#mission" data-i18n="mission.title">Mission</a>
@@ -729,6 +754,7 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
     <nav class="footer-nav" aria-label="Footer">
       <a href="../index.html" data-i18n="ui.home">Home</a>
       <a href="../index.html#services" data-i18n="nav.services">Services</a>
+      <a href="../index.html#journals" data-i18n="nav.journals">Journal Launch</a>
       <a href="../index.html#training" data-i18n="nav.training">Training</a>
       <a href="../index.html#testimonials" data-i18n="nav.testimonials">Testimonials</a>
       <a href="../index.html#mission" data-i18n="mission.title">Mission</a>
@@ -744,7 +770,7 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
   </div>
   <div class="wrap">
     <div class="footer-base">
-      <p>© 2025 PubliMentor. All rights reserved. v05</p>
+      <p>© 2026 PubliMentor. All rights reserved. v06</p>
       <p data-i18n="contact.base">Based in the UK • Working globally</p>
     </div>
   </div>
@@ -760,7 +786,7 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
      Add a key to an element with data-i18n="key" and give it a Chinese
      entry here; elements without an entry simply stay in English.
      ------------------------------------------------------------------ */
-  var ZH = {"ui.skip":"跳到主要内容","nav.services":"服务","nav.training":"培训","nav.testimonials":"客户评价","mission.title":"使命","nav.about":"关于","nav.newsletter":"通讯","nav.contact":"联系","cta.launchapp":"启动应用","cta.getintouch":"联系我们","palette.label":"配色方案","ui.back":"← 返回往期通讯","ui.home":"首页","cta.book":"预约咨询","contact.base":"位于英国 • 服务全球","palette.green":"绿色配色","palette.blue":"蓝色配色","ui.menu":"菜单"};
+  var ZH = {"ui.skip":"跳到主要内容","nav.services":"服务","nav.journals":"期刊创办","nav.training":"培训","nav.testimonials":"客户评价","mission.title":"使命","nav.about":"关于","nav.newsletter":"通讯","nav.contact":"联系","cta.launchapp":"启动应用","cta.getintouch":"联系我们","palette.label":"配色方案","ui.back":"← 返回往期通讯","ui.home":"首页","cta.book":"预约咨询","contact.base":"位于英国 • 服务全球","palette.green":"绿色配色","palette.blue":"蓝色配色","ui.menu":"菜单"};
 
   var root = document.documentElement;
   var current = 'en';
@@ -883,7 +909,7 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setMenu(false); } });
     var panelLinks = document.querySelectorAll('#siteMenu a');
     for (var l = 0; l < panelLinks.length; l++) { panelLinks[l].addEventListener('click', function () { setMenu(false); }); }
-    window.addEventListener('resize', function () { if (window.innerWidth > 1240) { setMenu(false); } });
+    window.addEventListener('resize', function () { if (window.innerWidth > 1340) { setMenu(false); } });
   }
 
   /* ---------------- Scroll-spy: mark the section being read ---------------- */

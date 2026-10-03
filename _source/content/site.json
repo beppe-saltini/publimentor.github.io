@@ -2,7 +2,7 @@
  "site_url": "https://www.publimentor.com/",
  "ga_id": "G-12447WP84S",
  "email": "simona.fiorani@publimentor.com",
- "copyright": "© 2025 PubliMentor. All rights reserved. v05",
+ "copyright": "© 2026 PubliMentor. All rights reserved. v06",
  "urls": {
   "booking": "https://outlook.office.com/book/BookaConsult@publimentor.com/?ismsaljsauthenabled",
   "form_embed": "https://forms.office.com/Pages/ResponsePage.aspx?id=S2yroLJPmkGXOnSZHohTVs77A3w4c-NOnJEvnXsBIbtUREJHRkpBWjlNQzFUQVAzRktJU1lUQ1BWOS4u&embed=true",
@@ -19,7 +19,7 @@
   "index.html": {
    "template": "index",
    "title": "PubliMentor — Publishing Consulting",
-   "description": "PubliMentor helps authors, reviewers, editors, and publishers navigate peer review, research integrity, and COPE-aligned ethics."
+   "description": "PubliMentor helps authors, editors, publishers and research institutions navigate peer review, research integrity, and COPE-aligned ethics."
   },
   "newsletter.html": {
    "template": "newsletter",

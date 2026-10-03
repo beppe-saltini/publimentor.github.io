@@ -130,7 +130,7 @@
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setMenu(false); } });
     var panelLinks = document.querySelectorAll('#siteMenu a');
     for (var l = 0; l < panelLinks.length; l++) { panelLinks[l].addEventListener('click', function () { setMenu(false); }); }
-    window.addEventListener('resize', function () { if (window.innerWidth > 1240) { setMenu(false); } });
+    window.addEventListener('resize', function () { if (window.innerWidth > 1340) { setMenu(false); } });
   }
 
   /* ---------------- Scroll-spy: mark the section being read ---------------- */

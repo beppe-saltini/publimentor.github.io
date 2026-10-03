@@ -212,7 +212,7 @@ mark {
   @keyframes art-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 }
 
-/* What we do: five points on one sheet, straddling the hero and the next section */
+/* In brief: five points on one sheet, straddling the hero and the next section */
 .whatwedo { background: linear-gradient(to bottom, var(--paper) 0, var(--paper) 50%, var(--surface) 50%, var(--surface) 100%); }
 .wwd-panel {
   position: relative; display: flex; flex-direction: column; gap: 22px; padding: clamp(24px, 3vw, 36px) clamp(22px, 3vw, 40px) clamp(26px, 3vw, 38px);
@@ -477,15 +477,15 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
 .kicker:lang(zh), .mission h2:lang(zh), .edition .date:lang(zh), .soon:lang(zh) { letter-spacing: .04em; }
 
 /* ---------- Responsive ---------- */
-/* Narrow desktops (1241–1320px): the full navigation only just fits, so everything in the header is a notch smaller */
-@media (max-width: 1320px) {
+/* Narrow desktops (1341–1440px): the full navigation only just fits, so everything in the header is a notch smaller */
+@media (max-width: 1440px) {
   .emblem { width: 56px; }
   .brand-name { font-size: 1.5rem; }
   .nav { gap: 7px; }
   .nav a { font-size: .875rem; }
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1340px) {
   .menu-btn { display: inline-flex; }
   .header-panel {
     position: absolute; top: 100%; left: 0; right: 0; display: none; flex-direction: column; align-items: stretch; gap: 8px;
@@ -598,3 +598,27 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
   .contact, .site-footer, .ai-panel { background: #fff !important; color: #000 !important; }
   .contact h2, .ai-panel h3, .contact-email, .site-footer a, .footer-brand .brand-name { color: #000 !important; }
 }
+
+/* ---------- Links on cards, three-up "What we do", Journal Launch & Growth ---------- */
+.role { scroll-margin-top: calc(var(--header-h) + 24px); }
+.role-links { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: auto; padding-top: 4px; font-size: .96875rem; font-weight: 600; }
+.role-links a { display: inline-flex; align-items: center; gap: 6px; color: var(--teal); text-decoration: none; }
+.role-links a:hover { text-decoration: underline; text-decoration-color: var(--mint); text-decoration-thickness: 3px; text-underline-offset: 4px; }
+.role-links .ic { width: 1em; height: 1em; }
+.roles--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.roles--three .role, .roles--three .role:nth-child(odd), .roles--three .role:nth-child(even) { padding: 30px clamp(16px, 2vw, 28px) 34px; border-top: 0; border-left: 1px solid var(--line); }
+.roles--three .role:first-child { padding-left: 0; border-left: 0; }
+.roles--three .role:last-child { padding-right: 0; }
+@media (max-width: 1100px) {
+  .roles--three { grid-template-columns: minmax(0, 1fr); }
+  .roles--three .role, .roles--three .role:nth-child(odd), .roles--three .role:nth-child(even) { padding: 30px 0 34px; border-left: 0; }
+  .roles--three .role + .role { border-top: 1px solid var(--line); }
+}
+.section--mint { background: var(--mint-wash); }
+.j-cred { font-size: 1rem; line-height: 1.6; color: var(--ink-soft); max-width: 46ch; }
+.j-cred strong { color: var(--ink); font-weight: 700; }
+.j-text { font-size: 1rem; line-height: 1.6; color: var(--ink-soft); max-width: 60ch; }
+.phase-no { font-family: var(--serif); font-size: 2.75rem; line-height: 1; color: var(--teal); margin-bottom: 4px; }
+.index-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.index-chips li { padding: 5px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong); font-size: .875rem; font-weight: 600; color: var(--brand); }
+#journals .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }

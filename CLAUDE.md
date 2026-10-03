@@ -70,3 +70,9 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-09-22 — Second palette built from the logo's blue (#08445F) with a green/blue switch in the header
   (remembered per browser, `?palette=blue` in links); testimonial bylines: course participants instead of
   "Anonymous participant".
+- 2026-10-03 — Journal Launch & Growth (v06): new menu entry and mint section (four phases, Journal Health Audit,
+  indexation criteria); "Who we help" is now Authors, Editors, Publishers, Institutions with links to the matching
+  service; new three-card "What we do" (Training, Journal Launch & Growth, PubliMentor App) replaces the dark AI
+  panel; the summary under the hero is titled "In brief"; reviewers dropped from the hero line. Copy, Chinese text
+  and drawings were agreed in a Claude chat (artifact "PubliMentor Website v06"); the menu now collapses at
+  1340px because of the extra entry. Previous site: 37f33dc.

@@ -49,7 +49,7 @@ fallback_link = '<a href="%s" target="_blank" rel="noopener">%%s</a>' % html.esc
 EN_HTML = {
     'hero.title': 'A hub for <mark>ethical, impactful</mark> academic publishing',
     'hero.founder': 'Founded by <strong>Simona Fiorani, PhD</strong>',
-    'svc.ai': 'AI Formatting &amp; Ethics Assistant <span class="soon"><span class="paren">(</span>Coming Soon<span class="paren">)</span></span>',
+    'j.cred': 'We have built a journal from the first issue. Simona Fiorani was <strong>launching Editor in Chief of <em>iScience</em></strong>. She was also a team leader at <strong>Nature Communications</strong> and a senior editor at <strong>Nature Cell Biology</strong>.',
     'mission.lead': html.escape(EN['mission.lead'], quote=False).replace('clearer, fairer, and more robust', '<mark>clearer, fairer, and more robust</mark>'),
     'bio.l1': 'Manuscript readiness review <span class="dur">(2 weeks)</span>',
     'bio.l2': 'Reviewer coaching workshop <span class="dur">(90 mins)</span>',
@@ -58,7 +58,7 @@ EN_HTML = {
 ZH_HTML = {
     'hero.title': '促进<mark>诚信与影响力</mark>的学术出版资源中心',
     'hero.founder': '由 <strong>Simona Fiorani，博士</strong> 创建',
-    'svc.ai': 'AI 排版与伦理助手<span class="soon"><span class="paren">（</span>即将推出<span class="paren">）</span></span>',
+    'j.cred': '我们亲历过期刊从第一期开始的创办过程。Simona Fiorani 曾任 <strong><em>iScience</em> 创刊主编</strong>，也曾任 <strong>Nature Communications</strong> 团队负责人和 <strong>Nature Cell Biology</strong> 高级编辑。',
     'mission.lead': html.escape(ZH['mission.lead'], quote=False).replace('更清晰、更公平、更稳健', '<mark>更清晰、更公平、更稳健</mark>'),
     'bio.l1': '稿件准备度审查<span class="dur">（2周）</span>',
     'bio.l2': '审稿人培训工作坊<span class="dur">（90分钟）</span>',
@@ -264,7 +264,7 @@ def page(title, description, canonical, body_tpl, ctx, fonts, home=False):
     )
     root_vars = ':root{--emblem:url(%s)%s}' % (EMBLEM_XL if home else EMBLEM, (';--slide3s:url(%s)' % SLIDE_SMALL) if home else '')
     style = '  <style>\n%s\n%s\n%s\n  </style>\n' % (root_vars, FONTS[fonts], CSS)
-    style += ('  <noscript><style>@media (max-width:1240px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}'
+    style += ('  <noscript><style>@media (max-width:1340px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}'
               '.header-panel{position:static;display:flex;padding:0 0 16px;border:0;box-shadow:none;background:none}}</style></noscript>\n')
     doc = head + style + '</head>\n<body>\n' + sprite + '\n' + body.strip('\n') + '\n\n<script>\n' + js + '</script>\n</body>\n</html>\n'
     return doc, missing
