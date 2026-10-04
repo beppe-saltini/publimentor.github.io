@@ -49,7 +49,7 @@ fallback_link = '<a href="%s" target="_blank" rel="noopener">%%s</a>' % html.esc
 EN_HTML = {
     'hero.title': 'A hub for <mark>ethical, impactful</mark> academic publishing',
     'hero.founder': 'Founded by <strong>Simona Fiorani, PhD</strong>',
-    'what.ready': '<strong>Manuscript readiness checks</strong> and journal fit advice',
+    'what.ready': '<strong>Manuscript readiness</strong> for journal fit and a stronger shot at peer review',
     'what.grant': '<strong>Grant writing coaching</strong> for clear, persuasive applications',
     'what.journal': '<strong>Journal launch and strategy</strong><span class="sr-only">, </span>from feasibility to indexation',
     'what.sciwriting': '<strong>Scientific writing and publishing coaching</strong><span class="sr-only">, </span>from first draft to submission',
@@ -63,7 +63,7 @@ EN_HTML = {
 ZH_HTML = {
     'hero.title': '促进<mark>诚信与影响力</mark>的学术出版资源中心',
     'hero.founder': '由 <strong>Simona Fiorani，博士</strong> 创建',
-    'what.ready': '<strong>稿件成熟度评估</strong><span class="sr-only">，</span>以及期刊匹配建议',
+    'what.ready': '<strong>稿件成熟度评估</strong><span class="sr-only">：</span>匹配合适的期刊，提高送审机会',
     'what.grant': '<strong>基金写作辅导</strong><span class="sr-only">：</span>帮助您写出清晰、有说服力的申请书',
     'what.journal': '<strong>期刊创办与战略</strong><span class="sr-only">：</span>从可行性研究到数据库收录',
     'what.sciwriting': '<strong>科学写作与出版辅导</strong><span class="sr-only">：</span>从初稿到投稿',

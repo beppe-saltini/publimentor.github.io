@@ -89,3 +89,5 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-10-04 — "In brief" lines: the title part is bold, the description after it regular (markup in build.py's
   EN_HTML / ZH_HTML).
 - 2026-10-04 — "In brief" lines: bold title on its own row, description on the next row.
+- 2026-10-04 — "In brief" line 1 reworded with the owner: "Manuscript readiness / for journal fit and a stronger shot
+  at peer review".
