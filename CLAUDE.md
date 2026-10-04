@@ -82,3 +82,4 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-10-04 — Training: "Leadership training" added to the course list, marked "Coming soon".
 - 2026-10-04 — Top menu: the Services dropdown was removed at the owner's request; Journal Launch and Training are
   no longer in the top menu (still in the footer and reachable from the Services cards).
+- 2026-10-04 — "In brief" lines 2–5 expanded from short titles to title-plus-description phrases, like line 1.
