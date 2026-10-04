@@ -85,3 +85,4 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-10-04 — "In brief" lines 2–5 expanded from short titles to title-plus-description phrases, like line 1.
 - 2026-10-04 — Colour switch removed at the owner's request: the site is blue only (the logo-blue palette), with the
   blue favicon. The green values remain in `palette.json` only as the drawings' reference colours.
+- 2026-10-04 — "In brief" lines set in regular weight (not medium), as on the pre-redesign site.
