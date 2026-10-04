@@ -19,8 +19,8 @@ owner previously used Cursor.
 
 - Copy is the owner's: never change wording unless asked. New interface strings get a key in both
   `content/en.json` and `content/zh.json`; keep English and Chinese in step.
-- Colours: only through the tokens in `content/palette.json` (two palettes, switched from the header; the
-  build recolours the drawings too). Never put a hex colour in `styles.css` or a template.
+- Colours: only through the tokens in `content/palette.json` (the site uses the blue values; the build
+  recolours the drawings too). Never put a hex colour in `styles.css` or a template.
 - Keep each page a single self-contained file; keep the four URLs and the `assets/training/` slide files.
 - Always run `python3 _source/check.py` before deploying. After deploying, fetch the live page and
   confirm it matches the built file.
@@ -83,3 +83,5 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-10-04 — Top menu: the Services dropdown was removed at the owner's request; Journal Launch and Training are
   no longer in the top menu (still in the footer and reachable from the Services cards).
 - 2026-10-04 — "In brief" lines 2–5 expanded from short titles to title-plus-description phrases, like line 1.
+- 2026-10-04 — Colour switch removed at the owner's request: the site is blue only (the logo-blue palette), with the
+  blue favicon. The green values remain in `palette.json` only as the drawings' reference colours.
