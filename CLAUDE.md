@@ -74,5 +74,6 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
   indexation criteria); "Who we help" is now Authors, Editors, Publishers, Institutions with links to the matching
   service; new three-card "What we do" (Training, Journal Launch & Growth, PubliMentor App) replaces the dark AI
   panel; the summary under the hero is titled "In brief"; reviewers dropped from the hero line. Copy, Chinese text
-  and drawings were agreed in a Claude chat (artifact "PubliMentor Website v06"); the menu now collapses at
-  1340px because of the extra entry. Previous site: 37f33dc.
+  and drawings were agreed in a Claude chat (artifact "PubliMentor Website v06"); Previous site: 37f33dc.
+- 2026-10-04 — Top menu: Journal Launch and Training now sit in a dropdown under Services (indented under it in the
+  phone menu); the footer list is unchanged.

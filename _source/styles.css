@@ -134,6 +134,23 @@ mark {
 .nav a:hover, .nav a[aria-current] { color: var(--ink); }
 .nav a[aria-current]::after { transform: scaleX(1); }
 
+/* Services opens a small menu with its two sub-sections */
+.nav-group { position: relative; display: flex; align-items: center; }
+.nav-parent { display: inline-flex; align-items: center; gap: 4px; }
+.nav-parent .ic { width: 14px; height: 14px; stroke-width: 2.25; transition: transform .18s ease; }
+.nav-group:hover .nav-parent, .nav-group:focus-within .nav-parent, .nav-group:has(.nav-sub a[aria-current]) .nav-parent { color: var(--ink); }
+.nav-group:has(.nav-sub a[aria-current]) .nav-parent::after { transform: scaleX(1); }
+.nav-group:hover .nav-parent .ic, .nav-group:focus-within .nav-parent .ic { transform: rotate(180deg); }
+.nav-sub {
+  position: absolute; top: 100%; left: -14px; z-index: 5; display: flex; flex-direction: column; min-width: 190px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-sheet);
+  opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .16s ease, transform .16s ease, visibility .16s;
+}
+.nav-group:hover .nav-sub, .nav-group:focus-within .nav-sub { opacity: 1; visibility: visible; transform: none; }
+.nav .nav-sub a { padding: 9px 12px; border-radius: 6px; color: var(--ink); }
+.nav .nav-sub a::after { display: none; }
+.nav .nav-sub a:hover, .nav .nav-sub a[aria-current] { background: var(--mint-wash); }
+
 .header-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .header-actions .btn { padding-inline: 14px; }
 .header-inner > .lang { flex: none; }
@@ -477,15 +494,15 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
 .kicker:lang(zh), .mission h2:lang(zh), .edition .date:lang(zh), .soon:lang(zh) { letter-spacing: .04em; }
 
 /* ---------- Responsive ---------- */
-/* Narrow desktops (1341–1440px): the full navigation only just fits, so everything in the header is a notch smaller */
-@media (max-width: 1440px) {
+/* Narrow desktops (1241–1320px): the full navigation only just fits, so everything in the header is a notch smaller */
+@media (max-width: 1320px) {
   .emblem { width: 56px; }
   .brand-name { font-size: 1.5rem; }
   .nav { gap: 7px; }
   .nav a { font-size: .875rem; }
 }
 
-@media (max-width: 1340px) {
+@media (max-width: 1240px) {
   .menu-btn { display: inline-flex; }
   .header-panel {
     position: absolute; top: 100%; left: 0; right: 0; display: none; flex-direction: column; align-items: stretch; gap: 8px;
@@ -496,6 +513,12 @@ h1:lang(zh), h2:lang(zh), h3:lang(zh), h4:lang(zh),
   .nav { flex-direction: column; align-items: stretch; gap: 0; margin: 0; }
   .nav a { padding: 14px 0; font-size: 1.0625rem; border-bottom: 1px solid var(--line); color: var(--ink); }
   .nav a::after { display: none; }
+  .nav-group { flex-direction: column; align-items: stretch; }
+  .nav-parent { justify-content: space-between; }
+  .nav-parent .ic { display: none; }
+  .nav-sub { position: static; min-width: 0; padding: 0 0 0 20px; background: none; border: 0; border-radius: 0; box-shadow: none; opacity: 1; visibility: visible; transform: none; transition: none; }
+  .nav .nav-sub a { padding: 12px 0; border-radius: 0; font-size: 1rem; color: var(--ink-soft); border-bottom: 1px solid var(--line); }
+  .nav .nav-sub a:hover, .nav .nav-sub a[aria-current] { background: none; color: var(--ink); }
   .header-actions { flex-wrap: wrap; padding-top: 12px; }
   .header-actions .btn { flex: 1 1 160px; }
   .header-inner > .lang { margin-left: auto; }

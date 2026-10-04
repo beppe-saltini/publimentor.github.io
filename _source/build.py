@@ -264,7 +264,7 @@ def page(title, description, canonical, body_tpl, ctx, fonts, home=False):
     )
     root_vars = ':root{--emblem:url(%s)%s}' % (EMBLEM_XL if home else EMBLEM, (';--slide3s:url(%s)' % SLIDE_SMALL) if home else '')
     style = '  <style>\n%s\n%s\n%s\n  </style>\n' % (root_vars, FONTS[fonts], CSS)
-    style += ('  <noscript><style>@media (max-width:1340px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}'
+    style += ('  <noscript><style>@media (max-width:1240px){.menu-btn{display:none}.header-inner{flex-wrap:wrap}'
               '.header-panel{position:static;display:flex;padding:0 0 16px;border:0;box-shadow:none;background:none}}</style></noscript>\n')
     doc = head + style + '</head>\n<body>\n' + sprite + '\n' + body.strip('\n') + '\n\n<script>\n' + js + '</script>\n</body>\n</html>\n'
     return doc, missing
