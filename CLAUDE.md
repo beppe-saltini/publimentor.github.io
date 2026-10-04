@@ -77,3 +77,5 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
   and drawings were agreed in a Claude chat (artifact "PubliMentor Website v06"); Previous site: 37f33dc.
 - 2026-10-04 — Top menu: Journal Launch and Training now sit in a dropdown under Services (indented under it in the
   phone menu); the footer list is unchanged.
+- 2026-10-04 — "In brief" panel reworded by the owner: manuscript readiness (unchanged), coaching in grant writing,
+  journal launch and strategy, coaching in scientific writing and publishing, leadership training.

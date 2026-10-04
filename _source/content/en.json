@@ -115,11 +115,7 @@
  "palette.blue": "Blue palette",
  "ui.menu": "Menu",
  "ui.skip": "Skip to content",
- "what.ethics": "Publisher-side ethics triage and COPE-based decisions",
- "what.onboarding": "Editorial onboarding and board composition guidance",
- "what.policy": "Policy templates and workflow optimisation",
  "what.ready": "Manuscript readiness checks and journal fit advice",
- "what.reviewcoach": "Reviewer coaching for fair, constructive feedback",
  "who.l1_fix": "Early‑career and senior researchers preparing submissions",
  "who.l3": "Journal teams facing complex ethics questions",
  "who.l4": "New editors building effective, diverse boards",
@@ -191,5 +187,9 @@
  "ji.p": "We make the journal ready and build a record that stands up to review. We never sell guaranteed indexation.",
  "j.cta": "Each phase can be bought on its own. Start with feasibility and decide after the report.",
  "j.read": "Read: launching a journal for a new field",
- "bio.l5": "Journal feasibility report"
+ "bio.l5": "Journal feasibility report",
+ "what.grant": "Coaching in grant writing",
+ "what.journal": "Journal launch and strategy",
+ "what.sciwriting": "Coaching in scientific writing and publishing",
+ "what.leadership": "Leadership training"
 }
