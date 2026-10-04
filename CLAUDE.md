@@ -79,3 +79,4 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
   phone menu); the footer list is unchanged.
 - 2026-10-04 — "In brief" panel reworded by the owner: manuscript readiness (unchanged), coaching in grant writing,
   journal launch and strategy, coaching in scientific writing and publishing, leadership training.
+- 2026-10-04 — Training: "Leadership training" added to the course list, marked "Coming soon".
