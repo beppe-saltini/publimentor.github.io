@@ -80,3 +80,5 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
 - 2026-10-04 — "In brief" panel reworded by the owner: manuscript readiness (unchanged), coaching in grant writing,
   journal launch and strategy, coaching in scientific writing and publishing, leadership training.
 - 2026-10-04 — Training: "Leadership training" added to the course list, marked "Coming soon".
+- 2026-10-04 — Top menu: the Services dropdown was removed at the owner's request; Journal Launch and Training are
+  no longer in the top menu (still in the footer and reachable from the Services cards).
