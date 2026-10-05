@@ -282,6 +282,8 @@ section[id], main[id] { scroll-margin-top: calc(var(--header-h) + 8px); }
 .chev .ic { width: 16px; height: 16px; stroke-width: 2.25; }
 .course[open] .chev { transform: rotate(180deg); }
 .course[open] .hint { display: none; }
+.course a.hint { justify-self: start; text-decoration: underline; text-decoration-color: var(--mint); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.course a.hint:hover { text-decoration-color: var(--teal); }
 .detail { max-width: 66ch; padding: 0 0 26px; font-size: 1rem; line-height: 1.68; color: var(--ink-soft); }
 @media (prefers-reduced-motion: no-preference) {
   .course[open] .detail { animation: detail-in .35s ease both; }

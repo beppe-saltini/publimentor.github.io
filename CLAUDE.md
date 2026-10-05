@@ -93,3 +93,5 @@ To revoke Claude's push access: GitHub → repository → Settings → Deploy ke
   at peer review".
 - 2026-10-04 — Mission principles 1 and 3 reworded by the owner: "Hands-on work on your own manuscript, grant or
   journal" and "Journals and research teams built to last".
+- 2026-10-05 — Tester feedback: the Scientific writing course row had nothing to open, so it now carries a
+  "Details on request" link to the contact section.
