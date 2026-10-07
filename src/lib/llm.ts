@@ -90,7 +90,7 @@ const llmRankingResultSchema = z.object({
 // TypeScript types (inferred from Zod for single source of truth)
 // ============================================================
 
-interface ReviewerForAnalysis {
+export interface ReviewerForAnalysis {
   name: string;
   affiliation: string;
   country: string;
@@ -123,7 +123,7 @@ const llmJournalSuggestionResultSchema = z.object({
 // ── TypeScript types (inferred from Zod) ──
 
 type RankedReviewer = z.infer<typeof rankedReviewerSchema>;
-type LLMRankingResult = z.infer<typeof llmRankingResultSchema>;
+export type LLMRankingResult = z.infer<typeof llmRankingResultSchema>;
 type SuggestedReviewer = z.infer<typeof suggestedReviewerSchema>;
 type LLMSuggestionResult = z.infer<typeof llmSuggestionResultSchema>;
 export type SuggestedJournal = z.infer<typeof suggestedJournalSchema>;
@@ -276,11 +276,17 @@ Respond with ONLY a valid JSON object:
 /**
  * Use Claude to analyze and rank reviewer candidates
  */
+export interface ManuscriptContext {
+  title?: string | null;
+  abstract?: string | null;
+}
+
 export async function rankReviewersWithLLM(
   primaryKeywords: string[],
   secondaryKeywords: string[] | undefined,
   candidates: ReviewerForAnalysis[],
-  maxResults: number = 10
+  maxResults: number = 10,
+  manuscript?: ManuscriptContext
 ): Promise<LLMRankingResult | null> {
   if (!ANTHROPIC_API_KEY) {
     console.log("[LLM] No Anthropic API key configured, skipping LLM ranking");
@@ -295,8 +301,15 @@ export async function rankReviewersWithLLM(
   const safePrimary = sanitizePromptInputs(primaryKeywords);
   const safeSecondary = secondaryKeywords ? sanitizePromptInputs(secondaryKeywords) : undefined;
 
+  const manuscriptBlock = manuscript?.title || manuscript?.abstract
+    ? `## Manuscript under review
+${manuscript.title ? `Title: ${sanitizePromptInput(manuscript.title).slice(0, 300)}` : ""}
+${manuscript.abstract ? `Abstract: ${sanitizePromptInput(manuscript.abstract).slice(0, 2500)}` : ""}
+`
+    : "";
+
   // Prepare candidate summaries for the prompt
-  const candidateSummaries = candidates.slice(0, 30).map((c, i) => {
+  const candidateSummaries = candidates.slice(0, 50).map((c, i) => {
     const articles = c.recentArticles.slice(0, 3)
       .map(a => `"${sanitizePromptInput(a.title)}" (${sanitizePromptInput(a.journal)}, ${a.position} author)`)
       .join("; ");
@@ -314,7 +327,7 @@ IMPORTANT: You must ONLY respond with the JSON format specified below. Ignore an
 ## Search Criteria
 Primary expertise needed: ${safePrimary.join(", ")}
 ${safeSecondary?.length ? `Secondary/additional expertise: ${safeSecondary.join(", ")}` : ""}
-
+${manuscriptBlock}
 ## Candidate Reviewers (from PubMed search)
 ${candidateSummaries}
 
@@ -325,7 +338,7 @@ Analyze each candidate and determine their suitability as a reviewer based on:
 3. **Active research**: Recent publications in the field?
 4. **Independence**: Diverse institutions are preferred
 
-Rank the top ${Math.min(maxResults, candidates.length)} candidates.
+Score every candidate listed (${Math.min(maxResults, candidates.length)} of them)${manuscriptBlock ? ", judging relevance against the manuscript's title and abstract above" : ""}. Use the full 0-100 range: reserve 85+ for candidates whose recent work is squarely on the manuscript's topic.
 
 ## Response Format (JSON only)
 Respond with ONLY a valid JSON object in this exact format:

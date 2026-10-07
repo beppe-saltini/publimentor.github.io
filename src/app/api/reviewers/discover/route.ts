@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { searchPubMed, fetchPubMedArticles, PubMedArticle } from "@/lib/pubmed";
 import { parseAuthorList } from "@/lib/author-parser";
-import { suggestReviewersWithLLM } from "@/lib/llm";
+import { suggestReviewersWithLLM, rankReviewersWithLLM } from "@/lib/llm";
+import { ndjsonResponse, type Emit } from "@/lib/reviewers/discovery-stream";
+import { findAccessibleManuscript } from "@/lib/manuscript-access";
+import { prisma } from "@/lib/prisma";
 import { searchAuthor as searchSemanticScholar, searchAuthorByOrcid as searchSSByOrcid } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
 import { coiDetector, type ReviewerConflict, type ReviewerCOISummary, type ConflictSeverity } from "@/lib/coi-detector";
@@ -110,7 +113,10 @@ const discoverSchema = z.object({
   checkCOI: z.boolean().default(true),  // Check for conflicts of interest
   focusKeywords: z.array(z.string().max(200)).max(10).optional(),
   coveredExpertise: z.array(z.string().max(200)).max(10).optional(),
+  /** When set (and accessible), the manuscript's title and abstract steer the relevance ranking */
+  manuscriptId: z.string().max(64).optional(),
 });
+type DiscoverParams = z.infer<typeof discoverSchema>;
 
 interface ReviewerCandidate {
   id: string;
@@ -201,9 +207,38 @@ export async function POST(request: Request) {
       return getRateLimitResponse(rateLimit.resetIn);
     }
 
-    const body = await request.json();
-    const params = discoverSchema.parse(body);
-    
+    let params: DiscoverParams;
+    try {
+      params = discoverSchema.parse(await request.json());
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return NextResponse.json({ error: "Invalid parameters", details: error.issues }, { status: 400 });
+      }
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+
+    const userId = session.user.id;
+    return ndjsonResponse((emit, signal) => runDiscovery(userId, params, emit, signal), request.signal);
+  } catch (error) {
+    console.error("Error starting reviewer discovery:", error);
+    return NextResponse.json({ error: "Failed to discover reviewers" }, { status: 500 });
+  }
+}
+
+/** Stage labels shown to the editor while the search runs. */
+const STAGE_LABELS = {
+  candidates: "Candidates found — scoring relevance",
+  ranking: "Relevance scored — looking up e-mail addresses",
+  emails: "E-mails done — screening integrity and obituaries",
+  screening: "Screening done — checking conflicts of interest",
+} as const;
+
+async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, signal: AbortSignal): Promise<void> {
+  const cancelled = () => {
+    if (signal.aborted) console.log("[Discover] Cancelled by the client");
+    return signal.aborted;
+  };
+  try {
     // Sanitize keyword inputs
     const sanitizedPrimary = params.primaryKeywords.map(k => sanitizeString(k));
     const sanitizedSecondary = params.secondaryKeywords?.map(k => sanitizeString(k));
@@ -226,6 +261,62 @@ export async function POST(request: Request) {
     let llmUsed = false;
     let searchStrategy = "";
     let caveats: string[] = [];
+    let emailMetrics: EmailBatchMetrics = { emailsFound: 0, emailsMissing: 0, bySource: {} };
+    /** What Claude said when it suggested a candidate; merged into the ranking later */
+    const suggestionNotes = new Map<string, { reasoning: string; expertise: string[]; seniority: string }>();
+
+    const buildSummary = () => {
+      for (const c of candidates) {
+        if (c.firstName && !c.inferredGender) c.inferredGender = openAlex.inferGender(c.firstName);
+      }
+      const countries = Array.from(new Set(candidates.map(c => c.country).filter(c => c !== "Unknown")));
+      const avgPubs = candidates.length > 0
+        ? Math.round(candidates.reduce((sum, c) => sum + c.publicationCount, 0) / candidates.length)
+        : 0;
+      const avgSenior = candidates.length > 0
+        ? Math.round(candidates.reduce((sum, c) => sum + c.seniorAuthorCount, 0) / candidates.length)
+        : 0;
+      const candidatesWithHIndex = candidates.filter(c => c.hIndex !== null);
+      const avgHIndex = candidatesWithHIndex.length > 0
+        ? Math.round(candidatesWithHIndex.reduce((sum, c) => sum + (c.hIndex || 0), 0) / candidatesWithHIndex.length)
+        : null;
+      const genderCounts = { likely_female: 0, likely_male: 0, unknown: 0 };
+      for (const c of candidates) genderCounts[c.inferredGender || "unknown"]++;
+      return {
+        totalFound: candidates.length,
+        returned: candidates.length,
+        criteria: {
+          minHIndex: params.minHIndex,
+          maxHIndex: params.maxHIndex,
+          minPublications: params.minPublications,
+          maxPublications: params.maxPublications,
+          yearsActive: params.yearsActive,
+          requireSeniorAuthor: params.requireSeniorAuthor,
+        },
+        diversity: { countries, countryCount: countries.length, gender: genderCounts },
+        avgPublications: avgPubs,
+        avgSeniorAuthorships: avgSenior,
+        avgHIndex,
+        llmEnhanced: llmUsed,
+        searchStrategy: searchStrategy || undefined,
+        caveats: caveats.length > 0 ? caveats : undefined,
+        dataSources: {
+          semanticScholar: candidates.filter(c => c.sources.includes("SemanticScholar")).length,
+          openAlex: candidates.filter(c => c.sources.includes("OpenAlex")).length,
+          pubMed: candidates.filter(c => c.sources.includes("PubMed")).length,
+        },
+        emailMetrics,
+      };
+    };
+    const sortForDisplay = () => {
+      const rank = (c: ReviewerCandidate) => (isPossiblyDeceased(c) ? 2 : c.reputationSummary?.hasConcerns ? 1 : 0);
+      const score = (c: ReviewerCandidate) => c.llmAnalysis?.relevanceScore ?? -1;
+      candidates.sort((a, b) => rank(a) - rank(b) || score(b) - score(a));
+    };
+    const snapshot = (stage: keyof typeof STAGE_LABELS) => {
+      sortForDisplay();
+      emit({ event: "progress", stage, label: STAGE_LABELS[stage], reviewers: candidates, summary: buildSummary() });
+    };
 
     // STEP 1: Use Claude as PRIMARY source to suggest reviewers
     if (params.useLLM) {
@@ -525,19 +616,12 @@ export async function POST(request: Request) {
                     ? orcidProfile.profileUrls
                     : undefined,
               },
-              llmAnalysis: {
-                relevanceScore: 85, // High score since Claude suggested them
-                reasoning: suggested.reasoning,
-                topicalMatch: "excellent",
-                seniorityAssessment: suggested.estimatedSeniority === "senior" 
-                  ? "Established senior researcher" 
-                  : suggested.estimatedSeniority === "mid-career"
-                  ? "Mid-career researcher with growing impact"
-                  : "Early-career researcher",
-                recommendation: "highly_recommended",
-                expertise: suggested.expertise,
-              },
             };
+            suggestionNotes.set(finalName.toLowerCase().trim(), {
+              reasoning: suggested.reasoning,
+              expertise: suggested.expertise,
+              seniority: suggested.estimatedSeniority,
+            });
 
             candidates.push(candidate);
           } catch (error) {
@@ -837,13 +921,84 @@ export async function POST(request: Request) {
       }
     }
 
+    if (cancelled()) return;
+    snapshot("candidates");
+
+    // STEP 4.5: Score every candidate's relevance with Claude (against the manuscript when we have it)
+    if (candidates.length > 0) {
+      try {
+        let manuscriptContext: { title?: string | null; abstract?: string | null } | undefined;
+        if (params.manuscriptId) {
+          const accessible = await findAccessibleManuscript(userId, params.manuscriptId);
+          if (accessible) {
+            manuscriptContext = (await prisma.manuscript.findUnique({
+              where: { id: params.manuscriptId },
+              select: { title: true, abstract: true },
+            })) || undefined;
+          }
+        }
+        const ranking = await rankReviewersWithLLM(
+          sanitizedPrimary,
+          sanitizedSecondary,
+          candidates.map((c) => ({
+            name: c.name,
+            affiliation: c.affiliation,
+            country: c.country,
+            publicationCount: c.publicationCount,
+            firstAuthorCount: c.firstAuthorCount,
+            lastAuthorCount: c.lastAuthorCount,
+            recentArticles: c.recentArticles.map((a) => ({ title: a.title, journal: a.journal, position: a.position })),
+          })),
+          candidates.length,
+          manuscriptContext
+        );
+        if (ranking) {
+          const byName = new Map(ranking.rankedReviewers.map((r) => [r.name.toLowerCase().trim(), r]));
+          for (const c of candidates) {
+            const ranked = byName.get(c.name.toLowerCase().trim());
+            const note = suggestionNotes.get(c.name.toLowerCase().trim());
+            if (ranked) {
+              c.llmAnalysis = {
+                relevanceScore: ranked.relevanceScore,
+                reasoning: ranked.reasoning,
+                topicalMatch: ranked.topicalMatch,
+                seniorityAssessment: ranked.seniorityAssessment,
+                recommendation: ranked.recommendation,
+                expertise: note?.expertise || [],
+              };
+            }
+          }
+          console.log(`[Discover] Relevance ranking: ${byName.size} of ${candidates.length} candidates scored`);
+        }
+      } catch (error) {
+        console.error("[Discover] Relevance ranking failed:", error);
+      }
+      // Candidates Claude suggested but could not score keep its original note, without a number
+      for (const c of candidates) {
+        const note = suggestionNotes.get(c.name.toLowerCase().trim());
+        if (!c.llmAnalysis && note) {
+          c.llmAnalysis = {
+            relevanceScore: 0,
+            reasoning: note.reasoning,
+            topicalMatch: "moderate",
+            seniorityAssessment: note.seniority === "senior" ? "Established senior researcher" : note.seniority === "mid-career" ? "Mid-career researcher with growing impact" : "Early-career researcher",
+            recommendation: "consider",
+            expertise: note.expertise,
+          };
+        }
+      }
+    }
+
+    if (cancelled()) return;
+    snapshot("ranking");
+
     // STEP 5: Enrich any still-missing emails (ORCID, web search, profile pages)
     const needsEmail = candidates.filter((c) => !c.email).length;
     const hasEmailBefore = candidates.length - needsEmail;
     console.log(
       `[Discover] Emails: ${hasEmailBefore}/${candidates.length} found before enrichment`
     );
-    let emailMetrics: EmailBatchMetrics = {
+    emailMetrics = {
       emailsFound: hasEmailBefore,
       emailsMissing: needsEmail,
       bySource: {},
@@ -869,6 +1024,9 @@ export async function POST(request: Request) {
       );
     }
 
+    if (cancelled()) return;
+    snapshot("emails");
+
     // STEP 5.5: PubPeer + For Better Science integrity screening
     if (candidates.length > 0) {
       console.log(`[Discover] Reputation screening for ${candidates.length} reviewers...`);
@@ -886,6 +1044,9 @@ export async function POST(request: Request) {
         console.error("[Discover] Deceased screening failed:", error);
       }
     }
+
+    if (cancelled()) return;
+    snapshot("screening");
 
     // STEP 6: Run COI checks if authors are provided and checkCOI is enabled
     if (params.checkCOI && parsedAuthors.length > 0 && candidates.length > 0) {
@@ -932,67 +1093,13 @@ export async function POST(request: Request) {
       }
     }
 
-    // Build summary
-    const countries = Array.from(new Set(candidates.map(c => c.country).filter(c => c !== "Unknown")));
-    const avgPubs = candidates.length > 0
-      ? Math.round(candidates.reduce((sum, c) => sum + c.publicationCount, 0) / candidates.length)
-      : 0;
-    const avgSenior = candidates.length > 0
-      ? Math.round(candidates.reduce((sum, c) => sum + c.seniorAuthorCount, 0) / candidates.length)
-      : 0;
-    const candidatesWithHIndex = candidates.filter(c => c.hIndex !== null);
-    const avgHIndex = candidatesWithHIndex.length > 0
-      ? Math.round(candidatesWithHIndex.reduce((sum, c) => sum + (c.hIndex || 0), 0) / candidatesWithHIndex.length)
-      : null;
+    if (cancelled()) return;
+    sortForDisplay();
 
-    // STEP 6: Infer gender diversity from first names
-    for (const c of candidates) {
-      if (c.firstName) {
-        c.inferredGender = openAlex.inferGender(c.firstName);
-      }
-    }
-
-    const rank = (c: (typeof candidates)[number]) =>
-      isPossiblyDeceased(c) ? 2 : c.reputationSummary?.hasConcerns ? 1 : 0;
-    candidates.sort((a, b) => rank(a) - rank(b));
-
-    // Gender diversity stats
-    const genderCounts = { likely_female: 0, likely_male: 0, unknown: 0 };
-    for (const c of candidates) {
-      genderCounts[c.inferredGender || "unknown"]++;
-    }
-
-    return NextResponse.json({
+    emit({
+      event: "done",
       reviewers: candidates,
-      summary: {
-        totalFound: candidates.length,
-        returned: candidates.length,
-        criteria: {
-          minHIndex: params.minHIndex,
-          maxHIndex: params.maxHIndex,
-          minPublications: params.minPublications,
-          maxPublications: params.maxPublications,
-          yearsActive: params.yearsActive,
-          requireSeniorAuthor: params.requireSeniorAuthor,
-        },
-        diversity: {
-          countries,
-          countryCount: countries.length,
-          gender: genderCounts,
-        },
-        avgPublications: avgPubs,
-        avgSeniorAuthorships: avgSenior,
-        avgHIndex,
-        llmEnhanced: llmUsed,
-        searchStrategy: searchStrategy || undefined,
-        caveats: caveats.length > 0 ? caveats : undefined,
-        dataSources: {
-          semanticScholar: candidates.filter(c => c.sources.includes("SemanticScholar")).length,
-          openAlex: candidates.filter(c => c.sources.includes("OpenAlex")).length,
-          pubMed: candidates.filter(c => c.sources.includes("PubMed")).length,
-        },
-        emailMetrics,
-      },
+      summary: buildSummary(),
       disclaimer: llmUsed 
         ? `Claude AI suggested these ${candidates.length} reviewers based on its knowledge of the research field, then verified each against PubMed, Semantic Scholar, and OpenAlex. All require independent verification before invitation.`
         : `These are automated suggestions from database search. All ${candidates.length} candidates require independent verification.`,
@@ -1008,18 +1115,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Error discovering reviewers:", error);
-    
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid parameters", details: error.issues },
-        { status: 400 }
-      );
-    }
-    
-    return NextResponse.json(
-      { error: "Failed to discover reviewers" },
-      { status: 500 }
-    );
+    emit({ event: "error", message: "Failed to discover reviewers" });
   }
 }
 

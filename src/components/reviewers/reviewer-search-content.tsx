@@ -24,6 +24,7 @@ import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails, type ReviewerConflict } from "./coi-details";
 import { ReputationDetails } from "./reputation-details";
 import { DeceasedNotice } from "./deceased-notice";
+import { readNdjson, type DiscoveryEvent } from "@/lib/reviewers/discovery-stream";
 import type { ConflictSeverity } from "./coi-badge";
 import type {
   EmailConfidence,
@@ -257,6 +258,9 @@ export function ReviewerSearchContent({
   const [activeTab, setActiveTab] = useState<ReviewerSearchActiveTab>("advanced");
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveryStage, setDiscoveryStage] = useState<string | null>(null);
+  const discoveryAbortRef = useRef<AbortController | null>(null);
+  const cancelDiscovery = () => discoveryAbortRef.current?.abort();
 
   const isRestoringFormRef = useRef(false);
   const restoredManuscriptRef = useRef<string | null>(null);
@@ -1061,12 +1065,28 @@ export function ReviewerSearchContent({
     }
     const knownBefore = getKnownNamesBeforeRun();
     const previousReviewers = discoveryResult?.reviewers ?? [];
+    const controller = new AbortController();
+    discoveryAbortRef.current = controller;
+    setDiscoveryStage("Asking Claude for candidates and verifying them…");
+
+    // Merge a server snapshot into what is already on screen
+    const applySnapshot = (reviewers: AdvancedReviewer[]) => {
+      const incoming = tagNewReviewers(reviewers, knownBefore);
+      const merged = mergeReviewerLists(previousReviewers, incoming);
+      const sorted = sortReviewersDisplayOrder(
+        filterActiveReviewers(merged, flaggedReviewers, dbReviewerIndex),
+        sortOptions
+      );
+      return { incoming, sorted };
+    };
 
     try {
       const response = await fetch("/api/reviewers/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
+          manuscriptId: selectedManuscriptId || undefined,
           primaryKeywords: primaryList,
           secondaryKeywords: secondaryKeywords
             ? secondaryKeywords.split(",").map((k) => k.trim()).filter(Boolean)
@@ -1092,28 +1112,60 @@ export function ReviewerSearchContent({
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "Failed to discover reviewers");
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to discover reviewers");
       }
 
-      const incoming = tagNewReviewers(
-        (data.reviewers || []) as AdvancedReviewer[],
-        knownBefore
-      );
-      const merged = mergeReviewerLists(previousReviewers, incoming);
-      const sorted = sortReviewersDisplayOrder(
-        filterActiveReviewers(merged, flaggedReviewers, dbReviewerIndex),
-        sortOptions
-      );
-      setDiscoveryResult({
-        ...data,
-        reviewers: sorted,
-      });
+      let data: DiscoveryResult | null = null;
+      let incoming: AdvancedReviewer[] = [];
+      let sorted: AdvancedReviewer[] = [];
+      let cancelledEarly = false;
+      const isStream = response.headers.get("content-type")?.includes("application/x-ndjson");
+
+      if (isStream && response.body) {
+        try {
+          for await (const evt of readNdjson<DiscoveryEvent<AdvancedReviewer, DiscoverySummary>>(response.body)) {
+            if (evt.event === "error") throw new Error(evt.message);
+            ({ incoming, sorted } = applySnapshot(evt.reviewers || []));
+            if (evt.event === "progress") {
+              setDiscoveryStage(evt.label);
+              setDiscoveryResult((prev) => ({
+                relatedConcepts: prev?.relatedConcepts || [],
+                disclaimer: prev?.disclaimer || "",
+                selectionCriteria: prev?.selectionCriteria || {},
+                summary: evt.summary,
+                reviewers: sorted,
+              }));
+            } else {
+              data = { relatedConcepts: [], ...evt, reviewers: sorted } as DiscoveryResult;
+              setDiscoveryResult(data);
+            }
+          }
+        } catch (err) {
+          if (!controller.signal.aborted) throw err;
+          cancelledEarly = true;
+        }
+        if (!data && !cancelledEarly) throw new Error("The search ended before any results arrived");
+      } else {
+        data = (await response.json()) as DiscoveryResult;
+        ({ incoming, sorted } = applySnapshot(data.reviewers || []));
+        data = { ...data, reviewers: sorted };
+        setDiscoveryResult(data);
+      }
+
+      if (cancelledEarly) {
+        toast.info(
+          sorted.length > 0
+            ? `Search cancelled — keeping the ${sorted.length} reviewers found so far (some checks did not run)`
+            : "Search cancelled"
+        );
+      }
 
       const msId = selectedManuscriptId;
       const revCount = incoming.length;
+      const countryCount =
+        data?.summary.diversity.countryCount ?? new Set(sorted.map((r) => r.country).filter(Boolean)).size;
 
       if (msId && revCount > 0) {
         try {
@@ -1147,9 +1199,11 @@ export function ReviewerSearchContent({
           const saveData = await saveRes.json();
           if (saveRes.ok) {
             await loadPersistedReviewers(msId);
-            toast.success(
-              `Added ${revCount} reviewers (${sorted.length} total) from ${data.summary.diversity.countryCount} countries — ${saveData.saved} saved`
-            );
+            if (!cancelledEarly) {
+              toast.success(
+                `Added ${revCount} reviewers (${sorted.length} total) from ${countryCount} countries — ${saveData.saved} saved`
+              );
+            }
           } else {
             toast.error(`Failed to save reviewers: ${saveData.error || saveRes.statusText}`);
           }
@@ -1157,15 +1211,21 @@ export function ReviewerSearchContent({
           console.error("[AutoSave] Save error:", err);
           toast.error("Found reviewers but failed to save them to the manuscript");
         }
-      } else {
+      } else if (!cancelledEarly) {
         toast.success(
-          `Found ${revCount} senior reviewers from ${data.summary.diversity.countryCount} countries`
+          `Found ${revCount} senior reviewers from ${countryCount} countries`
         );
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Discovery failed");
+      if (controller.signal.aborted) {
+        toast.info("Search cancelled");
+      } else {
+        toast.error(error instanceof Error ? error.message : "Discovery failed");
+      }
     } finally {
       setIsDiscovering(false);
+      setDiscoveryStage(null);
+      discoveryAbortRef.current = null;
     }
   };
 
@@ -1702,6 +1762,26 @@ export function ReviewerSearchContent({
               </Button>
             </CardContent>
           </Card>
+
+          {/* Search in progress: results below fill in stage by stage */}
+          {isDiscovering && (
+            <Card className="bg-blue-50 border-blue-200">
+              <CardContent className="py-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-600 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-blue-800">Search in progress</p>
+                    <p className="text-xs text-blue-700 truncate">
+                      {discoveryStage || "Starting…"}
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={cancelDiscovery} className="shrink-0">
+                  Cancel
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Loading persisted reviewers */}
           {isLoadingPersisted && !discoveryResult && (
