@@ -101,11 +101,11 @@ export default function NewSubmissionPage() {
         if (m.abstract) setAbstract(m.abstract);
         
         if (m.authors && m.authors.length > 0) {
-          setAuthors(m.authors.map((a: any) => ({
+          setAuthors(m.authors.map((a: { fullName?: string; email?: string; orcid?: string; affiliationNums?: number[] }) => ({
             name: a.fullName || "",
             email: a.email || "",
             orcid: a.orcid || "",
-            affiliation: m.affiliations?.find((aff: any) => 
+            affiliation: m.affiliations?.find((aff: { affiliationNumber: number; rawText?: string }) => 
               a.affiliationNums?.includes(aff.affiliationNumber)
             )?.rawText || "",
           })));
@@ -422,6 +422,7 @@ export default function NewSubmissionPage() {
                       type="button"
                       variant="ghost"
                       size="icon"
+                      aria-label="Remove author"
                       onClick={() => removeAuthor(index)}
                     >
                       <Trash2 className="h-4 w-4 text-red-500" />

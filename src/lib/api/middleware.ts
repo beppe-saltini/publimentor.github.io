@@ -151,7 +151,7 @@ export function withRateLimit<T>(
     const context = getRequestContext(request);
     const identifier = `${context.ipAddress}:${request.nextUrl.pathname}`;
 
-    const rateLimitResult = checkRateLimit(identifier, config);
+    const rateLimitResult = await checkRateLimit(identifier, config);
 
     if (!rateLimitResult.allowed) {
       await auditLogger.logSecurityEvent(

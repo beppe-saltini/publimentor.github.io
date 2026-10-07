@@ -137,7 +137,7 @@ export default function SubmissionsPage() {
                         {format(new Date(submission.createdAt), "MMM d, yyyy")}
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="icon" asChild>
+                        <Button variant="ghost" size="icon" aria-label="View submission" asChild>
                           <Link href={`/dashboard/journals/${slug}/submissions/${submission.id}`}>
                             <Eye className="h-4 w-4" />
                           </Link>

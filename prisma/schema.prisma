@@ -81,6 +81,7 @@ model User {
   institution   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime? // Set on every sign-in; drives the inactive-user retention policy
 
   // Profile fields
   role               UserRole?  // Primary role: author, editor, publisher

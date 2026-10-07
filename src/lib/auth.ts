@@ -25,6 +25,18 @@ const DUMMY_PASSWORD_HASH = "$2a$12$000000000000000000000uGH.Tml5jNYC0pCAZGIBx3B
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   adapter: PrismaAdapter(prisma),
+  events: {
+    // Sessions are JWTs, so this timestamp is the only record of activity the
+    // inactive-user retention policy can rely on.
+    async signIn({ user }) {
+      if (!user.id) return;
+      try {
+        await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+      } catch (error) {
+        console.error("[Auth] Could not record last sign-in:", error);
+      }
+    },
+  },
   providers: [
     Credentials({
       name: "credentials",
@@ -42,7 +54,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // SECURITY: Rate limit login attempts per email to prevent brute-force
         const rateLimitKey = `login:${email}`;
-        const rateLimit = checkRateLimit(rateLimitKey, AUTH_RATE_LIMIT);
+        const rateLimit = await checkRateLimit(rateLimitKey, AUTH_RATE_LIMIT);
         if (!rateLimit.allowed) {
           auditLog({
             userId: null,

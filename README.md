@@ -201,6 +201,8 @@ publimentor/
 | `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | Google Custom Search for the deceased screen (whole-web search ends 1 Jan 2027) | No |
 | `SERPER_API_KEY` | Serper (Google results) — fallback web search for e-mail enrichment and the deceased screen | No |
 | `BRAVE_SEARCH_API_KEY` | Brave Search — fallback web search | No |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Upstash Redis (Vercel Marketplace) for rate limits shared across all instances; `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` also accepted. Without them limits are per instance | No |
+| `HF_API_TOKEN` | Hugging Face token; enables document embeddings after processing (`EMBEDDING_MODEL` overrides the model, default `sentence-transformers/all-MiniLM-L6-v2`) | No |
 
 ## License
 

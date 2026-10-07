@@ -20,7 +20,7 @@ Configure in `.env`:
 REDIS_URL=redis://localhost:6379
 ```
 
-The rate limiter at `/src/lib/rate-limit/redis.ts` will automatically use Redis when available.
+The rate limiter in `/src/lib/security.ts` uses Upstash Redis (REST) when `KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set.
 
 ---
 

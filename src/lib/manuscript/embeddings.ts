@@ -12,8 +12,14 @@
 // Configuration
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "sentence-transformers/all-MiniLM-L6-v2";
 const EMBEDDING_DIMENSIONS = EMBEDDING_MODEL.includes("MiniLM") ? 384 : 768;
-const HF_API_TOKEN = process.env.HF_API_TOKEN; // Optional, for Hugging Face API
-const HF_API_URL = `https://api-inference.huggingface.co/pipeline/feature-extraction/${EMBEDDING_MODEL}`;
+const HF_API_TOKEN = process.env.HF_API_TOKEN;
+// The anonymous api-inference.huggingface.co endpoint was retired; the router needs a token.
+const HF_API_URL = `https://router.huggingface.co/hf-inference/models/${EMBEDDING_MODEL}/pipeline/feature-extraction`;
+
+/** Embeddings are generated only when a Hugging Face token is configured. */
+export function isEmbeddingConfigured(): boolean {
+  return Boolean(HF_API_TOKEN);
+}
 
 // Chunk configuration
 const CHUNK_SIZE = 500; // Characters per chunk
@@ -146,23 +152,19 @@ export async function generateEmbeddings(chunks: DocumentChunk[]): Promise<Embed
  * Get embeddings from Hugging Face Inference API
  */
 async function getEmbeddingsFromHF(texts: string[]): Promise<number[][]> {
+  if (!HF_API_TOKEN) {
+    throw new Error("HF_API_TOKEN is not set; embeddings are disabled");
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    Authorization: `Bearer ${HF_API_TOKEN}`,
   };
-  
-  if (HF_API_TOKEN) {
-    headers["Authorization"] = `Bearer ${HF_API_TOKEN}`;
-  }
 
   const response = await fetch(HF_API_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      inputs: texts,
-      options: {
-        wait_for_model: true,
-      },
-    }),
+    body: JSON.stringify({ inputs: texts }),
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!response.ok) {

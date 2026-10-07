@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { downloadFile } from "@/lib/supabase";
+import { embedManuscript } from "@/lib/manuscript/embed-manuscript";
+import { IN_FLIGHT_STATUSES, isProcessingStale } from "@/lib/manuscript/processing-timeout";
 import { calculateHash } from "@/lib/storage";
 import {
   sanitizeOptionalTextForPostgres,
@@ -11,7 +13,9 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 120;
+// Ceiling on the Hobby plan with Fluid compute; the pipeline runs in after() so the
+// client gets its response immediately and polls /status.
+export const maxDuration = 300;
 
 /**
  * Sanitize error messages before storing in the database.
@@ -32,8 +36,8 @@ function sanitizeErrorForStorage(error: unknown): string {
  *   2. Runs text extraction, metadata extraction, chunking
  *   3. Updates the manuscript record progressively
  *
- * Returns immediately with { status: "PROCESSING" }.
- * The actual processing runs asynchronously (fire-and-forget).
+ * Returns 202 immediately with { status: "EXTRACTING" }; the pipeline continues in
+ * after() and the client polls GET /api/manuscripts/[id]/status.
  */
 export async function POST(
   request: Request,
@@ -88,11 +92,8 @@ export async function POST(
       });
     }
 
-    if (["EXTRACTING", "EXTRACTED", "PROCESSING", "EMBEDDING"].includes(manuscript.status)) {
-      const staleMinutes = manuscript.processingStarted
-        ? (Date.now() - new Date(manuscript.processingStarted).getTime()) / 60000
-        : 999;
-      if (staleMinutes < 5) {
+    if (IN_FLIGHT_STATUSES.includes(manuscript.status)) {
+      if (!isProcessingStale(manuscript.status, manuscript.processingStarted)) {
         return NextResponse.json({
           success: true,
           manuscriptId,
@@ -100,7 +101,7 @@ export async function POST(
           message: "Already processing",
         });
       }
-      console.log(`[Process] Stale processing detected (${staleMinutes.toFixed(0)} min), re-processing`);
+      console.log(`[Process] Stale processing detected for ${manuscriptId}, re-processing`);
     }
 
     if (!manuscript.storagePath) {
@@ -127,46 +128,20 @@ export async function POST(
       },
     });
 
-    try {
-      await processManuscriptFromStorage(
-        manuscriptId,
-        manuscript.storagePath,
-        manuscript.fileName,
-        manuscript.fileMimeType
-      );
+    // The pipeline runs after the response is sent (the platform keeps the function
+    // alive up to maxDuration) and the client polls /status. It records its own
+    // failures on the manuscript row; /status flags runs that the platform killed.
+    const storagePath = manuscript.storagePath;
+    after(() =>
+      processManuscriptFromStorage(manuscriptId, storagePath, manuscript.fileName, manuscript.fileMimeType).catch((error) =>
+        console.error(`[Process] Pipeline failed for ${manuscriptId}:`, error)
+      )
+    );
 
-      return NextResponse.json({
-        success: true,
-        manuscriptId,
-        status: "READY",
-        message: "Processing complete",
-      });
-    } catch (processingError) {
-      console.error(`[Process] Pipeline failed for ${manuscriptId}:`, processingError);
-      try {
-        await prisma.manuscript.update({
-          where: { id: manuscriptId },
-          data: {
-            status: "ERROR",
-            statusMessage: sanitizeErrorForStorage(processingError),
-            processingEnded: new Date(),
-          },
-        });
-        await prisma.processingJob.updateMany({
-          where: { manuscriptId, status: { in: ["PENDING", "RUNNING"] } },
-          data: { status: "FAILED", error: sanitizeErrorForStorage(processingError), completedAt: new Date() },
-        });
-      } catch (updateErr) {
-        console.error("[Process] Failed to update error status:", updateErr);
-      }
-
-      return NextResponse.json({
-        success: false,
-        manuscriptId,
-        status: "ERROR",
-        message: sanitizeErrorForStorage(processingError),
-      }, { status: 500 });
-    }
+    return NextResponse.json(
+      { success: true, manuscriptId, status: "EXTRACTING", message: "Processing started" },
+      { status: 202 }
+    );
   } catch (error) {
     console.error("[Process] Error:", error);
     return NextResponse.json(
@@ -388,6 +363,9 @@ async function processManuscriptFromStorage(
     });
 
     console.log(`[Process] Complete for ${manuscriptId}: ${metadata.authors.length} authors, ${metadata.keywords.length} keywords`);
+
+    // Optional: pgvector embeddings (only when HF_API_TOKEN is set); failures stay on the job row
+    await embedManuscript(manuscriptId, manuscript.publisherId);
   } catch (error) {
     console.error(`[Process] Pipeline error for ${manuscriptId}:`, error);
 

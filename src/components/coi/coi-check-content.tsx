@@ -566,7 +566,7 @@ export function CoiCheckContent({ journalSlug: journalSlugProp, publisherId }: C
                         </SelectContent>
                       </Select>
                       {authors.length > 1 && (
-                        <Button variant="ghost" size="icon" onClick={() => removeAuthor(index)}>
+                        <Button variant="ghost" size="icon" aria-label="Remove author" onClick={() => removeAuthor(index)}>
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       )}
@@ -610,7 +610,7 @@ export function CoiCheckContent({ journalSlug: journalSlugProp, publisherId }: C
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">Reviewer {index + 1}</span>
                       {reviewers.length > 1 && (
-                        <Button variant="ghost" size="icon" onClick={() => removeReviewer(index)}>
+                        <Button variant="ghost" size="icon" aria-label="Remove reviewer" onClick={() => removeReviewer(index)}>
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       )}

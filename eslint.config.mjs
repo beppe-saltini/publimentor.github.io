@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CommonJS tooling outside the app
+    ".claude/**",
+    "scripts/**",
   ]),
 ]);
 

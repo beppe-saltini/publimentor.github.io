@@ -227,6 +227,7 @@ export default function MembersPage() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label="Remove member"
                       onClick={() => handleRemoveMember(member.id)}
                     >
                       <Trash2 className="h-4 w-4 text-red-500" />

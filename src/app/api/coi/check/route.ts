@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     const clientIp = getClientIp(request);
     
     // Rate limiting
-    const rateLimit = checkRateLimit(`coi:${session.user.id}`, COI_RATE_LIMIT);
+    const rateLimit = await checkRateLimit(`coi:${session.user.id}`, COI_RATE_LIMIT);
     if (!rateLimit.allowed) {
       return getRateLimitResponse(rateLimit.resetIn);
     }

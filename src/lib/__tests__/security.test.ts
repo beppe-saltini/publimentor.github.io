@@ -9,6 +9,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   checkRateLimit,
+  UpstashRateLimitStore,
+  upstashConfigFromEnv,
   sanitizeString,
   sanitizeObject,
   isPathWithinBase,
@@ -28,37 +30,87 @@ import {
 // Rate Limiting
 // ============================================================
 describe("checkRateLimit", () => {
-  it("SEC-001: first request is allowed", () => {
+  it("SEC-001: first request is allowed", async () => {
     const id = `test-rate-${Date.now()}-${Math.random()}`;
-    const result = checkRateLimit(id);
+    const result = await checkRateLimit(id);
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBeGreaterThan(0);
   });
 
-  it("SEC-002: exceeding max requests blocks", () => {
+  it("SEC-002: exceeding max requests blocks", async () => {
     const id = `test-exceed-${Date.now()}-${Math.random()}`;
     const config: RateLimitConfig = { windowMs: 60000, maxRequests: 3 };
 
-    // Make maxRequests calls
-    checkRateLimit(id, config); // 1
-    checkRateLimit(id, config); // 2
-    checkRateLimit(id, config); // 3
+    await checkRateLimit(id, config); // 1
+    await checkRateLimit(id, config); // 2
+    await checkRateLimit(id, config); // 3
 
-    // Next call should be blocked
-    const result = checkRateLimit(id, config);
+    const result = await checkRateLimit(id, config);
     expect(result.allowed).toBe(false);
     expect(result.remaining).toBe(0);
   });
 
-  it("remaining count decreases correctly", () => {
+  it("remaining count decreases correctly", async () => {
     const id = `test-remaining-${Date.now()}-${Math.random()}`;
     const config: RateLimitConfig = { windowMs: 60000, maxRequests: 5 };
 
-    const r1 = checkRateLimit(id, config);
+    const r1 = await checkRateLimit(id, config);
     expect(r1.remaining).toBe(4);
 
-    const r2 = checkRateLimit(id, config);
+    const r2 = await checkRateLimit(id, config);
     expect(r2.remaining).toBe(3);
+  });
+});
+
+describe("UpstashRateLimitStore", () => {
+  const config: RateLimitConfig = { windowMs: 60000, maxRequests: 2 };
+
+  function fakeUpstash(counter: { n: number }) {
+    const calls: Array<{ url: string; body: unknown; auth: string | undefined }> = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      counter.n++;
+      const headers = init?.headers as Record<string, string>;
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)), auth: headers?.Authorization });
+      return new Response(JSON.stringify([{ result: counter.n }, { result: 1 }, { result: 59000 }]), { status: 200 });
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  it("counts across calls through the REST pipeline", async () => {
+    const counter = { n: 0 };
+    const { fetchImpl, calls } = fakeUpstash(counter);
+    const store = new UpstashRateLimitStore({ url: "https://example.upstash.io/", token: "tok" }, fetchImpl);
+
+    const first = await store.check("login:a@b.c", config);
+    expect(first).toEqual({ allowed: true, remaining: 1, resetIn: 59000 });
+    await store.check("login:a@b.c", config);
+    const third = await store.check("login:a@b.c", config);
+    expect(third.allowed).toBe(false);
+    expect(third.remaining).toBe(0);
+
+    expect(calls[0].url).toBe("https://example.upstash.io/pipeline");
+    expect(calls[0].auth).toBe("Bearer tok");
+    expect(calls[0].body).toEqual([
+      ["INCR", "rl:login:a@b.c"],
+      ["PEXPIRE", "rl:login:a@b.c", "60000", "NX"],
+      ["PTTL", "rl:login:a@b.c"],
+    ]);
+  });
+
+  it("falls back to in-memory counting when Upstash fails", async () => {
+    const failing = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+    const store = new UpstashRateLimitStore({ url: "https://example.upstash.io", token: "tok" }, failing);
+    const key = `fallback-${Math.random()}`;
+    await store.check(key, config);
+    await store.check(key, config);
+    const third = await store.check(key, config);
+    expect(third.allowed).toBe(false);
+  });
+
+  it("reads credentials from either Vercel KV or Upstash variable names", () => {
+    expect(upstashConfigFromEnv({})).toBeNull();
+    expect(upstashConfigFromEnv({ KV_REST_API_URL: "https://x", KV_REST_API_TOKEN: "t" })).toEqual({ url: "https://x", token: "t" });
+    expect(upstashConfigFromEnv({ UPSTASH_REDIS_REST_URL: "https://y", UPSTASH_REDIS_REST_TOKEN: "u" })).toEqual({ url: "https://y", token: "u" });
   });
 });
 

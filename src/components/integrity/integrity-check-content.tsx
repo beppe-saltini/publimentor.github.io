@@ -572,9 +572,9 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                 <div className="text-sm text-blue-800">
                   <p className="font-medium">About Tortured Phrases</p>
                   <p className="text-blue-700">
-                    "Tortured phrases" are unusual word substitutions that may indicate text processed 
+                    &quot;Tortured phrases&quot; are unusual word substitutions that may indicate text processed 
                     through synonym replacement tools, sometimes associated with paper mills. Examples: 
-                    "profound learning" (deep learning), "counterfeit consciousness" (artificial intelligence).
+                    &quot;profound learning&quot; (deep learning), &quot;counterfeit consciousness&quot; (artificial intelligence).
                     Detection is based on research by Cabanac, Labbé, and colleagues.
                   </p>
                 </div>
@@ -674,13 +674,13 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
                           <div>
                             <p className="text-xs text-gray-500 mb-1">Detected Phrase</p>
                             <p className="font-medium text-red-700">
-                              "{match.matchedText}"
+                              &quot;{match.matchedText}&quot;
                             </p>
                           </div>
                           <div>
                             <p className="text-xs text-gray-500 mb-1">Possible Original</p>
                             <p className="font-medium text-green-700">
-                              "{match.pattern.originalPhrase}"
+                              &quot;{match.pattern.originalPhrase}&quot;
                             </p>
                           </div>
                         </div>
@@ -743,8 +743,8 @@ export function IntegrityCheckContent({ publisherId }: IntegrityCheckContentProp
               </p>
               <ul className="list-disc list-inside space-y-1 ml-2">
                 <li>
-                  Cabanac, G., Labbé, C., & Magazinov, A. (2021). "Tortured phrases: 
-                  A dubious writing style emerging in science." arXiv:2107.06751
+                  Cabanac, G., Labbé, C., & Magazinov, A. (2021). &quot;Tortured phrases: 
+                  A dubious writing style emerging in science.&quot; arXiv:2107.06751
                 </li>
                 <li>
                   Problematic Paper Screener - Community detection efforts

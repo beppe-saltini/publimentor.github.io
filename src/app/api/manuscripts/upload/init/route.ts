@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     }
 
     // Rate limiting
-    const rateLimit = checkRateLimit(
+    const rateLimit = await checkRateLimit(
       `upload:${session.user.id}`,
       { windowMs: 60000, maxRequests: 10 }
     );

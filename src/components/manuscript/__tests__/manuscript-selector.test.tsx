@@ -53,7 +53,7 @@ vi.mock("@/lib/manuscript/manuscript-upload-flow.client", () => ({
 
 // Mock react-dropzone: capture the onDrop and expose a testable element
 vi.mock("react-dropzone", () => ({
-  useDropzone: (config: any) => {
+  useDropzone: (config: { onDrop: (files: File[]) => void }) => {
     mockOnDrop.current = config.onDrop;
     return {
       getRootProps: () => ({
@@ -91,7 +91,7 @@ function simulateFileDrop(file?: File) {
 let fetchMock: ReturnType<typeof vi.fn>;
 
 function mockFetchResponses(
-  responses: Record<string, { ok: boolean; data: any; status?: number }>
+  responses: Record<string, { ok: boolean; data: unknown; status?: number }>
 ) {
   fetchMock = vi.fn((url: string) => {
     const u = typeof url === "string" ? url : String(url);
@@ -113,7 +113,7 @@ function mockFetchResponses(
       text: () => Promise.resolve("{}"),
     });
   });
-  global.fetch = fetchMock as any;
+  global.fetch = fetchMock as unknown as typeof fetch;
 }
 
 /** Open dialog and click Upload New tab using userEvent for proper pointer events */
@@ -301,7 +301,7 @@ describe("ManuscriptSelector", () => {
           );
         }
         return Promise.resolve(jsonBody({}));
-      }) as any;
+      }) as unknown as typeof fetch;
 
       mockUploadManuscriptFile.mockResolvedValue({ manuscriptId: "ms-poll" });
 

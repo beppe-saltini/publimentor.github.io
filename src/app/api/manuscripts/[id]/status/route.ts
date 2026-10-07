@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ManuscriptWorkflowStatus } from "@prisma/client";
 import { findAccessibleManuscript } from "@/lib/manuscript-access";
+import { isProcessingStale } from "@/lib/manuscript/processing-timeout";
 
 export const dynamic = "force-dynamic";
 
@@ -119,6 +120,24 @@ export async function GET(
           { status: 403 }
         );
       }
+    }
+
+    // A run the platform killed (timeout, crash, redeploy) never reaches ERROR by
+    // itself; flag it here so the UI stops waiting and the user can retry.
+    if (isProcessingStale(manuscript.status, manuscript.processingStarted)) {
+      const message = "Processing was interrupted. Please try again.";
+      const ended = new Date();
+      await prisma.manuscript.update({
+        where: { id },
+        data: { status: "ERROR", statusMessage: message, processingEnded: ended },
+      });
+      await prisma.processingJob.updateMany({
+        where: { manuscriptId: id, status: { in: ["PENDING", "RUNNING"] } },
+        data: { status: "FAILED", error: message, completedAt: ended },
+      });
+      manuscript.status = "ERROR";
+      manuscript.statusMessage = message;
+      manuscript.processingEnded = ended;
     }
 
     // Calculate progress based on status

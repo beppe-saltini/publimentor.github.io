@@ -110,7 +110,7 @@ async function extractFromLaTeX(buffer: Buffer): Promise<ExtractionResult> {
   const content = buffer.toString("utf-8");
 
   // Basic LaTeX cleaning - remove common commands
-  let text = content
+  const text = content
     // Remove comments
     .replace(/%.*$/gm, "")
     // Remove common preamble commands

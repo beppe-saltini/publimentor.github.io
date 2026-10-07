@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     const normalizedEmail = email.toLowerCase().trim();
 
     // Rate limit by email (not IP) so shared networks / unknown IPs don't block beta testers
-    const emailRateLimit = checkRateLimit(`register:email:${normalizedEmail}`, REGISTER_RATE_LIMIT);
+    const emailRateLimit = await checkRateLimit(`register:email:${normalizedEmail}`, REGISTER_RATE_LIMIT);
     if (!emailRateLimit.allowed) {
       auditLog({
         userId: null,
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     }
 
     if (clientIp !== "unknown") {
-      const ipRateLimit = checkRateLimit(`register:ip:${clientIp}`, REGISTER_IP_RATE_LIMIT);
+      const ipRateLimit = await checkRateLimit(`register:ip:${clientIp}`, REGISTER_IP_RATE_LIMIT);
       if (!ipRateLimit.allowed) {
         auditLog({
           userId: null,

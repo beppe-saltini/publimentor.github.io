@@ -196,6 +196,7 @@ export default function FavouriteJournalsPage() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label="Remove from favourites"
                     className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
                     onClick={() => handleRemove(fav.journal.id, fav.journal.name)}
                     title="Remove from favourites"

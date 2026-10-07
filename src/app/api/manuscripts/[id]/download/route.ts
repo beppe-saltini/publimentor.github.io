@@ -48,7 +48,7 @@ export async function GET(
     const clientIp = getClientIp(request);
     
     // Rate limiting - 30 downloads per minute
-    const rateLimit = checkRateLimit(
+    const rateLimit = await checkRateLimit(
       `download:${session.user.id}`,
       { windowMs: 60000, maxRequests: 30 }
     );

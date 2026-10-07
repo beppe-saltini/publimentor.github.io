@@ -49,6 +49,14 @@ interface ManuscriptReference {
   year?: number | null;
 }
 
+interface ApiAuthor { fullName: string; email?: string | null; affiliationNums?: number[] | null }
+interface ApiAffiliation { affiliationNumber: number; rawText?: string | null }
+type ApiReference = Omit<ManuscriptReference, "refNumber" | "rawText"> & { refNumber: number; rawText: string };
+type ApiManuscript = Omit<ManuscriptSummary, "authorCount" | "title"> & {
+  title?: string | null; keywords?: string[] | null; abstract?: string | null; filePath?: string | null;
+  authors?: ApiAuthor[] | null; affiliations?: ApiAffiliation[] | null; references?: ApiReference[] | null;
+};
+
 interface ProcessingStatus {
   id: string;
   status: string;
@@ -278,7 +286,7 @@ export function ManuscriptSelector({
     try {
       const response = await fetch(`/api/manuscripts/${id}`);
       const text = await response.text();
-      let data: Record<string, any>;
+      let data: { error?: string; manuscript?: ApiManuscript };
       try {
         data = JSON.parse(text);
       } catch {
@@ -309,12 +317,12 @@ export function ManuscriptSelector({
         // Pass manuscript data to parent
         if (onManuscriptData) {
           const kw = m.keywords || [];
-          const authors = m.authors?.map((a: any) => ({
+          const authors = m.authors?.map((a: ApiAuthor) => ({
             name: a.fullName,
-            email: a.email,
-            affiliation: m.affiliations?.find((aff: any) => 
+            email: a.email ?? undefined,
+            affiliation: m.affiliations?.find((aff: ApiAffiliation) => 
               a.affiliationNums?.includes(aff.affiliationNumber)
-            )?.rawText,
+            )?.rawText ?? undefined,
           })) || [];
 
           onManuscriptData({
@@ -322,7 +330,7 @@ export function ManuscriptSelector({
             abstract: m.abstract || "",
             keywords: kw,
             authors,
-            references: m.references?.map((r: any) => ({
+            references: m.references?.map((r: ApiReference) => ({
               refNumber: r.refNumber,
               rawText: r.rawText,
               doi: r.doi,
@@ -332,7 +340,7 @@ export function ManuscriptSelector({
               journal: r.journal,
               year: r.year,
             })) || [],
-            filePath: m.filePath,
+            filePath: m.filePath ?? undefined,
           });
 
           if (kw.length > 0 || authors.length > 0) {

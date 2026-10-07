@@ -32,6 +32,9 @@ import {
 } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
+// Enrichment chains (OpenAlex, PubMed, e-mail lookup, deceased screen) can run for minutes;
+// 300 s is the ceiling on the Hobby plan with Fluid compute.
+export const maxDuration = 300;
 
 interface OrcidProfile {
   email: string | null;
@@ -191,7 +194,7 @@ export async function POST(request: Request) {
     const clientIp = getClientIp(request);
     
     // Rate limiting - expensive API calls
-    const rateLimit = checkRateLimit(
+    const rateLimit = await checkRateLimit(
       `discover:${session.user.id}`,
       DISCOVER_RATE_LIMIT
     );

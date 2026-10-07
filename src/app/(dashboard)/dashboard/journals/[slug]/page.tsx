@@ -125,12 +125,12 @@ export default async function JournalOverviewPage({
                     >
                       {manuscript.status}
                     </Badge>
-                    <Button variant="ghost" size="icon" asChild title="View details">
+                    <Button variant="ghost" size="icon" aria-label="View details" asChild title="View details">
                       <Link href={`/dashboard/manuscripts/${manuscript.id}`}>
                         <Eye className="h-4 w-4" />
                       </Link>
                     </Button>
-                    <Button variant="ghost" size="icon" asChild title="Download PDF">
+                    <Button variant="ghost" size="icon" aria-label="Download PDF" asChild title="Download PDF">
                       <a
                         href={`/api/manuscripts/${manuscript.id}/download`}
                         target="_blank"

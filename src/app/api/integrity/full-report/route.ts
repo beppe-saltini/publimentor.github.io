@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     }
 
     // Rate limiting
-    const rateLimit = checkRateLimit(`full-report:${session.user.id}`, FULL_REPORT_RATE_LIMIT);
+    const rateLimit = await checkRateLimit(`full-report:${session.user.id}`, FULL_REPORT_RATE_LIMIT);
     if (!rateLimit.allowed) {
       return getRateLimitResponse(rateLimit.resetIn);
     }

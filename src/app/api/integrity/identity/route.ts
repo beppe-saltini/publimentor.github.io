@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     }
 
     // Rate limiting
-    const rateLimit = checkRateLimit(`identity:${session.user.id}`, IDENTITY_RATE_LIMIT);
+    const rateLimit = await checkRateLimit(`identity:${session.user.id}`, IDENTITY_RATE_LIMIT);
     if (!rateLimit.allowed) {
       return getRateLimitResponse(rateLimit.resetIn);
     }

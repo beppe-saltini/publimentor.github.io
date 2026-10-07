@@ -8,20 +8,18 @@ import crypto from "crypto";
 import path from "path";
 
 // ============================================================
-// Rate Limiting (In-Memory with Redis adapter support)
+// Rate Limiting (Upstash/Vercel KV when configured, in-memory otherwise)
 // ============================================================
-
-interface RateLimitEntry {
-  count: number;
-  resetTime: number;
-}
-
-/** In-memory store — replaced by Redis in production via REDIS_URL */
-const rateLimitStore = new Map<string, RateLimitEntry>();
 
 export interface RateLimitConfig {
   windowMs: number;  // Time window in milliseconds
   maxRequests: number;  // Max requests per window
+}
+
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetIn: number;
 }
 
 const DEFAULT_RATE_LIMIT: RateLimitConfig = {
@@ -52,16 +50,19 @@ const REGISTER_IP_RATE_LIMIT: RateLimitConfig = {
 };
 
 /**
- * Rate limit store interface — implemented by in-memory and Redis adapters.
+ * Rate limit store interface — implemented by the in-memory and Upstash stores.
  */
-interface RateLimitStore {
-  check(key: string, config: RateLimitConfig): Promise<{ allowed: boolean; remaining: number; resetIn: number }>;
+export interface RateLimitStore {
+  check(key: string, config: RateLimitConfig): Promise<RateLimitResult>;
 }
 
-/** In-memory rate limit store (single-instance only) */
-class InMemoryRateLimitStore implements RateLimitStore {
-  private store = new Map<string, RateLimitEntry>();
-  // Periodic cleanup to prevent memory leaks
+/**
+ * In-memory fixed-window store. Only meaningful on a single long-lived process:
+ * on Vercel every lambda instance has its own map, so it is the fallback, not the
+ * production limiter.
+ */
+export class InMemoryRateLimitStore implements RateLimitStore {
+  private store = new Map<string, { count: number; resetTime: number }>();
   private cleanupInterval: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -70,7 +71,7 @@ class InMemoryRateLimitStore implements RateLimitStore {
     if (this.cleanupInterval.unref) this.cleanupInterval.unref();
   }
 
-  async check(key: string, config: RateLimitConfig) {
+  async check(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
     const now = Date.now();
     const entry = this.store.get(key);
 
@@ -95,111 +96,103 @@ class InMemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-/**
- * Redis-backed rate limit store (works across instances, survives restarts).
- * Uses a simple sliding window counter with Redis INCR + EXPIRE.
- */
-class RedisRateLimitStore implements RateLimitStore {
-  private redisUrl: string;
-  /** In-memory fallback used when Redis is unreachable (fail-closed) */
-  private fallbackStore = new InMemoryRateLimitStore();
+export interface UpstashRestConfig {
+  url: string;
+  token: string;
+}
 
-  constructor(redisUrl: string) {
-    this.redisUrl = redisUrl;
+/**
+ * Fixed-window counter on an Upstash Redis database, reached over its REST API so
+ * no Redis client library or persistent connection is needed in a serverless
+ * function. One pipeline call per check: INCR the key, set its expiry on first
+ * use, read the remaining TTL. Shared by every lambda instance, so login and
+ * registration limits hold across the whole deployment.
+ *
+ * If Upstash is unreachable the check falls back to the in-memory store (fail
+ * closed for the current instance) rather than allowing everything through.
+ */
+export class UpstashRateLimitStore implements RateLimitStore {
+  private fallback = new InMemoryRateLimitStore();
+  private readonly endpoint: string;
+
+  constructor(private readonly upstash: UpstashRestConfig, private readonly fetchImpl: typeof fetch = fetch) {
+    this.endpoint = `${upstash.url.replace(/\/$/, "")}/pipeline`;
   }
 
-  async check(key: string, config: RateLimitConfig): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
-    // Dynamic import to avoid requiring ioredis when not using Redis
+  async check(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
+    const redisKey = `rl:${key}`;
     try {
-      // @ts-expect-error - ioredis is an optional dependency, only used when REDIS_URL is configured
-      const { default: Redis } = await import("ioredis");
-      const redis = new Redis(this.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
-      await redis.connect();
-
-      const redisKey = `rl:${key}`;
-      const windowSecs = Math.ceil(config.windowMs / 1000);
-
-      const count = await redis.incr(redisKey);
-      if (count === 1) {
-        await redis.expire(redisKey, windowSecs);
+      const response = await this.fetchImpl(this.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.upstash.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify([
+          ["INCR", redisKey],
+          ["PEXPIRE", redisKey, String(config.windowMs), "NX"],
+          ["PTTL", redisKey],
+        ]),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) {
+        throw new Error(`Upstash responded ${response.status}`);
       }
+      const results = (await response.json()) as Array<{ result?: unknown; error?: string }>;
+      const failed = results.find((r) => r.error);
+      if (failed) throw new Error(failed.error);
 
-      const ttl = await redis.ttl(redisKey);
-      await redis.quit();
-
-      const allowed = count <= config.maxRequests;
+      const count = Number(results[0]?.result ?? 0);
+      const ttl = Number(results[2]?.result ?? -1);
+      const resetIn = ttl > 0 ? ttl : config.windowMs;
       return {
-        allowed,
+        allowed: count <= config.maxRequests,
         remaining: Math.max(0, config.maxRequests - count),
-        resetIn: ttl > 0 ? ttl * 1000 : config.windowMs,
+        resetIn,
       };
-    } catch {
-      // SECURITY: Fall back to in-memory rate limiting instead of allowing
-      // all requests. This prevents brute-force attacks when Redis is down.
-      console.warn("[RateLimit] Redis unavailable, falling back to in-memory rate limiter");
-      return this.fallbackStore.check(key, config);
+    } catch (error) {
+      console.warn("[RateLimit] Upstash unavailable, using in-memory limiter for this instance:", error instanceof Error ? error.message : error);
+      return this.fallback.check(key, config);
     }
   }
 }
 
-/** Singleton rate limit store — uses Redis if REDIS_URL is set */
+/**
+ * Upstash credentials from the environment. The Vercel Marketplace integration
+ * injects KV_REST_API_URL/KV_REST_API_TOKEN; a database created on upstash.com
+ * directly gives UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN.
+ */
+export function upstashConfigFromEnv(env: Record<string, string | undefined> = process.env): UpstashRestConfig | null {
+  const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
+  return url && token ? { url, token } : null;
+}
+
 let _rateLimitStore: RateLimitStore | null = null;
 
 function getRateLimitStore(): RateLimitStore {
   if (!_rateLimitStore) {
-    const redisUrl = process.env.REDIS_URL;
-    if (redisUrl) {
-      console.log("[RateLimit] Using Redis-backed rate limiting");
-      _rateLimitStore = new RedisRateLimitStore(redisUrl);
+    const upstash = upstashConfigFromEnv();
+    if (upstash) {
+      console.log("[RateLimit] Using Upstash-backed rate limiting");
+      _rateLimitStore = new UpstashRateLimitStore(upstash);
     } else {
-      console.log("[RateLimit] Using in-memory rate limiting (single instance only)");
+      if (process.env.NODE_ENV === "production" && process.env.VERCEL) {
+        console.warn("[RateLimit] No Upstash credentials: limits are per lambda instance only");
+      }
       _rateLimitStore = new InMemoryRateLimitStore();
     }
   }
   return _rateLimitStore;
 }
 
-export function checkRateLimit(
-  identifier: string,
-  config: RateLimitConfig = DEFAULT_RATE_LIMIT
-): { allowed: boolean; remaining: number; resetIn: number } {
-  // Synchronous wrapper using in-memory store for backward compatibility
-  const now = Date.now();
-  const key = `${identifier}`;
-  const entry = rateLimitStore.get(key);
-
-  if (!entry || now > entry.resetTime) {
-    rateLimitStore.set(key, {
-      count: 1,
-      resetTime: now + config.windowMs,
-    });
-    return { allowed: true, remaining: config.maxRequests - 1, resetIn: config.windowMs };
-  }
-
-  if (entry.count >= config.maxRequests) {
-    return { 
-      allowed: false, 
-      remaining: 0, 
-      resetIn: entry.resetTime - now 
-    };
-  }
-
-  entry.count++;
-  return { 
-    allowed: true, 
-    remaining: config.maxRequests - entry.count, 
-    resetIn: entry.resetTime - now 
-  };
-}
-
 /**
- * Async rate limit check — uses Redis when available.
- * Prefer this over `checkRateLimit` for new code.
+ * Rate limit check — shared across instances when Upstash is configured.
  */
-export async function checkRateLimitAsync(
+export async function checkRateLimit(
   identifier: string,
   config: RateLimitConfig = DEFAULT_RATE_LIMIT
-): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
+): Promise<RateLimitResult> {
   return getRateLimitStore().check(identifier, config);
 }
 

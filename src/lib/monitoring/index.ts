@@ -86,7 +86,7 @@ export async function captureException(
     // @ts-expect-error - @sentry/nextjs is an optional dependency, only installed when SENTRY_DSN is configured
     const Sentry = await import("@sentry/nextjs");
 
-    Sentry.withScope((scope: any) => {
+    Sentry.withScope((scope: { setUser(user: { id: string }): void; setTag(key: string, value: string): void; setExtra(key: string, value: unknown): void }) => {
       if (context?.userId) scope.setUser({ id: context.userId });
       if (context?.requestId) scope.setTag("requestId", context.requestId);
       if (context?.tags) {

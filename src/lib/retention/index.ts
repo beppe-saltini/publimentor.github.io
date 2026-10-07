@@ -228,16 +228,18 @@ export class RetentionExecutor {
     cutoffDate: Date,
     result: RetentionResult
   ): Promise<RetentionResult> {
-    // Find users with no activity
+    // Sessions are JWTs (the Session table stays empty), so inactivity is judged
+    // on the last sign-in (or the account creation for users who never signed in),
+    // the last profile change and the last manuscript upload.
     const inactiveUsers = await prisma.user.findMany({
       where: {
         updatedAt: { lt: cutoffDate },
-        // No recent sessions
-        sessions: {
-          none: {
-            expires: { gt: new Date() },
-          },
-        },
+        OR: [
+          { lastLoginAt: { lt: cutoffDate } },
+          { lastLoginAt: null, createdAt: { lt: cutoffDate } },
+        ],
+        uploadedManuscripts: { none: { createdAt: { gte: cutoffDate } } },
+        NOT: { email: { endsWith: "@deleted.local" } },
       },
       select: { id: true, email: true },
     });

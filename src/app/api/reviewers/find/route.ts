@@ -19,6 +19,9 @@ import { getResolvedManuscriptAuthors, authorRole, type ResolvedAuthor } from "@
 import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export const dynamic = "force-dynamic";
+// Enrichment chains (OpenAlex, PubMed, e-mail lookup, deceased screen) can run for minutes;
+// 300 s is the ceiling on the Hobby plan with Fluid compute.
+export const maxDuration = 300;
 
 /** Merge key for one person across PubMed ("John A") and OpenAlex ("John A."): surname + first given name, no punctuation. */
 function reviewerKey(lastName: string, givenNames: string): string {

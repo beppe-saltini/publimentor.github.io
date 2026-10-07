@@ -90,7 +90,7 @@ This document summarizes PubliMentor's compliance with enterprise web applicatio
 
 ### Rate Limiting ✅
 - **In-Memory**: `/src/lib/security.ts`
-- **Redis-backed**: `/src/lib/rate-limit/redis.ts`
+- **Upstash-backed (REST)**: `UpstashRateLimitStore` in `/src/lib/security.ts`
   - Sliding window algorithm
   - Per-IP and per-user limits
   - Tiered limits (auth, API, strict)

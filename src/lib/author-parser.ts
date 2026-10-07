@@ -55,7 +55,7 @@ export function parseAuthorList(rawInput: string): ParsedAuthor[] {
   const authors: ParsedAuthor[] = [];
   
   // Clean the input
-  let cleaned = rawInput
+  const cleaned = rawInput
     // Remove superscript numbers (affiliations)
     .replace(/[\u2070-\u209F\u00B9\u00B2\u00B3]+/g, "")
     // Remove common affiliation patterns
