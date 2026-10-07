@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
-import { ANTHROPIC_HAIKU_MODEL } from "@/lib/anthropic-models";
+import { ANTHROPIC_HAIKU_MODEL, responseText } from "@/lib/anthropic-models";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +66,7 @@ ${text}`,
     }
 
     const data = await response.json();
-    const content = data.content?.[0]?.text || "[]";
+    const content = responseText(data) || "[]";
 
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {

@@ -21,13 +21,29 @@ function cleanEnv(value: string | undefined): string {
   return (value || "").replace(/(\\n|\s)+$/g, "").trim();
 }
 
-/** Primary model: metadata extraction, reviewer ranking, invitations, journal suggestions. */
-export const ANTHROPIC_SONNET_MODEL =
-  cleanEnv(process.env.ANTHROPIC_SONNET_MODEL) || "claude-sonnet-4-5";
+/**
+ * Primary model: reviewer suggestions and ranking, invitations, journal suggestions,
+ * metadata extraction. Claude Opus 5.5 always reasons before answering, so responses
+ * start with a thinking block — read text with responseText(), never content[0].
+ * ANTHROPIC_SONNET_MODEL is still honoured as an override for older Vercel settings.
+ */
+export const ANTHROPIC_PRIMARY_MODEL =
+  cleanEnv(process.env.ANTHROPIC_PRIMARY_MODEL) || cleanEnv(process.env.ANTHROPIC_SONNET_MODEL) || "claude-opus-5-5";
 
 /** Fast/cheap model: reference parsing, keyword suggestions. */
 export const ANTHROPIC_HAIKU_MODEL =
   cleanEnv(process.env.ANTHROPIC_HAIKU_MODEL) || "claude-haiku-4-5";
+
+/** Concatenated text of a Messages API response, skipping thinking and other non-text blocks. */
+export function responseText(data: unknown): string {
+  const blocks = (data as { content?: Array<{ type?: string; text?: string }> })?.content;
+  if (!Array.isArray(blocks)) return "";
+  return blocks
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("")
+    .trim();
+}
 
 /** True when a response indicates the requested model no longer exists. */
 export function isModelNotFoundResponse(status: number, body: string): boolean {

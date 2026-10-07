@@ -5,7 +5,8 @@
  */
 
 import {
-  ANTHROPIC_SONNET_MODEL,
+  ANTHROPIC_PRIMARY_MODEL,
+  responseText,
   ANTHROPIC_HAIKU_MODEL,
   isModelNotFoundResponse,
   resolveReplacementModel,
@@ -195,7 +196,7 @@ function prepareMetadataText(text: string, refStart: number): string {
  * automatically resolves the newest live model in the same family and
  * retries once, so manuscript processing survives model retirements.
  */
-async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_SONNET_MODEL): Promise<string> {
+async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_PRIMARY_MODEL): Promise<string> {
   const doRequest = (useModel: string) =>
     fetch(ANTHROPIC_API_URL, {
       method: "POST",
@@ -229,7 +230,7 @@ async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_S
   }
 
   const data = await response.json();
-  const content = data.content?.[0]?.text;
+  const content = responseText(data);
   if (!content) throw new Error("Empty response from Claude");
   return content;
 }
@@ -315,7 +316,7 @@ export async function extractMetadata(text: string): Promise<ExtractedMetadata> 
       console.log("[MetadataExtractor] Running metadata + references extraction in parallel...");
 
       const [content, refs] = await Promise.all([
-        callClaude(prompt, 8192),
+        callClaude(prompt, 16000),
         extractReferencesOnly(refSectionText),
       ]);
 

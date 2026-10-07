@@ -13,13 +13,13 @@
 import { z } from "zod";
 import { resilientFetch, circuitBreakers } from "@/lib/resilience";
 import { logger } from "@/lib/logger";
-import { ANTHROPIC_SONNET_MODEL } from "@/lib/anthropic-models";
+import { ANTHROPIC_PRIMARY_MODEL, responseText } from "@/lib/anthropic-models";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
-/** Default timeout for LLM requests (60s — LLMs can be slow) */
-const LLM_TIMEOUT_MS = 60_000;
+/** Default timeout for LLM requests (120s — Opus reasons before answering) */
+const LLM_TIMEOUT_MS = 120_000;
 /** Retry configuration for LLM calls */
 const LLM_RETRY = { maxAttempts: 3, initialDelay: 2000, maxDelay: 15_000 };
 
@@ -219,8 +219,9 @@ Respond with ONLY a valid JSON object:
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_SONNET_MODEL,
-          max_tokens: 4096,
+          model: ANTHROPIC_PRIMARY_MODEL,
+          max_tokens: 16000,
+          output_config: { effort: "high" },
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -239,7 +240,7 @@ Respond with ONLY a valid JSON object:
     }
 
     const data = await response.json();
-    const content = data.content?.[0]?.text;
+    const content = responseText(data);
 
     if (!content) {
       logger.error("[LLM] No content in response");
@@ -358,8 +359,8 @@ Only include candidates with relevanceScore >= 50. Order by relevanceScore desce
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_SONNET_MODEL,
-          max_tokens: 4096,
+          model: ANTHROPIC_PRIMARY_MODEL,
+          max_tokens: 16000,
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -378,7 +379,7 @@ Only include candidates with relevanceScore >= 50. Order by relevanceScore desce
     }
 
     const data = await response.json();
-    const content = data.content?.[0]?.text;
+    const content = responseText(data);
 
     if (!content) {
       logger.error("[LLM] No content in response");
@@ -451,8 +452,8 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_SONNET_MODEL,
-          max_tokens: 1024,
+          model: ANTHROPIC_PRIMARY_MODEL,
+          max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -469,7 +470,7 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
     }
 
     const data = await response.json();
-    return data.content?.[0]?.text || null;
+    return responseText(data) || null;
   } catch (error) {
     logger.error("[LLM] Error generating invitation", error);
     return null;
@@ -546,8 +547,8 @@ Order journals by best fit first. Use the exact official journal name as it appe
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_SONNET_MODEL,
-          max_tokens: 4096,
+          model: ANTHROPIC_PRIMARY_MODEL,
+          max_tokens: 16000,
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -566,7 +567,7 @@ Order journals by best fit first. Use the exact official journal name as it appe
     }
 
     const data = await response.json();
-    const content = data.content?.[0]?.text;
+    const content = responseText(data);
 
     if (!content) {
       logger.error("[LLM] No content in response");
