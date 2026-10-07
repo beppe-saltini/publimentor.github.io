@@ -389,7 +389,7 @@ Include every candidate, even those with a low score — the editor decides. Ord
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_PRIMARY_MODEL,
+          model: ANTHROPIC_SUGGEST_MODEL,
           max_tokens: 16000,
           output_config: { format: claudeJsonFormat(llmRankingResultSchema) },
           messages: [{ role: "user", content: prompt }],
@@ -484,7 +484,7 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_PRIMARY_MODEL,
+          model: ANTHROPIC_SUGGEST_MODEL,
           max_tokens: 4096,
           messages: [{ role: "user", content: prompt }],
         }),

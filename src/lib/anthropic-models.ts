@@ -31,10 +31,12 @@ export const ANTHROPIC_PRIMARY_MODEL =
   cleanEnv(process.env.ANTHROPIC_PRIMARY_MODEL) || cleanEnv(process.env.ANTHROPIC_SONNET_MODEL) || "claude-opus-5-5";
 
 /**
- * Reviewer suggestions: the one call that asks for a list of real, named researchers.
- * Claude Opus 5.5 answers it with stop_reason "refusal" (verified 2026-10-07 with
- * and without structured output), which silently emptied every discovery search.
- * Claude Sonnet 4.5 answers normally, so this call keeps its own model.
+ * Calls about real, named researchers: suggesting reviewers, scoring their relevance
+ * from their publication records, drafting an invitation to one. Claude Opus 5.5
+ * answers these with stop_reason "refusal" (verified in production 2026-10-07, with
+ * and without structured output), which silently emptied every discovery search and
+ * zeroed every relevance score. Claude Sonnet 4.5 answers normally, so these calls
+ * use their own model. It does not accept output_config.effort.
  */
 export const ANTHROPIC_SUGGEST_MODEL =
   cleanEnv(process.env.ANTHROPIC_SUGGEST_MODEL) || "claude-sonnet-4-5";
