@@ -69,7 +69,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/authors?${params}`);
+    const response = await fetch(`${BASE_URL}/authors?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -88,7 +88,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/authors/${authorId}?${params}`);
+    const response = await fetch(`${BASE_URL}/authors/${authorId}?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -110,7 +110,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/authors?${params}`);
+    const response = await fetch(`${BASE_URL}/authors?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -161,7 +161,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/works?${params}`);
+    const response = await fetch(`${BASE_URL}/works?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -212,7 +212,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/works?${params}`);
+    const response = await fetch(`${BASE_URL}/works?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -407,7 +407,7 @@ export const openAlex = {
     // Exclude specific authors (e.g., paper authors)
     if (excludeAuthorIds.length > 0) {
       excludeAuthorIds.forEach((id) => {
-        filters.push(`!ids.openalex:${id}`);
+        filters.push(`ids.openalex:!${id}`);
       });
     }
 
@@ -424,7 +424,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/authors?${params}`);
+    const response = await fetch(`${BASE_URL}/authors?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -485,7 +485,7 @@ export const openAlex = {
     }
 
     console.log(`[OpenAlex] Discovering reviewers with query: ${searchQuery}`);
-    const response = await fetch(`${BASE_URL}/authors?${params}`);
+    const response = await fetch(`${BASE_URL}/authors?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -595,7 +595,7 @@ export const openAlex = {
       params.set("mailto", email);
     }
 
-    const response = await fetch(`${BASE_URL}/works?${params}`);
+    const response = await fetch(`${BASE_URL}/works?${params}`, { signal: AbortSignal.timeout(15_000) });
 
     if (!response.ok) {
       throw new Error(`OpenAlex API error: ${response.statusText}`);
@@ -681,7 +681,7 @@ export const openAlex = {
 
     try {
       const id = institutionId.replace("https://openalex.org/", "");
-      const response = await fetch(`${BASE_URL}/institutions/${id}?${params}`);
+      const response = await fetch(`${BASE_URL}/institutions/${id}?${params}`, { signal: AbortSignal.timeout(15_000) });
       if (!response.ok) return null;
       const data = await response.json();
       return {
@@ -704,7 +704,7 @@ export const openAlex = {
     }
 
     try {
-      const response = await fetch(`${BASE_URL}/sources/${sourceId}?${params}`);
+      const response = await fetch(`${BASE_URL}/sources/${sourceId}?${params}`, { signal: AbortSignal.timeout(15_000) });
 
       if (!response.ok) {
         return null;
@@ -753,7 +753,7 @@ export const openAlex = {
     }
 
     try {
-      const response = await fetch(`${BASE_URL}/sources?${params}`);
+      const response = await fetch(`${BASE_URL}/sources?${params}`, { signal: AbortSignal.timeout(15_000) });
 
       if (!response.ok) {
         console.log(`[OpenAlex] Source search failed: ${response.status}`);

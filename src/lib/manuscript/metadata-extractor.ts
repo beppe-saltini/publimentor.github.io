@@ -32,9 +32,13 @@ const REFS_HEADING_PATTERNS = [
  * Uses an allowlist approach: strips ALL HTML tags and decodes entities,
  * leaving only plain text. This is safer than a denylist regex approach.
  */
-function sanitizeLLMOutput(input: string | undefined | null): string | undefined {
-  if (!input) return undefined;
-  return input
+function sanitizeLLMOutput(input: unknown): string | undefined {
+  if (input === undefined || input === null || input === "") return undefined;
+  if (typeof input !== "string") {
+    if (typeof input === "number" || typeof input === "boolean") input = String(input);
+    else return undefined;
+  }
+  return (input as string)
     // Decode common HTML entities first (prevents encoded bypass)
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
@@ -517,7 +521,7 @@ export function parseExtractionResponse(content: string): ExtractedMetadata {
         ethics: sanitizeLLMOutput(parsed.declarations?.ethics),
         authorContributions: sanitizeLLMOutput(parsed.declarations?.authorContributions),
       },
-      statistics: parsed.statistics || {},
+      statistics: sanitizeStatistics(parsed.statistics),
       references: Array.isArray(parsed.references) 
         ? parsed.references.map(sanitizeReference) 
         : [],
@@ -592,6 +596,22 @@ function sanitizeAffiliation(aff: Record<string, unknown>): ExtractedAffiliation
     city: sanitizeLLMOutput(aff.city as string),
     state: sanitizeLLMOutput(aff.state as string),
     country: sanitizeLLMOutput(aff.country as string),
+  };
+}
+
+function toCount(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.min(10000, Math.round(n)) : undefined;
+}
+
+/** Counts come back from the model as numbers, numeric strings or garbage; Int columns need integers. */
+export function sanitizeStatistics(stats: unknown): { figureCount?: number; tableCount?: number; referenceCount?: number; wordCount?: number } {
+  const s = (stats && typeof stats === "object" ? stats : {}) as Record<string, unknown>;
+  return {
+    figureCount: toCount(s.figureCount),
+    tableCount: toCount(s.tableCount),
+    referenceCount: toCount(s.referenceCount),
+    wordCount: toCount(s.wordCount),
   };
 }
 

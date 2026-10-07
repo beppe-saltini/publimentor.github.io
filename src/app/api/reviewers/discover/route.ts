@@ -302,6 +302,15 @@ export async function POST(request: Request) {
             const nameParts = suggested.name.split(" ");
             const lastName = nameParts[nameParts.length - 1].toLowerCase();
 
+            // Keep only articles this person actually appears on; a topic search alone proves nothing
+            articles = articles.filter((article) =>
+              article.authors.some((a) => a.lastName.toLowerCase() === lastName)
+            );
+            if (articles.length === 0) {
+              console.log(`[Discover] ${suggested.name} is not an author on any matched article, skipping`);
+              continue;
+            }
+
             for (const article of articles) {
               const authorIndex = article.authors.findIndex(a => 
                 a.fullName.toLowerCase().includes(lastName) ||
@@ -341,7 +350,11 @@ export async function POST(request: Request) {
             let verifiedName: string | null = null;
             try {
               const oaAuthor = await openAlex.findAuthorByName(suggested.name);
-              if (oaAuthor) {
+              const oaSurname = oaAuthor?.display_name?.split(" ").pop()?.toLowerCase();
+              if (oaAuthor && oaSurname !== lastName) {
+                console.log(`[Discover] OpenAlex top match "${oaAuthor.display_name}" is not ${suggested.name}; ignoring`);
+              }
+              if (oaAuthor && oaSurname === lastName) {
                 hIndexOA = oaAuthor.summary_stats?.h_index ?? null;
                 oaPaperCount = oaAuthor.works_count;
                 oaOrcid = oaAuthor.orcid?.replace("https://orcid.org/", "") || null;

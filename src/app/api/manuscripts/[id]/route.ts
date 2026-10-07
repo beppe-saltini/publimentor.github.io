@@ -92,6 +92,7 @@ export async function GET(
         detectedJournal: manuscript.detectedJournal,
         
         // File info
+        filePath: manuscript.storagePath || manuscript.filePath || null,
         fileName: manuscript.fileName,
         fileType: manuscript.fileType,
         fileSize: manuscript.fileSize,
@@ -175,6 +176,7 @@ export async function DELETE(
         uploaderId: true,
         publisherId: true,
         filePath: true,
+        storagePath: true,
         status: true,
       },
     });
@@ -205,7 +207,7 @@ export async function DELETE(
     }
 
     // Check if manuscript is actively processing (Finding 12)
-    const activeStatuses = ["EXTRACTING", "PROCESSING", "EMBEDDING"];
+    const activeStatuses = ["EXTRACTING", "EXTRACTED", "PROCESSING", "EMBEDDING"];
     if (activeStatuses.includes(manuscript.status as string)) {
       return NextResponse.json(
         { error: "Cannot delete a manuscript that is currently being processed. Wait for processing to complete." },

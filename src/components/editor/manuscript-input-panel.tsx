@@ -308,6 +308,12 @@ export function ManuscriptInputPanel({
                     <Progress value={uploadProgress} className="max-w-xs mx-auto" />
                   )}
                 </div>
+              ) : processingStatus?.hasError ? (
+                <div className="space-y-2">
+                  <XCircle className="h-8 w-8 mx-auto text-red-600" />
+                  <p className="text-sm font-medium text-red-800">Processing failed</p>
+                  <p className="text-xs text-gray-600">{processingStatus.stage || "Try uploading the file again."}</p>
+                </div>
               ) : processingStatus && !processingStatus.isComplete ? (
                 <div className="space-y-3">
                   <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />

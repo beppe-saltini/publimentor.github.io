@@ -26,6 +26,7 @@ const BUILD_TIME = BUILD_TIME_RAW
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
+      timeZone: "UTC",
     })
   : "";
 

@@ -526,7 +526,8 @@ export function matchFullNames(
   // Combine confidences
   const combinedConfidence = (surnameMatch.confidence * 0.6 + firstNameMatch.confidence * 0.4);
   
-  if (firstNameMatch.isMatch) {
+  // Soundex equates Yan/Yun, Wei/Wu, Andrea/Andrew: with the same surname these are different people
+  if (firstNameMatch.isMatch && firstNameMatch.matchType !== "phonetic") {
     return {
       isMatch: true,
       confidence: combinedConfidence,

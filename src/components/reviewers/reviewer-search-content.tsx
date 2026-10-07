@@ -2087,22 +2087,22 @@ export function ReviewerSearchContent({
 
                         <div className="flex flex-wrap gap-1 mb-3">
                           {getSourceBadge(reviewer.source)}
-                          {reviewer.hIndex && (
+                          {!!reviewer.hIndex && (
                             <Badge variant="secondary" className="text-xs">
                               h-index: {reviewer.hIndex}
                             </Badge>
                           )}
                         </div>
 
-                        {(reviewer.worksCount || reviewer.citedByCount) && (
+                        {!!(reviewer.worksCount || reviewer.citedByCount) && (
                           <div className="grid grid-cols-2 gap-2 text-center text-xs mb-3">
-                            {reviewer.worksCount && (
+                            {!!reviewer.worksCount && (
                               <div className="bg-gray-50 rounded p-2">
                                 <p className="font-semibold">{reviewer.worksCount}</p>
                                 <p className="text-gray-500">Publications</p>
                               </div>
                             )}
-                            {reviewer.citedByCount && (
+                            {!!reviewer.citedByCount && (
                               <div className="bg-gray-50 rounded p-2">
                                 <p className="font-semibold">{reviewer.citedByCount.toLocaleString()}</p>
                                 <p className="text-gray-500">Citations</p>

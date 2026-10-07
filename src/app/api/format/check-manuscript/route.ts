@@ -27,6 +27,7 @@ export async function POST(request: Request) {
       select: {
         id: true,
         filePath: true,
+        storagePath: true,
         fileType: true,
         uploaderId: true,
       },
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
 
     // Download file from storage
     const storage = getStorage();
-    const fileBuffer = await storage.download(manuscript.filePath);
+    const fileBuffer = await storage.download(manuscript.storagePath || manuscript.filePath);
 
     // Parse PDF
     const { parsePDFBuffer } = await import("@/lib/pdf-parser");

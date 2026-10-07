@@ -127,15 +127,17 @@ export default async function DashboardPage() {
 
   // Redirect first-time users to onboarding
   if (journalCount === 0 && submissionCount === 0 && manuscriptCount === 0) {
+    let publisherCount = 1;
     try {
-      const publisherCount = await prisma.publisherMember.count({
+      publisherCount = await prisma.publisherMember.count({
         where: { userId: session?.user?.id },
       });
-      if (publisherCount === 0) {
-        redirect("/dashboard/onboarding");
-      }
     } catch {
       // Continue to dashboard on error
+    }
+    // redirect() throws to work; it must not sit inside the try above
+    if (publisherCount === 0) {
+      redirect("/dashboard/onboarding");
     }
   }
 
@@ -360,7 +362,7 @@ export default async function DashboardPage() {
                               {ms._count.authors > 0 && (
                                 <span>{ms._count.authors} authors</span>
                               )}
-                              {ms.wordCount && (
+                              {!!ms.wordCount && (
                                 <span>{ms.wordCount.toLocaleString()} words</span>
                               )}
                               {ms.journal && (

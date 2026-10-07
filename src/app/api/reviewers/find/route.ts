@@ -18,6 +18,12 @@ import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export const dynamic = "force-dynamic";
 
+/** Merge key for one person across PubMed ("John A") and OpenAlex ("John A."): surname + first given name, no punctuation. */
+function reviewerKey(lastName: string, givenNames: string): string {
+  const first = givenNames.toLowerCase().replace(/[.,]/g, " ").trim().split(/\s+/)[0] || "";
+  return `${lastName.toLowerCase().replace(/[.,]/g, "").trim()}_${first}`;
+}
+
 interface ReviewerCandidate {
   id: string;
   name: string;
@@ -78,11 +84,18 @@ export async function POST(request: Request) {
 
     // Parse authors to exclude (manuscript authors)
     const parsedAuthors = authorList ? parseAuthorList(authorList) : [];
-    const excludeNames = [
-      ...parsedAuthors.map(a => a.fullName),
-      ...parsedAuthors.map(a => a.surname),
-      ...(excludeAuthors || []),
-    ];
+    const excludedPeople = [
+      ...parsedAuthors,
+      ...(Array.isArray(excludeAuthors) ? parseAuthorList(excludeAuthors.join("; ")) : []),
+    ].map((a) => ({ surname: a.surname.toLowerCase(), initial: (a.firstName || "").trim().charAt(0).toLowerCase() }));
+    const excludeNames = excludedPeople.map((e) => e.surname);
+    // A candidate is a manuscript author when the surname matches and the first initial agrees (or is unknown)
+    const isExcludedAuthor = (name: string) => {
+      const parts = name.trim().split(/\s+/);
+      const surname = (parts[parts.length - 1] || "").toLowerCase();
+      const initial = parts.length > 1 ? parts[0].charAt(0).toLowerCase() : "";
+      return excludedPeople.some((e) => e.surname === surname && (!e.initial || !initial || e.initial === initial));
+    };
 
     const allKeywords = Array.isArray(keywords) ? keywords : [];
     const focus =
@@ -104,7 +117,7 @@ export async function POST(request: Request) {
         );
 
         for (const author of pubmedAuthors) {
-          const key = `${author.lastName.toLowerCase()}_${author.foreName.toLowerCase()}`;
+          const key = reviewerKey(author.lastName, author.foreName);
           
           reviewerMap.set(key, {
             id: `pubmed_${key}`,
@@ -135,7 +148,7 @@ export async function POST(request: Request) {
           const nameParts = result.display_name.split(" ");
           const lastName = nameParts[nameParts.length - 1];
           const firstName = nameParts.slice(0, -1).join(" ");
-          const key = `${lastName.toLowerCase()}_${firstName.toLowerCase()}`;
+          const key = reviewerKey(lastName, firstName);
 
           const existing = reviewerMap.get(key);
           
@@ -227,13 +240,7 @@ export async function POST(request: Request) {
 
     // Convert map to array and sort
     const reviewers = Array.from(reviewerMap.values())
-      .filter(r => {
-        // Filter out manuscript authors
-        const nameLC = r.name.toLowerCase();
-        return !excludeNames.some(e => 
-          nameLC.includes(e.toLowerCase()) || e.toLowerCase().includes(nameLC)
-        );
-      })
+      .filter((r) => !isExcludedAuthor(r.name))
       .sort((a, b) => {
         // Prioritize those with more data
         if (a.source === "both" && b.source !== "both") return -1;

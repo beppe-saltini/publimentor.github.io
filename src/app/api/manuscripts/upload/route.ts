@@ -175,6 +175,7 @@ export async function POST(request: Request) {
       where: {
         fileHash,
         publisherId,
+        deletedAt: null,
       },
     });
 

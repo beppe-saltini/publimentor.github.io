@@ -197,7 +197,7 @@ export default function RegisterPage() {
                 onChange={handleChange}
                 required
                 disabled={isLoading}
-                minLength={8}
+                minLength={10}
               />
               <p className="text-xs text-gray-500">Must be at least 10 characters with uppercase, lowercase, number, and special character</p>
             </div>

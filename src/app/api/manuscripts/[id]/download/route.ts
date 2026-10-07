@@ -70,6 +70,7 @@ export async function GET(
         id: true,
         fileName: true,
         filePath: true,
+        storagePath: true,
         fileMimeType: true,
         fileSize: true,
         uploaderId: true,
@@ -115,7 +116,7 @@ export async function GET(
     const storage = getStorage();
     
     try {
-      const buffer = await storage.download(manuscript.filePath);
+      const buffer = await storage.download(manuscript.storagePath || manuscript.filePath);
 
       // Sanitize filename for Content-Disposition header
       const safeFileName = sanitizeForContentDisposition(manuscript.fileName);

@@ -18,6 +18,7 @@ const DECEASED_DISCLAIMER =
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BATCH_CONCURRENCY = 5;
 const FETCH_TIMEOUT_MS = 9000;
+const PUBMED_GAP_MS = 350; // E-utilities allow 3 requests/s without an API key
 const USER_AGENT = "PubliMentor/1.0 (reviewer screening; https://www.publimentor.com)";
 const MAX_YEARS_SINCE_DEATH = 15;
 
@@ -85,7 +86,19 @@ export function evaluatePubMedTitles(
     }));
 }
 
+let pubmedChain: Promise<unknown> = Promise.resolve();
+/** Serialises PubMed calls across the concurrent workers with a small gap between them. */
+function pacedPubMed<T>(run: () => Promise<T>): Promise<T> {
+  const next = pubmedChain.then(() => new Promise((r) => setTimeout(r, PUBMED_GAP_MS))).then(run);
+  pubmedChain = next.catch(() => undefined);
+  return next;
+}
+
 async function checkPubMed(person: Person): Promise<DeceasedEvidence[]> {
+  return pacedPubMed(() => checkPubMedNow(person));
+}
+
+async function checkPubMedNow(person: Person): Promise<DeceasedEvidence[]> {
   const query = buildPubMedQuery(person.name);
   const email = process.env.PUBMED_EMAIL || process.env.OPENALEX_EMAIL || "";
   const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
@@ -280,7 +293,7 @@ function finish(partial: Omit<DeceasedCheck, "checkedAt" | "disclaimer">): Decea
 
 export async function checkReviewerDeceased(
   input: DeceasedCheckInput,
-  options: { allowClaude?: boolean } = {}
+  options: { allowClaude?: boolean | (() => boolean) } = {}
 ): Promise<DeceasedCheck> {
   const key = input.name.trim().toLowerCase();
   const cached = cache.get(key);
@@ -320,7 +333,8 @@ export async function checkReviewerDeceased(
     }
   }
 
-  if (!result && options.allowClaude && isClaudeSearchEnabled()) {
+  const claudeAllowed = typeof options.allowClaude === "function" ? options.allowClaude : () => options.allowClaude === true;
+  if (!result && isClaudeSearchEnabled() && claudeAllowed()) {
     const verdict = await checkWithClaude(input);
     if (verdict) {
       result = finish({ ...verdict, provider: "claude", query: webQuery, searchUrl: googleSearchUrl(webQuery), searchLabel: "See the Google search behind this flag" });
@@ -355,13 +369,13 @@ export async function enrichReviewerDeceasedBatch<T extends DeceasedCheckInput &
 ): Promise<number> {
   let flagged = 0;
   let claudeBudget = isClaudeSearchEnabled() ? claudeSearchBudget() : 0;
+  // Charged only when the free layers leave a name unsettled and Claude actually runs
+  const claimClaude = () => (claudeBudget > 0 ? (claudeBudget--, true) : false);
   const queue = [...reviewers];
   async function worker() {
     for (let r = queue.shift(); r; r = queue.shift()) {
       try {
-        const allowClaude = claudeBudget > 0;
-        if (allowClaude) claudeBudget--;
-        const check = await checkReviewerDeceased(r, { allowClaude });
+        const check = await checkReviewerDeceased(r, { allowClaude: claimClaude });
         r.reputationSummary = {
           hasConcerns: false,
           entries: [],

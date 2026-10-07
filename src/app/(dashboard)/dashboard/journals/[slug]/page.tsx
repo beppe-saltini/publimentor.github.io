@@ -35,7 +35,7 @@ export default async function JournalOverviewPage({
   // Get manuscript counts for stats
   const [totalManuscripts, processingManuscripts] = await Promise.all([
     prisma.manuscript.count({
-      where: { publisherId: journal.publisher?.id },
+      where: { publisherId: journal.publisher?.id, deletedAt: null },
     }),
     prisma.manuscript.count({
       where: {
@@ -47,7 +47,7 @@ export default async function JournalOverviewPage({
 
   // Get recent manuscripts for this publisher
   const recentManuscripts = await prisma.manuscript.findMany({
-    where: { publisherId: journal.publisher?.id },
+    where: { publisherId: journal.publisher?.id, deletedAt: null },
     include: {
       authors: {
         orderBy: { authorOrder: "asc" },

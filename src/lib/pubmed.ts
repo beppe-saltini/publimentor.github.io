@@ -115,7 +115,7 @@ export async function searchPubMed(
     ...(EMAIL && { email: EMAIL }),
   });
 
-  const response = await fetch(`${EUTILS_BASE}/esearch.fcgi?${params}`);
+  const response = await fetch(`${EUTILS_BASE}/esearch.fcgi?${params}`, { signal: AbortSignal.timeout(15_000) });
   
   if (!response.ok) {
     throw new Error(`PubMed search failed: ${response.statusText}`);
@@ -141,7 +141,7 @@ export async function fetchPubMedArticles(
     ...(EMAIL && { email: EMAIL }),
   });
 
-  const response = await fetch(`${EUTILS_BASE}/efetch.fcgi?${params}`);
+  const response = await fetch(`${EUTILS_BASE}/efetch.fcgi?${params}`, { signal: AbortSignal.timeout(20_000) });
   
   if (!response.ok) {
     throw new Error(`PubMed fetch failed: ${response.statusText}`);
