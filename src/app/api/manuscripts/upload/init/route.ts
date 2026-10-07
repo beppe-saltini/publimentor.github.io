@@ -212,7 +212,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[UploadInit] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to initialize upload" },
+      { error: "Failed to initialize upload" },
       { status: 500 }
     );
   }

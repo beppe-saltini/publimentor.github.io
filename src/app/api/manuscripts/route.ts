@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { ManuscriptStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -84,9 +85,10 @@ export async function GET(request: Request) {
     }
 
     // Add status filter if specified
-    if (status) {
-      where.status = status;
+    if (status && !(Object.values(ManuscriptStatus) as string[]).includes(status)) {
+      return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
     }
+    const statusFilter = status ? { status: status as ManuscriptStatus } : {};
 
     // Journal scope: match journal OR user's own uploads not yet linked to a journal
     const journalScope = journalId
@@ -113,7 +115,7 @@ export async function GET(request: Request) {
             },
             where.publisherId ? { publisherId: where.publisherId } : {},
             journalScope,
-            where.status ? { status: where.status as any } : {},
+            statusFilter,
           ],
         },
         include: {
@@ -151,7 +153,7 @@ export async function GET(request: Request) {
             },
             where.publisherId ? { publisherId: where.publisherId } : {},
             journalScope,
-            where.status ? { status: where.status as any } : {},
+            statusFilter,
           ],
         },
       }),

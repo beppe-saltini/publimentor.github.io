@@ -96,7 +96,7 @@ export async function POST(request: Request) {
       },
       include: {
         members: {
-          include: { user: true },
+          include: { user: { select: { id: true, name: true, email: true, image: true, institution: true } } },
         },
       },
     });

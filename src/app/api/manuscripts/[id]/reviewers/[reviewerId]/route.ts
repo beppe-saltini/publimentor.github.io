@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { findAccessibleManuscript } from "@/lib/manuscript-access";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +45,7 @@ export async function PATCH(
       );
     }
 
-    const manuscript = await prisma.manuscript.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true },
-    });
+    const manuscript = await findAccessibleManuscript(session.user.id, id);
 
     if (!manuscript) {
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
@@ -56,6 +54,14 @@ export async function PATCH(
     const data: Record<string, unknown> = {};
     if (status) data.status = status;
     if (assignedExpertise !== undefined) data.assignedExpertise = assignedExpertise;
+
+    const existing = await prisma.manuscriptReviewer.findFirst({
+      where: { id: reviewerId, manuscriptId: id },
+      select: { id: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: "Reviewer not found" }, { status: 404 });
+    }
 
     const updated = await prisma.manuscriptReviewer.update({
       where: { id: reviewerId },

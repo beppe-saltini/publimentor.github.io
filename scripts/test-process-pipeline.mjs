@@ -11,10 +11,15 @@ import { createClient } from "@supabase/supabase-js";
 import { PrismaClient } from "@prisma/client";
 
 const PDF_PATH = process.argv[2] || "/Users/beppe/Downloads/2026.02.10.704651v2.full.pdf";
-const DB_URL = "postgresql://postgres.bvxtszhcxmayucibptmh:mibqub-vaxSa1-gupvup@aws-1-eu-west-1.pooler.supabase.com:5432/postgres";
-const SUPABASE_URL = "https://bvxtszhcxmayucibptmh.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2eHRzemhjeG1heXVjaWJwdG1oIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTg4NTE1NiwiZXhwIjoyMDg1NDYxMTU2fQ.uoBCrusnu2t4uy5AnwZm3MOYieUgD8eLPxBNWPqRwyo";
+const DB_URL = process.env.DATABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const BUCKET = "manuscripts";
+if (!SUPABASE_URL || !SUPABASE_KEY || !DB_URL) {
+  console.error("Set DATABASE_URL, SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment (e.g. node --env-file=.env ...)");
+  process.exit(1);
+}
+
 
 const prisma = new PrismaClient({ datasources: { db: { url: DB_URL } } });
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });

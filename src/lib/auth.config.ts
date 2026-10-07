@@ -59,7 +59,9 @@ export const authConfig: NextAuthConfig = {
       );
 
       if (isProtected && !isLoggedIn) {
-        // For API routes return false (results in 401); for pages redirect to login
+        if (nextUrl.pathname.startsWith("/api/")) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
         return false;
       }
 

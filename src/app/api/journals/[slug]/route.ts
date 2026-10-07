@@ -24,7 +24,7 @@ export async function GET(
       where: { slug },
       include: {
         members: {
-          include: { user: true },
+          include: { user: { select: { id: true, name: true, email: true, image: true, institution: true } } },
         },
         _count: {
           select: { submissions: true },

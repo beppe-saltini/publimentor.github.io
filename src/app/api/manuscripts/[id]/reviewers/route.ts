@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { findAccessibleManuscript } from "@/lib/manuscript-access";
 
 export const dynamic = "force-dynamic";
 
@@ -23,12 +24,7 @@ export async function GET(
     const url = new URL(request.url);
     const includeRejected = url.searchParams.get("includeRejected") === "true";
 
-    // Verify manuscript exists and user has access
-    const manuscript = await prisma.manuscript.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true, publisherId: true, uploaderId: true },
-    });
-
+    const manuscript = await findAccessibleManuscript(session.user.id, id);
     if (!manuscript) {
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
     }
@@ -91,12 +87,7 @@ export async function POST(
       );
     }
 
-    // Verify manuscript exists
-    const manuscript = await prisma.manuscript.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true },
-    });
-
+    const manuscript = await findAccessibleManuscript(session.user.id, id);
     if (!manuscript) {
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
     }

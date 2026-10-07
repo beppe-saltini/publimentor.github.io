@@ -6,5 +6,4 @@ node_modules
 coverage
 *.pem
 .env*
-!.env
 .DS_Store

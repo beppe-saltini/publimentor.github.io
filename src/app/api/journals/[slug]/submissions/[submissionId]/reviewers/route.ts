@@ -35,7 +35,7 @@ export async function GET(
     }
 
     const assignments = await prisma.reviewAssignment.findMany({
-      where: { submissionId },
+      where: { submissionId, submission: { journalId: journal.id } },
       include: {
         reviewer: {
           select: {
@@ -96,9 +96,8 @@ export async function POST(
 
     const { reviewerId, coiCleared = false, coiReport } = result.data;
 
-    // Check if submission exists
-    const submission = await prisma.submission.findUnique({
-      where: { id: submissionId },
+    const submission = await prisma.submission.findFirst({
+      where: { id: submissionId, journal: { slug } },
     });
 
     if (!submission) {
@@ -192,9 +191,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Editor access required" }, { status: 403 });
     }
 
-    await prisma.reviewAssignment.delete({
-      where: { id: assignmentId },
+    const { count } = await prisma.reviewAssignment.deleteMany({
+      where: { id: assignmentId, submissionId, submission: { journal: { slug } } },
     });
+    if (count === 0) {
+      return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

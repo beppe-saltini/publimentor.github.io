@@ -88,7 +88,7 @@ export async function POST(
       });
     }
 
-    if (["EXTRACTING", "PROCESSING", "EMBEDDING"].includes(manuscript.status)) {
+    if (["EXTRACTING", "EXTRACTED", "PROCESSING", "EMBEDDING"].includes(manuscript.status)) {
       const staleMinutes = manuscript.processingStarted
         ? (Date.now() - new Date(manuscript.processingStarted).getTime()) / 60000
         : 999;
@@ -170,7 +170,7 @@ export async function POST(
   } catch (error) {
     console.error("[Process] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to start processing" },
+      { error: "Failed to start processing" },
       { status: 500 }
     );
   }
@@ -275,6 +275,14 @@ async function processManuscriptFromStorage(
         status: "EMBEDDING",
       },
     });
+
+    // A retry after a killed run must not duplicate child rows
+    await prisma.$transaction([
+      prisma.manuscriptAuthor.deleteMany({ where: { manuscriptId } }),
+      prisma.manuscriptAffiliation.deleteMany({ where: { manuscriptId } }),
+      prisma.manuscriptReference.deleteMany({ where: { manuscriptId } }),
+      prisma.documentChunk.deleteMany({ where: { manuscriptId } }),
+    ]);
 
     // Store authors
     if (metadata.authors.length > 0) {
@@ -417,9 +425,10 @@ async function reextractMetadata(
 
     console.log(`[Process] Fast reprocess: re-extracting references for ${manuscriptId}`);
 
-    await prisma.manuscriptReference.deleteMany({ where: { manuscriptId } });
-
     const refs = await extractReferencesFromText(manuscript.extractedText);
+
+    // Only replace the stored references once the new extraction has succeeded
+    await prisma.manuscriptReference.deleteMany({ where: { manuscriptId } });
 
     await prisma.manuscript.update({
       where: { id: manuscriptId },

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ManuscriptWorkflowStatus } from "@prisma/client";
+import { findAccessibleManuscript } from "@/lib/manuscript-access";
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +33,7 @@ export async function PATCH(
       );
     }
 
-    const manuscript = await prisma.manuscript.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true, publisherId: true, uploaderId: true },
-    });
-
+    const manuscript = await findAccessibleManuscript(session.user.id, id);
     if (!manuscript) {
       return NextResponse.json({ error: "Manuscript not found" }, { status: 404 });
     }

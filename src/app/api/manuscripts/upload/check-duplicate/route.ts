@@ -65,7 +65,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[CheckDuplicate] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to check duplicate" },
+      { error: "Failed to check duplicate" },
       { status: 500 }
     );
   }

@@ -98,13 +98,23 @@ export async function PATCH(
       );
     }
 
+    const owned = await prisma.submission.findFirst({
+      where: { id: submissionId, journal: { slug } },
+      select: { id: true },
+    });
+    if (!owned) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
     const submission = await prisma.submission.update({
       where: { id: submissionId },
       data: result.data,
       include: {
         authors: true,
         reviewAssignments: {
-          include: { reviewer: true },
+          include: {
+            reviewer: { select: { id: true, name: true, email: true, institution: true } },
+          },
         },
       },
     });
@@ -141,9 +151,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
-    await prisma.submission.delete({
-      where: { id: submissionId },
+    const { count } = await prisma.submission.deleteMany({
+      where: { id: submissionId, journal: { slug } },
     });
+    if (count === 0) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

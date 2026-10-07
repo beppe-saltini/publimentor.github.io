@@ -12,9 +12,14 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 
 const PDF_PATH = process.argv[2] || "/Users/beppe/Downloads/2026.02.10.704651v2.full.pdf";
-const SUPABASE_URL = "https://bvxtszhcxmayucibptmh.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2eHRzemhjeG1heXVjaWJwdG1oIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTg4NTE1NiwiZXhwIjoyMDg1NDYxMTU2fQ.uoBCrusnu2t4uy5AnwZm3MOYieUgD8eLPxBNWPqRwyo";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const BUCKET = "manuscripts";
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error("Set SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment (e.g. node --env-file=.env ...)");
+  process.exit(1);
+}
+
 
 console.log("=".repeat(60));
 console.log("CORE UPLOAD PIPELINE TEST");

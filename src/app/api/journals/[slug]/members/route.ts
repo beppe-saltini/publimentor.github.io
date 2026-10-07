@@ -186,12 +186,14 @@ export async function DELETE(
     }
 
     // Prevent removing the last admin
-    const memberToRemove = await prisma.journalMember.findUnique({
-      where: { id: memberId },
-      include: { journal: true },
+    const memberToRemove = await prisma.journalMember.findFirst({
+      where: { id: memberId, journalId: currentMembership.journalId },
     });
+    if (!memberToRemove) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    }
 
-    if (memberToRemove?.role === "ADMIN") {
+    if (memberToRemove.role === "ADMIN") {
       const adminCount = await prisma.journalMember.count({
         where: {
           journalId: memberToRemove.journalId,
