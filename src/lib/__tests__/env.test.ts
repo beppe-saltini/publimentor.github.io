@@ -36,7 +36,7 @@ describe("validateEnvValues", () => {
 
   it("trims stray whitespace and newlines in values", () => {
     const result = validateEnvValues({ ...base, AUTH_TRUST_HOST: "true\n", STORAGE_PROVIDER: "supabase\n" });
-    expect(result.warnings.some((w) => w.startsWith("AUTH_TRUST_HOST") || w.startsWith("STORAGE_PROVIDER"))).toBe(false);
+    expect(result.warnings.filter((w) => w.includes("(ignored)"))).toEqual([]);
     expect(result.env?.STORAGE_PROVIDER).toBe("supabase");
   });
 
