@@ -5,6 +5,7 @@ import { parseAuthorList } from "@/lib/author-parser";
 import { suggestReviewersWithLLM, rankReviewersWithLLM } from "@/lib/llm";
 import { ndjsonResponse, type Emit } from "@/lib/reviewers/discovery-stream";
 import { findAccessibleManuscript } from "@/lib/manuscript-access";
+import { getResolvedManuscriptAuthors, authorRole, type ResolvedAuthor } from "@/lib/manuscript/author-identities";
 import { prisma } from "@/lib/prisma";
 import { searchAuthor as searchSemanticScholar, searchAuthorByOrcid as searchSSByOrcid } from "@/lib/semantic-scholar";
 import { openAlex } from "@/lib/openalex";
@@ -254,6 +255,21 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
       ? parseAuthorList(params.manuscriptAuthors) 
       : [];
     const excludeNames = parsedAuthors.map(a => a.fullName);
+
+    // With a manuscript selected, its stored authors (with ORCID / OpenAlex ids) drive exclusion and COI
+    const manuscript = params.manuscriptId ? await findAccessibleManuscript(userId, params.manuscriptId) : null;
+    let manuscriptAuthors: ResolvedAuthor[] = [];
+    if (manuscript) {
+      try {
+        manuscriptAuthors = await getResolvedManuscriptAuthors(manuscript.id);
+        for (const a of manuscriptAuthors) {
+          if (!excludeNames.some((n) => n.toLowerCase() === a.name.toLowerCase())) excludeNames.push(a.name);
+        }
+        console.log(`[Discover] ${manuscriptAuthors.length} manuscript authors, ${manuscriptAuthors.filter((a) => a.openAlexId).length} with OpenAlex ids`);
+      } catch (error) {
+        console.error("[Discover] Could not load manuscript authors:", error);
+      }
+    }
 
     const candidates: ReviewerCandidate[] = [];
     const institutionDomainCache = new Map<string, string | null>();
@@ -928,14 +944,11 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
     if (candidates.length > 0) {
       try {
         let manuscriptContext: { title?: string | null; abstract?: string | null } | undefined;
-        if (params.manuscriptId) {
-          const accessible = await findAccessibleManuscript(userId, params.manuscriptId);
-          if (accessible) {
-            manuscriptContext = (await prisma.manuscript.findUnique({
-              where: { id: params.manuscriptId },
-              select: { title: true, abstract: true },
-            })) || undefined;
-          }
+        if (manuscript) {
+          manuscriptContext = (await prisma.manuscript.findUnique({
+            where: { id: manuscript.id },
+            select: { title: true, abstract: true },
+          })) || undefined;
         }
         const ranking = await rankReviewersWithLLM(
           sanitizedPrimary,
@@ -1049,22 +1062,13 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
     snapshot("screening");
 
     // STEP 6: Run COI checks if authors are provided and checkCOI is enabled
-    if (params.checkCOI && parsedAuthors.length > 0 && candidates.length > 0) {
-      console.log(`[Discover] Running COI checks for ${candidates.length} reviewers against ${parsedAuthors.length} authors...`);
+    const authorsWithRoles = manuscriptAuthors.length > 0
+      ? manuscriptAuthors.map((a) => ({ name: a.name, orcid: a.orcid, openAlexId: a.openAlexId || undefined, role: a.role }))
+      : parsedAuthors.map((a, index) => ({ name: a.fullName, role: authorRole(index, parsedAuthors.length) }));
+    if (params.checkCOI && authorsWithRoles.length > 0 && candidates.length > 0) {
+      console.log(`[Discover] Running COI checks for ${candidates.length} reviewers against ${authorsWithRoles.length} authors...`);
       
       try {
-        // Prepare authors with roles (based on position)
-        const authorsWithRoles = parsedAuthors.map((a, index) => {
-          let role: "first" | "last" | "middle_early" | "middle_late" = "middle_late";
-          if (index === 0) role = "first";
-          else if (index === parsedAuthors.length - 1) role = "last";
-          else if (index <= 2) role = "middle_early";
-          
-          return {
-            name: a.fullName,
-            role,
-          };
-        });
 
         // Batch check all reviewers
         const coiResults = await coiDetector.batchCheckReviewerConflicts(

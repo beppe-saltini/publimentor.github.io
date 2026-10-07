@@ -12,6 +12,43 @@ import {
   resolveReplacementModel,
   modelFamily,
 } from "@/lib/anthropic-models";
+import { z } from "zod";
+import { claudeJsonFormat } from "@/lib/claude-schema";
+
+// Structured-output schemas: the API guarantees the response matches them (the
+// sanitisers below still run on every field). Every field is required — the API caps
+// optional and union-typed fields per schema — so unknown values arrive as "" or 0,
+// which the sanitisers already treat as absent.
+const extractionReferenceSchema = z.object({
+  number: z.number().int(), rawText: z.string(), authors: z.string(), title: z.string(), journal: z.string(),
+  year: z.number().int(), volume: z.string(), issue: z.string(), pages: z.string(), doi: z.string(),
+  pmid: z.string(), pmcid: z.string(), arxivId: z.string(), url: z.string(),
+  refType: z.enum(["journal", "book", "chapter", "preprint", "conference", "thesis", "website", "other"]),
+});
+export const extractionResponseSchema = z.object({
+  title: z.string(), abstract: z.string(), manuscriptType: z.string(), keywords: z.array(z.string()), language: z.string(), detectedJournal: z.string(),
+  authors: z.array(z.object({
+    fullName: z.string(), firstName: z.string(), lastName: z.string(), email: z.string(), orcid: z.string(),
+    affiliationNumbers: z.array(z.number().int()), isCorresponding: z.boolean(), equalContribution: z.boolean(),
+  })),
+  affiliations: z.array(z.object({
+    number: z.number().int(), rawText: z.string(), institutionName: z.string(), department: z.string(), city: z.string(), state: z.string(), country: z.string(),
+  })),
+  correspondingAuthor: z.object({ name: z.string(), email: z.string(), address: z.string() }),
+  declarations: z.object({ funding: z.string(), conflictOfInterest: z.string(), dataAvailability: z.string(), ethics: z.string(), authorContributions: z.string() }),
+  statistics: z.object({ wordCount: z.number().int(), figureCount: z.number().int(), tableCount: z.number().int(), referenceCount: z.number().int() }),
+  references: z.array(extractionReferenceSchema),
+  extractionConfidence: z.number(),
+  extractionNotes: z.array(z.string()),
+});
+export const referencesResponseSchema = z.object({
+  references: z.array(z.object({
+    n: z.number().int(), a: z.string(), t: z.string(), j: z.string(), y: z.number().int(), doi: z.string(),
+    type: z.enum(["journal", "book", "preprint", "other"]),
+  })),
+});
+export const EXTRACTION_FORMAT = claudeJsonFormat(extractionResponseSchema);
+export const REFERENCES_FORMAT = claudeJsonFormat(referencesResponseSchema);
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -200,7 +237,12 @@ function prepareMetadataText(text: string, refStart: number): string {
  * automatically resolves the newest live model in the same family and
  * retries once, so manuscript processing survives model retirements.
  */
-async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_PRIMARY_MODEL): Promise<string> {
+async function callClaude(
+  prompt: string,
+  maxTokens: number,
+  model = ANTHROPIC_PRIMARY_MODEL,
+  format?: { type: "json_schema"; schema: Record<string, unknown> }
+): Promise<string> {
   const doRequest = (useModel: string) =>
     fetch(ANTHROPIC_API_URL, {
       method: "POST",
@@ -212,6 +254,7 @@ async function callClaude(prompt: string, maxTokens: number, model = ANTHROPIC_P
       body: JSON.stringify({
         model: useModel,
         max_tokens: maxTokens,
+        ...(format ? { output_config: { format } } : {}),
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -253,11 +296,10 @@ async function extractReferencesOnly(refText: string): Promise<ExtractedReferenc
 ${truncated}
 </references>
 
-Each element: {"n":1,"a":"authors","t":"title","j":"journal","y":2024,"doi":"10.x/y","type":"journal"}
-Fields: n=number, a=authors, t=title, j=journal (null if none), y=year (int or null), doi (null if none), type=journal|book|preprint|other.
-Omit null fields. Return ONLY the JSON array.`;
+Return a JSON object {"references": [...]} where each element is {"n":1,"a":"authors","t":"title","j":"journal","y":2024,"doi":"10.x/y","type":"journal"}
+Fields: n=number, a=authors, t=title, j=journal, y=year (int), doi, type=journal|book|preprint|other. Use "" (or 0 for the year) when a field is not present.`;
 
-  const content = await callClaude(prompt, 16384, ANTHROPIC_HAIKU_MODEL);
+  const content = await callClaude(prompt, 16384, ANTHROPIC_HAIKU_MODEL, REFERENCES_FORMAT);
   let jsonStr = content.trim();
   if (jsonStr.includes("```json")) {
     jsonStr = jsonStr.split("```json")[1].split("```")[0].trim();
@@ -320,7 +362,7 @@ export async function extractMetadata(text: string): Promise<ExtractedMetadata> 
       console.log("[MetadataExtractor] Running metadata + references extraction in parallel...");
 
       const [content, refs] = await Promise.all([
-        callClaude(prompt, 16000),
+        callClaude(prompt, 16000, ANTHROPIC_PRIMARY_MODEL, EXTRACTION_FORMAT),
         extractReferencesOnly(refSectionText),
       ]);
 
@@ -334,7 +376,7 @@ export async function extractMetadata(text: string): Promise<ExtractedMetadata> 
         : text;
       const prompt = buildExtractionPrompt(inputText);
       console.log("[MetadataExtractor] Single-pass extraction...");
-      const content = await callClaude(prompt, 16384);
+      const content = await callClaude(prompt, 16384, ANTHROPIC_PRIMARY_MODEL, EXTRACTION_FORMAT);
       metadata = parseExtractionResponse(content);
     }
 
@@ -378,7 +420,7 @@ Analyze the following manuscript text and extract structured information.
 ${text}
 </manuscript>
 
-Extract and return a JSON object with the following structure. Be thorough and accurate.
+Extract and return a JSON object with the following structure. Be thorough and accurate. Every field must be present: use "" for unknown text, 0 for unknown numbers, and [] for empty lists — never null.
 
 {
   "title": "Full manuscript title",
@@ -386,15 +428,15 @@ Extract and return a JSON object with the following structure. Be thorough and a
   "manuscriptType": "Original Research | Review | Case Report | Letter | Commentary | Meta-Analysis | Systematic Review | Protocol | Other",
   "keywords": ["keyword1", "keyword2", ...],
   "language": "English | Spanish | etc.",
-  "detectedJournal": "The journal this manuscript appears to be written/formatted for, if detectable from headers, footers, formatting, or explicit mentions. null if not detectable.",
+  "detectedJournal": "The journal this manuscript appears to be written/formatted for, if detectable from headers, footers, formatting, or explicit mentions. "" if not detectable.",
   
   "authors": [
     {
       "fullName": "First M. Last",
       "firstName": "First",
       "lastName": "Last",
-      "email": "email@example.com or null",
-      "orcid": "0000-0000-0000-0000 or null",
+      "email": "email@example.com or "" if unknown",
+      "orcid": "0000-0000-0000-0000 or "" if unknown",
       "affiliationNumbers": [1, 2],
       "isCorresponding": true or false,
       "equalContribution": true or false
@@ -406,9 +448,9 @@ Extract and return a JSON object with the following structure. Be thorough and a
       "number": 1,
       "rawText": "Full affiliation as written",
       "institutionName": "University Name",
-      "department": "Department Name or null",
+      "department": "Department Name or "" if unknown",
       "city": "City",
-      "state": "State or null",
+      "state": "State or "" if unknown",
       "country": "Country"
     }
   ],
@@ -420,11 +462,11 @@ Extract and return a JSON object with the following structure. Be thorough and a
   },
   
   "declarations": {
-    "funding": "Funding statement text or null",
-    "conflictOfInterest": "COI statement text or null",
-    "dataAvailability": "Data availability statement or null",
-    "ethics": "Ethics approval statement or null",
-    "authorContributions": "Author contributions or null"
+    "funding": "Funding statement text or "" if unknown",
+    "conflictOfInterest": "COI statement text or "" if unknown",
+    "dataAvailability": "Data availability statement or "" if unknown",
+    "ethics": "Ethics approval statement or "" if unknown",
+    "authorContributions": "Author contributions or "" if unknown"
   },
   
   "statistics": {
@@ -443,12 +485,12 @@ Extract and return a JSON object with the following structure. Be thorough and a
       "journal": "Journal name",
       "year": 2024,
       "volume": "vol",
-      "issue": "issue number or null",
+      "issue": "issue number or "" if unknown",
       "pages": "pp-pp",
-      "doi": "10.xxxx/xxxxx or null",
-      "pmid": "12345678 or null",
-      "pmcid": "PMC1234567 or null",
-      "arxivId": "2301.12345 or null",
+      "doi": "10.xxxx/xxxxx or "" if unknown",
+      "pmid": "12345678 or "" if unknown",
+      "pmcid": "PMC1234567 or "" if unknown",
+      "arxivId": "2301.12345 or "" if unknown",
       "url": "URL if present",
       "refType": "journal | book | conference | thesis | website | preprint | other"
     }

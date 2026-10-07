@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, responseText } from "@/lib/anthropic-models";
+import { claudeJsonFormat } from "@/lib/claude-schema";
+
+const keywordsSchema = z.object({ keywords: z.array(z.string()) });
 
 export const dynamic = "force-dynamic";
 
@@ -44,12 +47,13 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         model: ANTHROPIC_HAIKU_MODEL,
         max_tokens: 300,
+        output_config: { format: claudeJsonFormat(keywordsSchema) },
         messages: [
           {
             role: "user",
             content: `Extract 5-10 specific research keywords from the following text. Focus on scientific terms, methodologies, diseases, genes, proteins, or topics that would be useful for finding peer reviewers.
 
-Return ONLY a JSON array of strings, nothing else. Example: ["keyword1", "keyword2", "keyword3"]
+Return a JSON object {"keywords": [...]} with 5-10 strings.
 
 Text:
 ${text}`,
@@ -67,6 +71,14 @@ ${text}`,
 
     const data = await response.json();
     const content = responseText(data) || "[]";
+    try {
+      const parsed = keywordsSchema.safeParse(JSON.parse(content));
+      if (parsed.success) {
+        return NextResponse.json({ keywords: parsed.data.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 10) });
+      }
+    } catch {
+      /* fall through to the lenient parser */
+    }
 
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {

@@ -511,6 +511,9 @@ model ManuscriptAuthor {
   orcidData     Json? // Cached ORCID profile data
   emailValid    Boolean?
 
+  // OpenAlex author id (e.g. https://openalex.org/A123), resolved on first use for COI checks
+  openAlexId String?
+
   createdAt DateTime @default(now())
 
   manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
@@ -519,6 +522,7 @@ model ManuscriptAuthor {
   @@index([publisherId])
   @@index([orcid])
   @@index([email])
+  @@index([openAlexId])
 }
 
 // ============================================================

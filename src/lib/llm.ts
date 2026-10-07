@@ -14,6 +14,7 @@ import { z } from "zod";
 import { resilientFetch, circuitBreakers } from "@/lib/resilience";
 import { logger } from "@/lib/logger";
 import { ANTHROPIC_PRIMARY_MODEL, responseText } from "@/lib/anthropic-models";
+import { claudeJsonFormat } from "@/lib/claude-schema";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -221,7 +222,7 @@ Respond with ONLY a valid JSON object:
         body: JSON.stringify({
           model: ANTHROPIC_PRIMARY_MODEL,
           max_tokens: 16000,
-          output_config: { effort: "high" },
+          output_config: { effort: "high", format: claudeJsonFormat(llmSuggestionResultSchema) },
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -357,7 +358,7 @@ Respond with ONLY a valid JSON object in this exact format:
   "suggestions": ["Any suggestions to improve the search"]
 }
 
-Only include candidates with relevanceScore >= 50. Order by relevanceScore descending.`;
+Include every candidate, even those with a low score — the editor decides. Order by relevanceScore descending.`;
 
   try {
     logger.info("[LLM] Calling Claude API for reviewer ranking...");
@@ -374,6 +375,7 @@ Only include candidates with relevanceScore >= 50. Order by relevanceScore desce
         body: JSON.stringify({
           model: ANTHROPIC_PRIMARY_MODEL,
           max_tokens: 16000,
+          output_config: { format: claudeJsonFormat(llmRankingResultSchema) },
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -562,6 +564,7 @@ Order journals by best fit first. Use the exact official journal name as it appe
         body: JSON.stringify({
           model: ANTHROPIC_PRIMARY_MODEL,
           max_tokens: 16000,
+          output_config: { format: claudeJsonFormat(llmJournalSuggestionResultSchema) },
           messages: [{ role: "user", content: prompt }],
         }),
       },

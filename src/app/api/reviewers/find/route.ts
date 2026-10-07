@@ -14,6 +14,8 @@ import {
 } from "@/lib/reviewers/email-enrichment";
 import { enrichReviewerReputationBatch } from "@/lib/reviewers/reputation-check";
 import { enrichReviewerDeceasedBatch, isPossiblyDeceased } from "@/lib/reviewers/deceased-check";
+import { findAccessibleManuscript } from "@/lib/manuscript-access";
+import { getResolvedManuscriptAuthors, authorRole, type ResolvedAuthor } from "@/lib/manuscript/author-identities";
 import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export const dynamic = "force-dynamic";
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { authorList, keywords, focusKeywords, excludeAuthors, checkCOI = true } = body;
+    const { authorList, keywords, focusKeywords, excludeAuthors, checkCOI = true, manuscriptId } = body;
 
     if (!authorList && !keywords) {
       return NextResponse.json(
@@ -88,6 +90,21 @@ export async function POST(request: Request) {
       ...parsedAuthors,
       ...(Array.isArray(excludeAuthors) ? parseAuthorList(excludeAuthors.join("; ")) : []),
     ].map((a) => ({ surname: a.surname.toLowerCase(), initial: (a.firstName || "").trim().charAt(0).toLowerCase() }));
+    // With a manuscript selected, its stored authors (with ORCID / OpenAlex ids) join the exclusion and COI lists
+    let manuscriptAuthors: ResolvedAuthor[] = [];
+    if (typeof manuscriptId === "string" && manuscriptId) {
+      const manuscript = await findAccessibleManuscript(session.user.id, manuscriptId);
+      if (manuscript) {
+        try {
+          manuscriptAuthors = await getResolvedManuscriptAuthors(manuscript.id);
+          for (const a of parseAuthorList(manuscriptAuthors.map((m) => m.name).join("; "))) {
+            excludedPeople.push({ surname: a.surname.toLowerCase(), initial: (a.firstName || "").trim().charAt(0).toLowerCase() });
+          }
+        } catch (error) {
+          console.error("[Find] Could not load manuscript authors:", error);
+        }
+      }
+    }
     const excludeNames = excludedPeople.map((e) => e.surname);
     // A candidate is a manuscript author when the surname matches and the first initial agrees (or is unknown)
     const isExcludedAuthor = (name: string) => {
@@ -304,22 +321,13 @@ export async function POST(request: Request) {
     }
 
     // Run COI checks if authors are provided and checkCOI is enabled
-    if (checkCOI && parsedAuthors.length > 0 && reviewers.length > 0) {
-      console.log(`[Find] Running COI checks for ${reviewers.length} reviewers against ${parsedAuthors.length} authors...`);
+    const authorsWithRoles = manuscriptAuthors.length > 0
+      ? manuscriptAuthors.map((a) => ({ name: a.name, orcid: a.orcid, openAlexId: a.openAlexId || undefined, role: a.role }))
+      : parsedAuthors.map((a, index) => ({ name: a.fullName, role: authorRole(index, parsedAuthors.length) }));
+    if (checkCOI && authorsWithRoles.length > 0 && reviewers.length > 0) {
+      console.log(`[Find] Running COI checks for ${reviewers.length} reviewers against ${authorsWithRoles.length} authors...`);
       
       try {
-        // Prepare authors with roles (based on position)
-        const authorsWithRoles = parsedAuthors.map((a, index) => {
-          let role: "first" | "last" | "middle_early" | "middle_late" = "middle_late";
-          if (index === 0) role = "first";
-          else if (index === parsedAuthors.length - 1) role = "last";
-          else if (index <= 2) role = "middle_early";
-          
-          return {
-            name: a.fullName,
-            role,
-          };
-        });
 
         // Batch check all reviewers
         const coiResults = await coiDetector.batchCheckReviewerConflicts(

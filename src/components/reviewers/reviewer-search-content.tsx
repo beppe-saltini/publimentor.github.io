@@ -951,6 +951,7 @@ export function ReviewerSearchContent({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          manuscriptId: selectedManuscriptId || undefined,
           authorList: authorList.trim() || undefined,
           keywords: keywordList,
           focusKeywords:
