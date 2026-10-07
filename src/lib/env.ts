@@ -48,6 +48,11 @@ const envSchema = z.object({
   // --- External APIs ---
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENALEX_EMAIL: z.string().email().optional(),
+  // Web search for e-mail enrichment and the "possibly deceased" screen (first configured one wins)
+  GOOGLE_CSE_API_KEY: z.string().optional(),
+  GOOGLE_CSE_ID: z.string().optional(),
+  SERPER_API_KEY: z.string().optional(),
+  BRAVE_SEARCH_API_KEY: z.string().optional(),
 
   // --- Storage ---
   STORAGE_PROVIDER: z

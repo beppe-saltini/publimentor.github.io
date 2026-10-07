@@ -23,6 +23,7 @@ import { ManuscriptSelector } from "@/components/manuscript";
 import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails, type ReviewerConflict } from "./coi-details";
 import { ReputationDetails } from "./reputation-details";
+import { DeceasedNotice } from "./deceased-notice";
 import type { ConflictSeverity } from "./coi-badge";
 import type {
   EmailConfidence,
@@ -1001,9 +1002,16 @@ export function ReviewerSearchContent({
           if (saveRes.ok) {
             await loadPersistedReviewers(selectedManuscriptId);
             const concernCount = sorted.filter((r) => r.reputationSummary?.hasConcerns).length;
+            const deceasedCount = sorted.filter(
+              (r) => r.reputationSummary?.deceased?.possiblyDeceased
+            ).length;
+            const flags = [
+              concernCount > 0 ? `${concernCount} flagged for integrity review` : "",
+              deceasedCount > 0 ? `${deceasedCount} possibly deceased` : "",
+            ].filter(Boolean);
             toast.success(
-              concernCount > 0
-                ? `Found ${data.reviewers.length} reviewers — ${concernCount} flagged for integrity review`
+              flags.length > 0
+                ? `Found ${data.reviewers.length} reviewers — ${flags.join(", ")}`
                 : `Found ${data.reviewers.length} potential reviewers — ${saveData.saved} saved to manuscript`
             );
           } else {
@@ -2000,12 +2008,15 @@ export function ReviewerSearchContent({
                   const coauthorCount = isCoauthor(reviewer.name);
                   const hasCoiConflict = reviewer.coiSummary?.hasConflict;
                   const hasReputationConcerns = reviewer.reputationSummary?.hasConcerns;
+                  const possiblyDeceased = reviewer.reputationSummary?.deceased?.possiblyDeceased;
                   
                   return (
                     <Card 
                       key={reviewer.id} 
                       className={`${
-                        hasReputationConcerns
+                        possiblyDeceased
+                          ? "border-slate-300 bg-slate-50"
+                          : hasReputationConcerns
                           ? "border-orange-300 bg-orange-50/40"
                           : hasCoiConflict 
                           ? getCardBorderClass(reviewer.coiSummary?.worstSeverity || null, true)
@@ -2152,6 +2163,12 @@ export function ReviewerSearchContent({
                         {reviewer.reputationSummary?.hasConcerns && (
                           <ReputationDetails
                             reputation={reviewer.reputationSummary}
+                            className="mt-3"
+                          />
+                        )}
+                        {reviewer.reputationSummary?.deceased?.possiblyDeceased && (
+                          <DeceasedNotice
+                            check={reviewer.reputationSummary.deceased}
                             className="mt-3"
                           />
                         )}

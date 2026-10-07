@@ -19,6 +19,7 @@ import {
 import { COIBadge, getCardBorderClass } from "./coi-badge";
 import { COIDetails } from "./coi-details";
 import { ReputationDetails } from "./reputation-details";
+import { DeceasedNotice } from "./deceased-notice";
 import { emailSourceLabel } from "@/lib/reviewers/email-enrichment";
 import type { ReviewerDisplay } from "./reviewer-display";
 
@@ -47,7 +48,9 @@ export function ReviewerDiscoveryCard({
   return (
     <Card
       className={`hover:shadow-md transition-shadow ${
-        reviewer.reputationSummary?.hasConcerns
+        reviewer.reputationSummary?.deceased?.possiblyDeceased
+          ? "border-slate-300 bg-slate-50"
+          : reviewer.reputationSummary?.hasConcerns
           ? "border-orange-300 bg-orange-50/40"
           : reviewer.coiSummary?.hasConflict
             ? getCardBorderClass(reviewer.coiSummary.worstSeverity, true)
@@ -93,6 +96,11 @@ export function ReviewerDiscoveryCard({
             {reviewer.isNewThisRun && (
               <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 text-xs">
                 New
+              </Badge>
+            )}
+            {reviewer.reputationSummary?.deceased?.possiblyDeceased && (
+              <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-300 text-xs">
+                Possibly deceased
               </Badge>
             )}
             <COIBadge
@@ -292,6 +300,9 @@ export function ReviewerDiscoveryCard({
 
         {reviewer.reputationSummary?.hasConcerns && (
           <ReputationDetails reputation={reviewer.reputationSummary} className="mb-3" />
+        )}
+        {reviewer.reputationSummary?.deceased?.possiblyDeceased && (
+          <DeceasedNotice check={reviewer.reputationSummary.deceased} className="mb-3" />
         )}
 
         <Separator className="my-3" />

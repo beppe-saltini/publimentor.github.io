@@ -4,6 +4,8 @@
  * FBS: full-name match required — surname alone never flags a reviewer.
  */
 
+import type { DeceasedCheck } from "./deceased-check";
+
 const FETCH_TIMEOUT_MS = 8000;
 const PUBPEER_API = "https://pubpeer.com/v3/publications?devkey=Zotero";
 const FBS_RSS_BASE = "https://forbetterscience.com/search";
@@ -22,6 +24,8 @@ export interface ReputationSummary {
   entries: ReputationEntry[];
   checkedAt: string;
   disclaimer: string;
+  /** Web search for obituary pages; see deceased-check.ts */
+  deceased?: DeceasedCheck;
 }
 
 export interface ReputationCheckInput {

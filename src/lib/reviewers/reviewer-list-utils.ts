@@ -19,6 +19,7 @@ export interface ReviewerWithName {
   isNewThisRun?: boolean;
   reputationSummary?: {
     hasConcerns?: boolean;
+    deceased?: { possiblyDeceased?: boolean };
   };
 }
 
@@ -135,7 +136,8 @@ export function computeFocusKeywords(
 }
 
 /**
- * Sort: (1) expertise assigned, (2) shortlisted, (3) new this run, (4) other, (5) integrity concerns.
+ * Sort: (1) expertise assigned, (2) shortlisted, (3) new this run, (4) other, (5) integrity concerns,
+ * (6) possibly deceased.
  */
 export function reviewerDisplaySortRank(
   reviewer: ReviewerWithName,
@@ -144,6 +146,7 @@ export function reviewerDisplaySortRank(
   dbIndex: DbReviewerIndex,
   newThisRunNames?: Set<string>
 ): number {
+  if (reviewer.reputationSummary?.deceased?.possiblyDeceased) return 5;
   if (reviewer.reputationSummary?.hasConcerns) return 4;
 
   const hasExpertise = (assignedExpertise[reviewer.id] || []).length > 0;

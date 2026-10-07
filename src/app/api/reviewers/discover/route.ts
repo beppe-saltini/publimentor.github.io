@@ -15,6 +15,7 @@ import {
   type EmailSource,
 } from "@/lib/reviewers/email-enrichment";
 import { enrichReviewerReputationBatch } from "@/lib/reviewers/reputation-check";
+import { enrichReviewerDeceasedBatch, isPossiblyDeceased } from "@/lib/reviewers/deceased-check";
 import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 import { z } from "zod";
 import {
@@ -865,6 +866,12 @@ export async function POST(request: Request) {
       } catch (error) {
         console.error("[Discover] Reputation screening failed:", error);
       }
+      try {
+        const deceased = await enrichReviewerDeceasedBatch(candidates);
+        console.log(`[Discover] Deceased screening complete: ${deceased} possibly deceased`);
+      } catch (error) {
+        console.error("[Discover] Deceased screening failed:", error);
+      }
     }
 
     // STEP 6: Run COI checks if authors are provided and checkCOI is enabled
@@ -932,11 +939,9 @@ export async function POST(request: Request) {
       }
     }
 
-    candidates.sort((a, b) => {
-      const aConcerns = a.reputationSummary?.hasConcerns ? 1 : 0;
-      const bConcerns = b.reputationSummary?.hasConcerns ? 1 : 0;
-      return aConcerns - bConcerns;
-    });
+    const rank = (c: (typeof candidates)[number]) =>
+      isPossiblyDeceased(c) ? 2 : c.reputationSummary?.hasConcerns ? 1 : 0;
+    candidates.sort((a, b) => rank(a) - rank(b));
 
     // Gender diversity stats
     const genderCounts = { likely_female: 0, likely_male: 0, unknown: 0 };

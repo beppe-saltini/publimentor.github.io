@@ -13,6 +13,7 @@ import {
   type EmailSource,
 } from "@/lib/reviewers/email-enrichment";
 import { enrichReviewerReputationBatch } from "@/lib/reviewers/reputation-check";
+import { enrichReviewerDeceasedBatch, isPossiblyDeceased } from "@/lib/reviewers/deceased-check";
 import type { ReputationSummary } from "@/lib/reviewers/reputation-check";
 
 export const dynamic = "force-dynamic";
@@ -287,6 +288,12 @@ export async function POST(request: Request) {
       } catch (error) {
         console.error("[Find] Reputation screening failed:", error);
       }
+      try {
+        const deceased = await enrichReviewerDeceasedBatch(reviewers);
+        console.log(`[Find] Deceased screening complete: ${deceased} possibly deceased`);
+      } catch (error) {
+        console.error("[Find] Deceased screening failed:", error);
+      }
     }
 
     // Run COI checks if authors are provided and checkCOI is enabled
@@ -341,11 +348,9 @@ export async function POST(request: Request) {
       }
     }
 
-    reviewers.sort((a, b) => {
-      const aConcerns = a.reputationSummary?.hasConcerns ? 1 : 0;
-      const bConcerns = b.reputationSummary?.hasConcerns ? 1 : 0;
-      return aConcerns - bConcerns;
-    });
+    const rank = (r: ReviewerCandidate) =>
+      isPossiblyDeceased(r) ? 2 : r.reputationSummary?.hasConcerns ? 1 : 0;
+    reviewers.sort((a, b) => rank(a) - rank(b));
 
     return NextResponse.json({
       reviewers,

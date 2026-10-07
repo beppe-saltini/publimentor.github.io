@@ -194,6 +194,10 @@ publimentor/
 | `ORCID_CLIENT_ID` | ORCID OAuth client ID | No |
 | `ORCID_CLIENT_SECRET` | ORCID OAuth client secret | No |
 | `OPENALEX_EMAIL` | Email for OpenAlex polite pool | No |
+| `ANTHROPIC_API_KEY` | Claude API key for reviewer suggestions, ranking and metadata extraction | No |
+| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | Google Custom Search (key + Programmable Search Engine id) for the "possibly deceased" reviewer screen | No |
+| `SERPER_API_KEY` | Serper (Google results) — fallback web search for e-mail enrichment and the deceased screen | No |
+| `BRAVE_SEARCH_API_KEY` | Brave Search — fallback web search | No |
 
 ## License
 
