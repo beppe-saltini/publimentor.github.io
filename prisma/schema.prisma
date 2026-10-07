@@ -914,9 +914,12 @@ model ManuscriptReviewer {
   country     String?
 
   // Metrics
-  hIndex           Int?
-  citationCount    Int?
-  publicationCount Int?
+  hIndex            Int?
+  citationCount     Int?
+  publicationCount  Int?
+  firstAuthorCount  Int?
+  lastAuthorCount   Int?
+  seniorAuthorCount Int?
 
   // Gender inference
   inferredGender String? // "likely_male", "likely_female", "unknown"

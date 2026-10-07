@@ -596,10 +596,10 @@ export function ReviewerSearchContent({
     hIndex: (r.hIndex as number) ?? null,
     citationCount: (r.citationCount as number) ?? null,
     publicationCount: (r.publicationCount as number) || 0,
-    firstAuthorCount: 0,
-    lastAuthorCount: 0,
-    correspondingCount: 0,
-    seniorAuthorCount: 0,
+    firstAuthorCount: (r.firstAuthorCount as number) || 0,
+    lastAuthorCount: (r.lastAuthorCount as number) || 0,
+    correspondingCount: (r.lastAuthorCount as number) || 0,
+    seniorAuthorCount: (r.seniorAuthorCount as number) || 0,
     recentArticles: (r.recentArticles as AdvancedReviewer["recentArticles"]) || [],
     sources: (r.sources as AdvancedReviewer["sources"]) || [],
     verificationUrls: (r.verificationUrls as AdvancedReviewer["verificationUrls"]) || {
@@ -663,9 +663,29 @@ export function ReviewerSearchContent({
             for (const r of prev?.reviewers ?? []) {
               const key = normalizeReviewerName(r.name);
               const db = dbByName.get(key);
+              // The saved row wins for identity and workflow fields, but the live
+              // search result is fresher for metrics and analysis, and rows saved
+              // before author counts were stored would otherwise reset them to 0.
               mergedMap.set(
                 key,
-                db ? { ...r, ...db, id: db.id } : r
+                db
+                  ? {
+                      ...r,
+                      ...db,
+                      id: db.id,
+                      hIndex: db.hIndex ?? r.hIndex,
+                      citationCount: db.citationCount ?? r.citationCount,
+                      publicationCount: db.publicationCount || r.publicationCount,
+                      firstAuthorCount: db.firstAuthorCount || r.firstAuthorCount,
+                      lastAuthorCount: db.lastAuthorCount || r.lastAuthorCount,
+                      correspondingCount: db.correspondingCount || r.correspondingCount,
+                      seniorAuthorCount: db.seniorAuthorCount || r.seniorAuthorCount,
+                      recentArticles: db.recentArticles?.length ? db.recentArticles : r.recentArticles,
+                      llmAnalysis: db.llmAnalysis ?? r.llmAnalysis,
+                      coiSummary: db.coiSummary ?? r.coiSummary,
+                      reputationSummary: db.reputationSummary ?? r.reputationSummary,
+                    }
+                  : r
               );
             }
             const mergedList = Array.from(mergedMap.values()).map((r) => ({
