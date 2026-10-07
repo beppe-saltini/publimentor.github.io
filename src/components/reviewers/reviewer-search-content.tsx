@@ -164,6 +164,8 @@ interface DiscoverySummary {
     pubMed?: number;
   };
   searchStrategy?: string;
+  /** "scored" when every reviewer has a relevance score; otherwise a human-readable reason */
+  rankingStatus?: string;
   emailMetrics?: {
     emailsFound: number;
     emailsMissing: number;
@@ -1827,6 +1829,11 @@ export function ReviewerSearchContent({
                           </li>
                         )}
                       </ul>
+                      {discoveryResult.summary.rankingStatus && discoveryResult.summary.rankingStatus !== "scored" && (
+                        <p className="text-sm mt-2 text-amber-700" role="status">
+                          ⚠ {discoveryResult.summary.rankingStatus}
+                        </p>
+                      )}
                       <div className="flex gap-2 mt-2 flex-wrap">
                         {discoveryResult.summary.llmEnhanced && (
                           <Badge variant="outline" className="bg-purple-100 text-purple-700">

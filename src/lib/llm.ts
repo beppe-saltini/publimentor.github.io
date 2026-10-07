@@ -73,6 +73,8 @@ const llmSuggestionResultSchema = z.object({
 });
 
 const rankedReviewerSchema = z.object({
+  /** 1-based position of the candidate in the list we sent; matched before the name */
+  candidateNumber: z.number().int().min(0),
   name: z.string().max(300),
   relevanceScore: z.number().min(0).max(100),
   reasoning: z.string().max(2000),
@@ -287,6 +289,14 @@ export interface ManuscriptContext {
   abstract?: string | null;
 }
 
+/** A Claude call that reached the API but produced no usable result (refusal, HTTP error, malformed output). */
+export class LLMCallError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LLMCallError";
+  }
+}
+
 export async function rankReviewersWithLLM(
   primaryKeywords: string[],
   secondaryKeywords: string[] | undefined,
@@ -351,7 +361,8 @@ Respond with ONLY a valid JSON object in this exact format:
 {
   "rankedReviewers": [
     {
-      "name": "Full Name",
+      "candidateNumber": 1,
+      "name": "Full Name exactly as listed",
       "relevanceScore": 85,
       "reasoning": "Brief explanation of why this person is suitable",
       "topicalMatch": "excellent|good|moderate|weak",
@@ -394,20 +405,17 @@ Include every candidate, even those with a low score — the editor decides. Ord
 
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error("[LLM] API error", new Error(`${response.status}: ${errorText}`));
-      return null;
+      throw new LLMCallError(`Anthropic API ${response.status}: ${errorText.slice(0, 300)}`);
     }
 
     const data = await response.json();
     if (isRefusal(data)) {
-      logger.error("[LLM] Claude refused the request (stop_reason=refusal); treating as no result");
-      return null;
+      throw new LLMCallError(`${ANTHROPIC_PRIMARY_MODEL} refused the ranking request (stop_reason=refusal)`);
     }
     const content = responseText(data);
 
     if (!content) {
-      logger.error("[LLM] No content in response");
-      return null;
+      throw new LLMCallError(`${ANTHROPIC_PRIMARY_MODEL} returned no text (stop_reason=${(data as { stop_reason?: string }).stop_reason ?? "unknown"})`);
     }
 
     // Parse JSON from response (handle markdown code blocks)
@@ -423,15 +431,15 @@ Include every candidate, even those with a low score — the editor decides. Ord
     // SECURITY: Validate LLM output against schema
     const validated = llmRankingResultSchema.safeParse(parsed);
     if (!validated.success) {
-      logger.error("[LLM] Ranking response failed schema validation", new Error(validated.error.message));
-      return null;
+      throw new LLMCallError(`ranking response failed schema validation: ${validated.error.message.slice(0, 300)}`);
     }
 
     logger.info(`[LLM] Ranked ${validated.data.rankedReviewers.length} reviewers`);
     return validated.data;
   } catch (error) {
+    if (error instanceof LLMCallError) throw error;
     logger.error("[LLM] Error calling Claude API", error);
-    return null;
+    throw new LLMCallError(error instanceof Error ? error.message : "Claude call failed");
   }
 }
 
@@ -628,4 +636,30 @@ Order journals by best fit first. Use the exact official journal name as it appe
     logger.error("[LLM] Error calling Claude API for journal suggestions", error);
     return null;
   }
+}
+
+/** Lower-cased letters only, so "Jennifer A. Doudna" and "Jennifer Doudna" compare equal on surname + first name. */
+export function normalizeReviewerName(name: string): string {
+  const parts = name.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((p) => p.length > 1);
+  if (parts.length === 0) return "";
+  return parts.length === 1 ? parts[0] : `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Match ranked entries back to the candidates they describe: by the candidate
+ * number Claude echoes, then by exact name, then by first name + surname.
+ */
+export function matchRankedReviewers<T extends { name: string }>(
+  candidates: T[],
+  ranked: LLMRankingResult["rankedReviewers"]
+): Map<T, LLMRankingResult["rankedReviewers"][number]> {
+  const result = new Map<T, LLMRankingResult["rankedReviewers"][number]>();
+  const byExact = new Map(ranked.map((r) => [r.name.toLowerCase().trim(), r]));
+  const byLoose = new Map(ranked.map((r) => [normalizeReviewerName(r.name), r]));
+  for (const [index, c] of candidates.entries()) {
+    const byNumber = ranked.find((r) => r.candidateNumber === index + 1);
+    const hit = byNumber ?? byExact.get(c.name.toLowerCase().trim()) ?? byLoose.get(normalizeReviewerName(c.name));
+    if (hit) result.set(c, hit);
+  }
+  return result;
 }

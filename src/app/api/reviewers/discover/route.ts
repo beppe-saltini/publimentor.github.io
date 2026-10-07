@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { searchPubMed, fetchPubMedArticles, PubMedArticle } from "@/lib/pubmed";
 import { parseAuthorList } from "@/lib/author-parser";
-import { suggestReviewersWithLLM, rankReviewersWithLLM } from "@/lib/llm";
+import { suggestReviewersWithLLM, rankReviewersWithLLM, matchRankedReviewers } from "@/lib/llm";
 import { ndjsonResponse, type Emit } from "@/lib/reviewers/discovery-stream";
 import { findAccessibleManuscript } from "@/lib/manuscript-access";
 import { getResolvedManuscriptAuthors, authorRole, type ResolvedAuthor } from "@/lib/manuscript/author-identities";
@@ -284,6 +284,7 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
     /** What Claude said when it suggested a candidate; merged into the ranking later */
     const suggestionNotes = new Map<string, { reasoning: string; expertise: string[]; seniority: string }>();
 
+    let rankingStatus: string | undefined;
     const buildSummary = () => {
       for (const c of candidates) {
         if (c.firstName && !c.inferredGender) c.inferredGender = openAlex.inferGender(c.firstName);
@@ -319,6 +320,7 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
         llmEnhanced: llmUsed,
         searchStrategy: searchStrategy || undefined,
         caveats: caveats.length > 0 ? caveats : undefined,
+        rankingStatus,
         dataSources: {
           semanticScholar: candidates.filter(c => c.sources.includes("SemanticScholar")).length,
           openAlex: candidates.filter(c => c.sources.includes("OpenAlex")).length,
@@ -945,6 +947,7 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
 
     // STEP 4.5: Score every candidate's relevance with Claude (against the manuscript when we have it)
     if (candidates.length > 0) {
+      rankingStatus = "Relevance scores unavailable: Claude returned no ranking";
       try {
         let manuscriptContext: { title?: string | null; abstract?: string | null } | undefined;
         if (manuscript) {
@@ -969,9 +972,9 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
           manuscriptContext
         );
         if (ranking) {
-          const byName = new Map(ranking.rankedReviewers.map((r) => [r.name.toLowerCase().trim(), r]));
+          const matched = matchRankedReviewers(candidates, ranking.rankedReviewers);
           for (const c of candidates) {
-            const ranked = byName.get(c.name.toLowerCase().trim());
+            const ranked = matched.get(c);
             const note = suggestionNotes.get(c.name.toLowerCase().trim());
             if (ranked) {
               c.llmAnalysis = {
@@ -984,9 +987,13 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
               };
             }
           }
-          console.log(`[Discover] Relevance ranking: ${byName.size} of ${candidates.length} candidates scored`);
+          rankingStatus = matched.size === candidates.length
+            ? "scored"
+            : `Relevance scores unavailable for ${candidates.length - matched.size} of ${candidates.length} reviewers (Claude returned ${ranking.rankedReviewers.length} entries)`;
+          console.log(`[Discover] Relevance ranking: ${matched.size} of ${candidates.length} candidates scored (${ranking.rankedReviewers.length} returned)`);
         }
       } catch (error) {
+        rankingStatus = `Relevance scores unavailable: ${error instanceof Error ? error.message : String(error)}`.slice(0, 400);
         console.error("[Discover] Relevance ranking failed:", error);
       }
       // Candidates Claude suggested but could not score keep its original note, without a number
