@@ -38,6 +38,87 @@ export interface OpenAlexSourceResult {
   country_code: string | null;
 }
 
+/** What an author did on the topic works that matched the search. */
+export interface TopicAuthorStats {
+  worksInTopic: number;
+  firstAuthorCount: number;
+  lastAuthorCount: number;
+  correspondingCount: number;
+  topicCitations: number;
+  recentWorks: { title: string; journal: string; year: number; doi?: string; position: "first" | "middle" | "last" }[];
+}
+
+interface AggregatedTopicAuthor extends TopicAuthorStats {
+  authorId: string;
+  displayName: string;
+  orcid?: string;
+  institution?: { id: string; display_name: string; country_code?: string };
+}
+
+/**
+ * OpenAlex full-text search string: multi-word terms are quoted, terms are joined
+ * with the chosen boolean operator; secondary terms are always optional (OR).
+ */
+export function buildTopicSearchQuery(primary: string[], secondary: string[] | undefined, operator: "AND" | "OR" = "OR"): string {
+  const term = (t: string) => {
+    const clean = t.trim().replace(/"/g, "");
+    return /\s/.test(clean) ? `"${clean}"` : clean;
+  };
+  const primaryTerms = primary.map(term).filter(Boolean);
+  const secondaryTerms = (secondary || []).map(term).filter(Boolean);
+  const main = primaryTerms.join(` ${operator} `);
+  if (secondaryTerms.length === 0) return main;
+  const extra = secondaryTerms.join(" OR ");
+  return primaryTerms.length > 1 ? `(${main}) OR ${extra}` : `${main} OR ${extra}`;
+}
+
+/** Group works by author, counting positions and keeping the most-cited recent works. */
+export function aggregateTopicAuthors(works: OpenAlexWork[]): Map<string, AggregatedTopicAuthor> {
+  const map = new Map<string, AggregatedTopicAuthor>();
+  for (const work of works) {
+    for (const authorship of work.authorships || []) {
+      const id = authorship.author?.id;
+      if (!id) continue;
+      let entry = map.get(id);
+      if (!entry) {
+        entry = {
+          authorId: id,
+          displayName: authorship.author.display_name,
+          orcid: authorship.author.orcid,
+          institution: authorship.institutions?.[0]
+            ? { id: authorship.institutions[0].id, display_name: authorship.institutions[0].display_name, country_code: (authorship.institutions[0] as { country_code?: string }).country_code }
+            : undefined,
+          worksInTopic: 0,
+          firstAuthorCount: 0,
+          lastAuthorCount: 0,
+          correspondingCount: 0,
+          topicCitations: 0,
+          recentWorks: [],
+        };
+        map.set(id, entry);
+      }
+      entry.worksInTopic++;
+      entry.topicCitations += work.cited_by_count || 0;
+      if (authorship.author_position === "first") entry.firstAuthorCount++;
+      if (authorship.author_position === "last") entry.lastAuthorCount++;
+      if (authorship.is_corresponding) entry.correspondingCount++;
+      if (!entry.institution && authorship.institutions?.[0]) {
+        entry.institution = { id: authorship.institutions[0].id, display_name: authorship.institutions[0].display_name };
+      }
+      if (entry.recentWorks.length < 5) {
+        entry.recentWorks.push({
+          title: work.title,
+          journal: work.primary_location?.source?.display_name || "Unknown",
+          year: work.publication_year,
+          doi: work.doi,
+          position: authorship.author_position || "middle",
+        });
+      }
+    }
+  }
+  return map;
+}
+
 /**
  * OpenAlex API Client
  * Documentation: https://docs.openalex.org/
@@ -434,14 +515,19 @@ export const openAlex = {
   },
 
   /**
-   * Advanced reviewer discovery with comprehensive filters
+   * Topic-based reviewer discovery: search recent *works* for the keywords,
+   * aggregate their authors (counting first/last/corresponding positions), then
+   * hydrate the strongest authors for h-index and institution. Searching the
+   * authors endpoint with topic words only matched author *names* and returned
+   * nothing for ordinary queries.
    */
   async discoverReviewers({
     primaryKeywords,
     secondaryKeywords,
+    keywordOperator = "OR",
     minHIndex = 0,
     maxHIndex = 100,
-    minWorksCount = 10,
+    minWorksCount = 3,
     yearsActive = 5,
     requireCorresponding = false,
     maxResults = 50,
@@ -450,6 +536,7 @@ export const openAlex = {
   }: {
     primaryKeywords: string[];
     secondaryKeywords?: string[];
+    keywordOperator?: "AND" | "OR";
     minHIndex?: number;
     maxHIndex?: number;
     minWorksCount?: number;
@@ -460,101 +547,119 @@ export const openAlex = {
     excludeInstitutions?: string[];
   }): Promise<{
     authors: OpenAlexAuthor[];
+    stats: Map<string, TopicAuthorStats>;
     concepts: { id: string; display_name: string; relevance: number }[];
   }> {
-    // Build the search query
-    const searchQuery = [...primaryKeywords, ...(secondaryKeywords || [])].join(" ");
-    
-    // Use simple, well-supported filters only
-    // OpenAlex filter syntax: works_count:>N, cited_by_count:>N
-    const filters = [
-      `works_count:>${minWorksCount}`,
-      `cited_by_count:>100`, // Ensure some level of impact
-    ];
-
-    const params = new URLSearchParams({
-      search: searchQuery,
-      filter: filters.join(","),
-      per_page: String(Math.min(maxResults * 3, 200)), // Get more to filter locally
-      sort: "cited_by_count:desc",
-    });
-
+    const searchQuery = buildTopicSearchQuery(primaryKeywords, secondaryKeywords, keywordOperator);
+    const startYear = new Date().getFullYear() - Math.max(1, yearsActive);
     const email = getPoliteEmail();
-    if (email) {
-      params.set("mailto", email);
+
+    // 1. Recent, well-cited works on the topic (two pages, 400 works at most)
+    const works: OpenAlexWork[] = [];
+    for (const page of [1, 2]) {
+      const params = new URLSearchParams({
+        search: searchQuery,
+        filter: `publication_year:>${startYear - 1},type:article`,
+        per_page: "200",
+        page: String(page),
+        sort: "cited_by_count:desc",
+        select: "id,doi,title,publication_year,cited_by_count,authorships,primary_location",
+      });
+      if (email) params.set("mailto", email);
+      console.log(`[OpenAlex] Topic works search (page ${page}): ${searchQuery}`);
+      const response = await fetch(`${BASE_URL}/works?${params}`, { signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[OpenAlex] API error: ${response.status} - ${errorText}`);
+        if (page === 1) throw new Error(`OpenAlex API error: ${response.statusText}`);
+        break;
+      }
+      const data: OpenAlexSearchResponse<OpenAlexWork> = await response.json();
+      works.push(...(data.results || []));
+      if ((data.results || []).length < 200) break;
+    }
+    console.log(`[OpenAlex] ${works.length} works on the topic since ${startYear}`);
+
+    // 2. Aggregate authors across those works
+    const aggregated = aggregateTopicAuthors(works);
+    const excluded = excludeNames.map((n) => n.toLowerCase().trim()).filter(Boolean);
+    const candidates = Array.from(aggregated.values())
+      .filter((a) => a.worksInTopic >= Math.max(1, Math.min(minWorksCount, 3)))
+      .filter((a) => !requireCorresponding || a.firstAuthorCount + a.lastAuthorCount + a.correspondingCount > 0)
+      .filter((a) => {
+        const name = a.displayName.toLowerCase();
+        return !excluded.some((n) => name.includes(n) || n.includes(name));
+      })
+      .sort((a, b) =>
+        (b.firstAuthorCount + b.lastAuthorCount) * 2 + b.worksInTopic - ((a.firstAuthorCount + a.lastAuthorCount) * 2 + a.worksInTopic)
+        || b.topicCitations - a.topicCitations
+      )
+      .slice(0, Math.min(Math.max(maxResults * 2, 10), 50));
+
+    if (candidates.length === 0) {
+      return { authors: [], stats: new Map(), concepts: [] };
     }
 
-    console.log(`[OpenAlex] Discovering reviewers with query: ${searchQuery}`);
-    const response = await fetch(`${BASE_URL}/authors?${params}`, { signal: AbortSignal.timeout(15_000) });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[OpenAlex] API error: ${response.status} - ${errorText}`);
-      throw new Error(`OpenAlex API error: ${response.statusText}`);
-    }
-
-    const data: OpenAlexSearchResponse<OpenAlexAuthor> = await response.json();
-    console.log(`[OpenAlex] Found ${data.results?.length || 0} initial results`);
-    
-    // Post-filter results for h-index and other criteria
-    let authors = data.results.filter(author => {
-      // Filter by h-index range (done locally since API filter might not work reliably)
-      const hIndex = author.summary_stats?.h_index || 0;
-      if (minHIndex > 0 && hIndex < minHIndex) {
-        return false;
-      }
-      if (maxHIndex && maxHIndex < 100 && hIndex > maxHIndex) {
-        return false;
-      }
-      
-      // Exclude by name
-      const authorNameLC = author.display_name.toLowerCase();
-      if (excludeNames.some(n => authorNameLC.includes(n.toLowerCase()))) {
-        return false;
-      }
-      
-      // Must have an institution
-      if (!author.last_known_institutions || author.last_known_institutions.length === 0) {
-        return false;
-      }
-      
-      // Exclude by institution
-      const instName = author.last_known_institutions[0]?.display_name?.toLowerCase() || "";
-      if (excludeInstitutions.some(i => instName.includes(i.toLowerCase()))) {
-        return false;
-      }
-      
-      return true;
+    // 3. Hydrate the shortlisted authors (h-index, institution, ORCID) in one call
+    const ids = candidates.map((a) => a.authorId.replace("https://openalex.org/", ""));
+    const authorParams = new URLSearchParams({
+      filter: `ids.openalex:${ids.join("|")}`,
+      per_page: String(ids.length),
+      select: "id,orcid,display_name,works_count,cited_by_count,summary_stats,last_known_institutions,topics",
     });
-    
-    // Limit results
-    authors = authors.slice(0, maxResults);
-    
-    // Extract top concepts from results
+    if (email) authorParams.set("mailto", email);
+    const authorResponse = await fetch(`${BASE_URL}/authors?${authorParams}`, { signal: AbortSignal.timeout(20_000) });
+    if (!authorResponse.ok) {
+      const errorText = await authorResponse.text();
+      console.error(`[OpenAlex] API error: ${authorResponse.status} - ${errorText}`);
+      throw new Error(`OpenAlex API error: ${authorResponse.statusText}`);
+    }
+    const authorData: OpenAlexSearchResponse<OpenAlexAuthor> = await authorResponse.json();
+    const byId = new Map(authorData.results.map((a) => [a.id, a]));
+
+    const stats = new Map<string, TopicAuthorStats>();
+    const authors: OpenAlexAuthor[] = [];
+    for (const c of candidates) {
+      const author = byId.get(c.authorId);
+      if (!author) continue;
+      const hIndex = author.summary_stats?.h_index || 0;
+      if (minHIndex > 0 && hIndex < minHIndex) continue;
+      if (maxHIndex && maxHIndex < 100 && hIndex > maxHIndex) continue;
+      // Fall back to the institution seen on the topic works when the profile has none
+      if (!author.last_known_institutions?.length && c.institution) {
+        author.last_known_institutions = [{ id: c.institution.id, display_name: c.institution.display_name, country_code: c.institution.country_code }];
+      }
+      if (!author.last_known_institutions?.length) continue;
+      const instName = author.last_known_institutions[0]?.display_name?.toLowerCase() || "";
+      if (excludeInstitutions.some((i) => instName.includes(i.toLowerCase()))) continue;
+      authors.push(author);
+      stats.set(author.id, {
+        worksInTopic: c.worksInTopic,
+        firstAuthorCount: c.firstAuthorCount,
+        lastAuthorCount: c.lastAuthorCount,
+        correspondingCount: c.correspondingCount,
+        topicCitations: c.topicCitations,
+        recentWorks: c.recentWorks,
+      });
+      if (authors.length >= maxResults) break;
+    }
+    console.log(`[OpenAlex] ${authors.length} authors pass the filters (from ${aggregated.size} on the topic)`);
+
+    // Top concepts of the selected authors
     const conceptMap = new Map<string, { display_name: string; count: number }>();
     for (const author of authors) {
-      if (author.topics) {
-        for (const topic of author.topics.slice(0, 3)) {
-          const existing = conceptMap.get(topic.id);
-          if (existing) {
-            existing.count++;
-          } else {
-            conceptMap.set(topic.id, { display_name: topic.display_name, count: 1 });
-          }
-        }
+      for (const topic of author.topics?.slice(0, 3) || []) {
+        const existing = conceptMap.get(topic.id);
+        if (existing) existing.count++;
+        else conceptMap.set(topic.id, { display_name: topic.display_name, count: 1 });
       }
     }
-    
     const concepts = Array.from(conceptMap.entries())
-      .map(([id, { display_name, count }]) => ({
-        id,
-        display_name,
-        relevance: count / authors.length,
-      }))
+      .map(([id, { display_name, count }]) => ({ id, display_name, relevance: count / Math.max(1, authors.length) }))
       .sort((a, b) => b.relevance - a.relevance)
       .slice(0, 10);
-    
-    return { authors, concepts };
+
+    return { authors, stats, concepts };
   },
 
   /**

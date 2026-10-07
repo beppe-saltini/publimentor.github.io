@@ -661,6 +661,7 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
         const oaResult = await openAlex.discoverReviewers({
           primaryKeywords: searchPrimary,
           secondaryKeywords: params.secondaryKeywords,
+          keywordOperator: params.keywordOperator,
           minHIndex: params.minHIndex,
           maxHIndex: params.maxHIndex,
           minWorksCount: params.minPublications,
@@ -675,6 +676,7 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
         for (const oaAuthor of oaResult.authors) {
           if (candidates.length >= params.maxResults) break;
 
+          const topicStats = oaResult.stats.get(oaAuthor.id);
           const nameParts = oaAuthor.display_name.split(" ");
           const lastName = nameParts[nameParts.length - 1];
           const affiliation = oaAuthor.last_known_institutions?.[0]?.display_name || "Unknown";
@@ -799,12 +801,14 @@ async function runDiscovery(userId: string, params: DiscoverParams, emit: Emit, 
             country,
             hIndex,
             citationCount: oaAuthor.cited_by_count,
-            publicationCount: oaAuthor.works_count,
-            firstAuthorCount: 0,
-            lastAuthorCount: 0,
-            correspondingCount: 0,
-            seniorAuthorCount: 0,
-            recentArticles: oaRecentArticles,
+            publicationCount: topicStats?.worksInTopic || oaAuthor.works_count,
+            firstAuthorCount: topicStats?.firstAuthorCount ?? 0,
+            lastAuthorCount: topicStats?.lastAuthorCount ?? 0,
+            correspondingCount: topicStats?.correspondingCount ?? 0,
+            seniorAuthorCount: (topicStats?.firstAuthorCount ?? 0) + (topicStats?.lastAuthorCount ?? 0),
+            recentArticles: oaRecentArticles.length > 0
+              ? oaRecentArticles
+              : (topicStats?.recentWorks || []).map((w) => ({ title: w.title, journal: w.journal, year: String(w.year), pmid: "", position: w.position })),
             sources: ["OpenAlex"],
             verificationUrls: {
               pubmedSearchUrl: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(oaAuthor.display_name)}[Author]`,
