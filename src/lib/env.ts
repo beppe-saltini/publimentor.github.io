@@ -53,6 +53,9 @@ const envSchema = z.object({
   GOOGLE_CSE_ID: z.string().optional(),
   SERPER_API_KEY: z.string().optional(),
   BRAVE_SEARCH_API_KEY: z.string().optional(),
+  // "Possibly deceased" screen: Claude web-search fallback ("off" to disable) and its per-search cap
+  DECEASED_CLAUDE_SEARCH: z.enum(["on", "off"]).optional(),
+  DECEASED_CLAUDE_MAX_PER_SEARCH: z.coerce.number().int().min(0).optional(),
 
   // --- Storage ---
   STORAGE_PROVIDER: z

@@ -24,7 +24,7 @@ export function DeceasedNotice({ check, className = "" }: DeceasedNoticeProps) {
         className="ml-5 text-blue-600 hover:underline inline-flex items-center gap-1"
       >
         <Search className="h-3 w-3" />
-        See the Google search behind this flag
+        {check.searchLabel || "See the search behind this flag"}
         <ExternalLink className="h-3 w-3" />
       </a>
       {check.evidence.length > 0 && (

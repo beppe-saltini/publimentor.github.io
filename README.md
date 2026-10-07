@@ -196,7 +196,9 @@ publimentor/
 | `OPENALEX_EMAIL` | Email for OpenAlex polite pool | No |
 | `ANTHROPIC_API_KEY` | Claude API key for reviewer suggestions, ranking and metadata extraction | No |
 | `ANTHROPIC_PRIMARY_MODEL` / `ANTHROPIC_HAIKU_MODEL` | Override the Claude models (defaults: `claude-opus-5-5`, `claude-haiku-4-5`) without a redeploy | No |
-| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | Google Custom Search (key + Programmable Search Engine id) for the "possibly deceased" reviewer screen | No |
+| `DECEASED_CLAUDE_SEARCH` | `off` disables the Claude web-search fallback of the "possibly deceased" reviewer screen (PubMed and Wikidata always run) | No |
+| `DECEASED_CLAUDE_MAX_PER_SEARCH` | How many reviewers per search may fall back to Claude's web search (default 15, about 1.5 cents and 6–8 s each) | No |
+| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | Google Custom Search for the deceased screen (whole-web search ends 1 Jan 2027) | No |
 | `SERPER_API_KEY` | Serper (Google results) — fallback web search for e-mail enrichment and the deceased screen | No |
 | `BRAVE_SEARCH_API_KEY` | Brave Search — fallback web search | No |
 
