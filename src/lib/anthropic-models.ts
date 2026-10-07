@@ -30,6 +30,15 @@ function cleanEnv(value: string | undefined): string {
 export const ANTHROPIC_PRIMARY_MODEL =
   cleanEnv(process.env.ANTHROPIC_PRIMARY_MODEL) || cleanEnv(process.env.ANTHROPIC_SONNET_MODEL) || "claude-opus-5-5";
 
+/**
+ * Reviewer suggestions: the one call that asks for a list of real, named researchers.
+ * Claude Opus 5.5 answers it with stop_reason "refusal" (verified 2026-10-07 with
+ * and without structured output), which silently emptied every discovery search.
+ * Claude Sonnet 4.5 answers normally, so this call keeps its own model.
+ */
+export const ANTHROPIC_SUGGEST_MODEL =
+  cleanEnv(process.env.ANTHROPIC_SUGGEST_MODEL) || "claude-sonnet-4-5";
+
 /** Fast/cheap model: reference parsing, keyword suggestions. */
 export const ANTHROPIC_HAIKU_MODEL =
   cleanEnv(process.env.ANTHROPIC_HAIKU_MODEL) || "claude-haiku-4-5";
@@ -88,4 +97,9 @@ export async function resolveReplacementModel(
 export function modelFamily(model: string): string {
   const parts = model.split("-");
   return parts.length >= 2 ? `${parts[0]}-${parts[1]}` : model;
+}
+
+/** True when the API ended the response with a refusal (no usable text follows). */
+export function isRefusal(data: unknown): boolean {
+  return (data as { stop_reason?: string } | null)?.stop_reason === "refusal";
 }

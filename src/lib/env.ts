@@ -37,6 +37,7 @@ const optionalSchema = z.object({
   // --- Claude ---
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_PRIMARY_MODEL: z.string().optional(),
+  ANTHROPIC_SUGGEST_MODEL: z.string().optional(),
   ANTHROPIC_HAIKU_MODEL: z.string().optional(),
 
   // --- Literature / web search ---

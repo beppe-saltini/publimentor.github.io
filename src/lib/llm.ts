@@ -13,7 +13,7 @@
 import { z } from "zod";
 import { resilientFetch, circuitBreakers } from "@/lib/resilience";
 import { logger } from "@/lib/logger";
-import { ANTHROPIC_PRIMARY_MODEL, responseText } from "@/lib/anthropic-models";
+import { ANTHROPIC_PRIMARY_MODEL, ANTHROPIC_SUGGEST_MODEL, isRefusal, responseText } from "@/lib/anthropic-models";
 import { claudeJsonFormat } from "@/lib/claude-schema";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -220,9 +220,10 @@ Respond with ONLY a valid JSON object:
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_PRIMARY_MODEL,
+          model: ANTHROPIC_SUGGEST_MODEL,
           max_tokens: 16000,
-          output_config: { effort: "high", format: claudeJsonFormat(llmSuggestionResultSchema) },
+          // Sonnet 4.5 does not accept output_config.effort
+          output_config: { format: claudeJsonFormat(llmSuggestionResultSchema) },
           messages: [{ role: "user", content: prompt }],
         }),
       },
@@ -241,6 +242,10 @@ Respond with ONLY a valid JSON object:
     }
 
     const data = await response.json();
+    if (isRefusal(data)) {
+      logger.error("[LLM] Claude refused the request (stop_reason=refusal); treating as no result");
+      return null;
+    }
     const content = responseText(data);
 
     if (!content) {
@@ -394,6 +399,10 @@ Include every candidate, even those with a low score — the editor decides. Ord
     }
 
     const data = await response.json();
+    if (isRefusal(data)) {
+      logger.error("[LLM] Claude refused the request (stop_reason=refusal); treating as no result");
+      return null;
+    }
     const content = responseText(data);
 
     if (!content) {
@@ -485,6 +494,10 @@ Keep it professional but warm. Do not include subject line or sign-off placehold
     }
 
     const data = await response.json();
+    if (isRefusal(data)) {
+      logger.error("[LLM] Claude refused the request (stop_reason=refusal); treating as no result");
+      return null;
+    }
     return responseText(data) || null;
   } catch (error) {
     logger.error("[LLM] Error generating invitation", error);
@@ -583,6 +596,10 @@ Order journals by best fit first. Use the exact official journal name as it appe
     }
 
     const data = await response.json();
+    if (isRefusal(data)) {
+      logger.error("[LLM] Claude refused the request (stop_reason=refusal); treating as no result");
+      return null;
+    }
     const content = responseText(data);
 
     if (!content) {
