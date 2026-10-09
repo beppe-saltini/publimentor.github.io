@@ -153,11 +153,91 @@ export const coiBatchCheckSchema = z.object({
 // Format Check
 // ============================================================
 
-export const formatCheckSchema = z.object({
-  submissionId: cuidSchema.optional(),
+/** Status an editor may assign to a check when overriding the automatic result. */
+export const formatCheckStatusSchema = z.enum([
+  "pass",
+  "fail",
+  "review",
+  "not_applicable",
+  "unknown",
+]);
+
+/**
+ * Explicit journal-profile override (e.g. "iscience"). Only the shape is checked
+ * here; the routes verify the id exists in the profile registry and answer 400.
+ */
+export const formatProfileIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9._-]*$/i, "Invalid profile id");
+
+/**
+ * `format` flag of the check routes: run the Journal-Ready Formatter after the
+ * checks (default true). Multipart fields arrive as strings, so "false"/"0"/"no"
+ * are accepted alongside a JSON boolean.
+ */
+export const formatFlagSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const v = value.trim().toLowerCase();
+  if (["false", "0", "no", "off"].includes(v)) return false;
+  if (["true", "1", "yes", "on", ""].includes(v)) return true;
+  return value;
+}, z.boolean().default(true));
+
+/** Text fields of POST /api/format/check (multipart; the file itself is validated separately). */
+export const formatCheckUploadSchema = z.object({
+  journalSlug: slugSchema.optional(),
   manuscriptId: cuidSchema.optional(),
-  journalSlug: slugSchema,
+  profileId: formatProfileIdSchema.optional(),
+  format: formatFlagSchema,
 });
+
+/** Body of POST /api/format/check-manuscript. */
+export const formatCheckManuscriptSchema = z.object({
+  manuscriptId: cuidSchema,
+  journalSlug: slugSchema.optional(),
+  profileId: formatProfileIdSchema.optional(),
+  format: formatFlagSchema,
+});
+
+/** Body of POST /api/format/reports/[id]/format (re-run formatting on a stored report). */
+export const formatReformatSchema = z
+  .object({
+    profileId: formatProfileIdSchema.optional(),
+    repairReferences: z.boolean().optional(),
+  })
+  .default({});
+
+/** ?kind= of GET /api/format/reports/[id]/file. */
+export const formatFileKindSchema = z.enum(["formatted", "tracked", "change-log", "letter"]);
+
+/** Query string of GET /api/format/reports. */
+export const formatReportsQuerySchema = z.object({
+  manuscriptId: cuidSchema.optional(),
+  journalSlug: slugSchema.optional(),
+});
+
+/** One editor override: force a status and/or attach a note to a check. */
+export const formatCheckOverrideSchema = z.object({
+  status: formatCheckStatusSchema.optional(),
+  note: z.string().max(2000).optional(),
+});
+
+/** Body of PATCH /api/format/reports/[id]; at least one field must be present. */
+export const formatReportPatchSchema = z
+  .object({
+    overrides: z.record(z.string().min(1).max(100), formatCheckOverrideSchema).optional(),
+    letterText: z.string().max(200_000).optional(),
+  })
+  .refine((v) => v.overrides !== undefined || v.letterText !== undefined, {
+    message: "Provide overrides and/or letterText",
+  });
+
+/** ?format= of GET /api/format/reports/[id]/letter (txt default) and ...?kind=letter (docx default). */
+export const formatLetterFormatSchema = z.enum(["docx", "txt"]).default("txt");
+export const formatLetterFileFormatSchema = z.enum(["docx", "txt"]).default("docx");
 
 // ============================================================
 // Integrity Check

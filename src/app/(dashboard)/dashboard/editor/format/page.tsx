@@ -2,8 +2,8 @@
 
 import { Suspense } from "react";
 import { Loader2, BookOpen, CheckSquare } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FormatCheckContent } from "@/components/format/format-check-content";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormatCheckContent } from "@/components/format";
 import { useEditorContext } from "@/hooks/use-editor-context";
 
 function EditorFormatPage() {
@@ -38,13 +38,19 @@ function EditorFormatPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <CheckSquare className="h-6 w-6" />
-          Format check
+          Journal-Ready Formatter
         </h1>
         <p className="text-gray-600 mt-1">
-          Verify manuscript formatting and required statements against journal guidelines.
+          Check an accepted manuscript against the journal&apos;s final-file requirements, rebuild it in the
+          journal&apos;s structure with repaired references, and assemble the letter to the authors.
         </p>
       </div>
-      <FormatCheckContent journalSlug={journalSlug} publisherId={publisherId ?? undefined} />
+      <FormatCheckContent
+        key={journalSlug}
+        journalSlug={journalSlug}
+        publisherId={publisherId ?? undefined}
+        hideHeading
+      />
     </div>
   );
 }

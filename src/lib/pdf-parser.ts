@@ -64,6 +64,26 @@ export async function parsePDFBuffer(buffer: Buffer): Promise<PDFContent> {
   return extractWithUnpdf(new Uint8Array(buffer));
 }
 
+export interface PDFPages {
+  /** Extracted text for each page, in order. */
+  pages: string[];
+  numPages: number;
+}
+
+/**
+ * Parse a PDF buffer keeping page boundaries.
+ *
+ * Needed by the journal formatter: page breaks are where running headers and
+ * page numbers live, and reporting a page count only makes sense per page.
+ */
+export async function parsePDFPages(buffer: Buffer): Promise<PDFPages> {
+  const { getDocumentProxy, extractText } = await import("unpdf");
+  const doc = await getDocumentProxy(new Uint8Array(buffer));
+  const { totalPages, text } = await extractText(doc, { mergePages: false });
+  const pages = Array.isArray(text) ? text : [text];
+  return { pages, numPages: totalPages ?? pages.length };
+}
+
 /**
  * Extract sections from academic paper text
  */

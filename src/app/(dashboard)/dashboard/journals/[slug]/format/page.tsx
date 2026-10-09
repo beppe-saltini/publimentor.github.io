@@ -2,12 +2,13 @@
 
 import { Suspense } from "react";
 import { useParams } from "next/navigation";
-import { FormatCheckContent } from "@/components/format/format-check-content";
+import { FormatCheckContent } from "@/components/format";
 
 function JournalFormatPage() {
   const params = useParams();
-  const slug = params.slug as string;
-  return <FormatCheckContent journalSlug={slug} />;
+  const slug = typeof params?.slug === "string" ? params.slug : "";
+  // Keyed on the slug so switching journals resets the run state.
+  return <FormatCheckContent key={slug} journalSlug={slug} />;
 }
 
 export default function FormatCheckPage() {

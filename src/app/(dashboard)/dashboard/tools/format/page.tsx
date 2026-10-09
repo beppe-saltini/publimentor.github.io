@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * Standalone Journal-Ready Formatter tool. Keeps its own journal picker (the other
+ * entry points take the journal from the route) and renders the checker
+ * inline once a journal is chosen. With a single journal it jumps straight to
+ * that journal's format page.
+ */
+
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -9,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { CheckSquare, BookOpen, ArrowRight, Loader2 } from "lucide-react";
 import { isSuperuser } from "@/lib/superuser";
+import { FormatCheckContent } from "@/components/format";
 
 interface JournalOption {
   id: string;
@@ -24,20 +32,24 @@ export default function StandaloneFormatCheckPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchJournals = async () => {
       try {
         const res = await fetch("/api/journals");
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!res.ok || !contentType.includes("application/json")) return;
         const data = await res.json();
-        if (res.ok && data.journals) {
-          setJournals(data.journals);
-        }
-      } catch (error) {
-        console.error("Failed to fetch journals:", error);
+        if (!cancelled && Array.isArray(data?.journals)) setJournals(data.journals);
+      } catch {
+        // The empty state below covers a failed load.
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     fetchJournals();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -46,23 +58,19 @@ export default function StandaloneFormatCheckPage() {
     }
   }, [loading, journals, router]);
 
-  const handleGo = () => {
-    if (selectedSlug) {
-      router.push(`/dashboard/journals/${selectedSlug}/format`);
-    }
-  };
+  const selectedJournal = journals.find((j) => j.slug === selectedSlug);
 
   return (
-    <div className="max-w-xl mx-auto py-8">
-      <Card>
+    <div className="space-y-6">
+      <Card className="max-w-xl">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckSquare className="h-5 w-5" />
-            Format Check
+            Journal-Ready Formatter
           </CardTitle>
           <CardDescription>
-            Validate manuscript formatting against journal guidelines including
-            structure, references, and metadata requirements.
+            Check an accepted manuscript against a journal&apos;s final-file requirements, rebuild it in the
+            journal&apos;s structure and assemble the letter to the authors. Pick a journal to start.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -85,9 +93,9 @@ export default function StandaloneFormatCheckPage() {
           ) : (
             <>
               <div className="space-y-2">
-                <Label>Select Journal</Label>
+                <Label htmlFor="format-journal-select">Select journal</Label>
                 <Select value={selectedSlug} onValueChange={setSelectedSlug}>
-                  <SelectTrigger>
+                  <SelectTrigger id="format-journal-select">
                     <SelectValue placeholder="Choose a journal..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -99,14 +107,22 @@ export default function StandaloneFormatCheckPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleGo} disabled={!selectedSlug} className="w-full">
-                Open Format Check
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Button>
+              {selectedJournal && (
+                <Button
+                  variant="outline"
+                  onClick={() => router.push(`/dashboard/journals/${selectedJournal.slug}/format`)}
+                  className="w-full"
+                >
+                  Open the {selectedJournal.name} format page
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+              )}
             </>
           )}
         </CardContent>
       </Card>
+
+      {selectedSlug && <FormatCheckContent key={selectedSlug} journalSlug={selectedSlug} hideHeading />}
     </div>
   );
 }

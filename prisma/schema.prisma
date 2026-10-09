@@ -323,6 +323,39 @@ model FormatReport {
   submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 }
 
+// Pre-accept format check of an accepted manuscript against a journal profile
+// (Journal-Ready Formatter & Compliance Checker). Deliberately FK-free: a report
+// may be produced from an ad-hoc upload (no manuscript) and must outlive journal
+// or manuscript deletion for the editor's records.
+model FormatCheckReport {
+  id             String   @id @default(cuid())
+  manuscriptId   String? // Manuscript the file came from, when checked from the library
+  journalId      String? // Journal whose profile was applied, when resolved by slug
+  profileId      String // e.g. "iscience" or "generic"
+  profileVersion String
+  sourceType     String // pdf | docx | text
+  fileName       String?
+  results        Json // CheckResult[] as returned by runFormatChecks
+  overrides      Json? // Record<checkId, { status?, note? }> set by the editor
+  letterText     String   @db.Text // Current author-facing letter (may be hand-edited)
+  stats          Json // { wordCount, pageCount?, referenceCount, figureLegendCount, sourceType }
+  checkedById    String
+  checkedAt      DateTime @default(now())
+
+  // Journal-Ready Formatter output (null until formatting has run for this report).
+  formatPlan      Json? // FormatPlan without its layout: operations, references, authorActions, stats
+  sourcePath      String? // Storage key of the uploaded/downloaded source: format-reports/{id}/source.{pdf|docx}
+  formattedPath   String? // Storage key of the rebuilt journal-ready .docx
+  trackedPath     String? // Storage key of the tracked-changes .docx (docx sources only)
+  changeLogText   String?   @db.Text // Human-readable change log produced by the engine
+  formattedAt     DateTime? // When the stored formatting output was last (re)generated
+  profileOverride String? // Explicit profileId the editor chose instead of the journal's profile
+
+  @@index([manuscriptId])
+  @@index([journalId])
+  @@index([checkedById])
+}
+
 // ============================================================
 // MANUSCRIPT - Core document entity
 // ============================================================
