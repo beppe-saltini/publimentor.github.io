@@ -237,6 +237,7 @@ export interface ReportListItem {
   summary?: Partial<Record<CheckStatus | "total", number>>;
 }
 
-/** Phases shown while a run is in flight. The API is a single request, so the
- * phases advance on a timer and are indicative, not exact. */
-export type RunStage = "idle" | "parsing" | "rules" | "ai" | "formatting" | "done";
+/** Phases shown while a run is in flight. "uploading" tracks the direct upload
+ * of a chosen file (real progress); the check itself is a single request, so
+ * the later phases advance on a timer and are indicative, not exact. */
+export type RunStage = "idle" | "uploading" | "parsing" | "rules" | "ai" | "formatting" | "done";

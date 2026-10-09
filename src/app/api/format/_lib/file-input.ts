@@ -16,8 +16,13 @@ export type AcceptedFileType = "pdf" | "docx";
 export const PDF_MIME = "application/pdf";
 export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-/** 25 MB upload cap shared by the upload route and the storage-backed route. */
+/** 25 MB cap on the bytes any check route parses (multipart, direct upload or library file). */
 export const MAX_FORMAT_CHECK_BYTES = 25 * 1024 * 1024;
+
+/** Largest file POST /api/format/upload-init will hand out a signed URL for (bucket limit). */
+export const MAX_DIRECT_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+export const FILE_TOO_LARGE_MESSAGE = "File exceeds the 25 MB limit";
 
 const MIME_TO_TYPE: Record<string, AcceptedFileType> = {
   [PDF_MIME]: "pdf",
@@ -102,22 +107,28 @@ export async function readUploadedManuscript(
   }
 
   if (file.size > MAX_FORMAT_CHECK_BYTES) {
-    return { ok: false, problem: { code: "too_large", message: "File exceeds the 25 MB limit" } };
+    return { ok: false, problem: { code: "too_large", message: FILE_TOO_LARGE_MESSAGE } };
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  if (buffer.length > MAX_FORMAT_CHECK_BYTES) {
-    return { ok: false, problem: { code: "too_large", message: "File exceeds the 25 MB limit" } };
-  }
-
-  if (!bufferMatchesType(buffer, type)) {
-    return {
-      ok: false,
-      problem: { code: "corrupt", message: `The file does not look like a valid ${type.toUpperCase()} document` },
-    };
-  }
+  const problem = checkManuscriptBytes(buffer, type);
+  if (problem) return { ok: false, problem };
 
   return { ok: true, buffer, type, fileName: file.name || `manuscript.${type}` };
+}
+
+/**
+ * Validate bytes that arrived some other way (a direct upload downloaded from
+ * storage): within the size cap and matching the declared type. Null when fine.
+ */
+export function checkManuscriptBytes(buffer: Buffer, type: AcceptedFileType): FileInputProblem | null {
+  if (buffer.length > MAX_FORMAT_CHECK_BYTES) {
+    return { code: "too_large", message: FILE_TOO_LARGE_MESSAGE };
+  }
+  if (!bufferMatchesType(buffer, type)) {
+    return { code: "corrupt", message: `The file does not look like a valid ${type.toUpperCase()} document` };
+  }
+  return null;
 }
 
 /** HTTP status for a file-input problem: everything is a client error except size (413). */

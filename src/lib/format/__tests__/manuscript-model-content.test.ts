@@ -345,15 +345,51 @@ describe("detectFeatures", () => {
     const generated = detectFeatures("We performed single-cell RNA sequencing of reactor samples. Raw data were deposited in the GSA (accession CRA000001).");
     expect(generated.rnaSeq).toMatchObject({ present: true, generated: true });
     // Mixed paper: a reused cohort and newly generated data of the same kind -> generated.
-    const mixed = detectFeatures("Public microarray cohorts were downloaded from GEO. In addition, microarray profiling was performed on sorted cells.");
+    const mixed = detectFeatures("Public microarray cohorts were downloaded from GEO. In addition, we performed microarray profiling on sorted cells.");
     expect(mixed.microarray.generated).toBe(true);
-    // No cue either way: assume generated (a missed deposition is the costlier error).
+    // No cue either way and no structural context: assume generated (a missed deposition is the costlier error).
     expect(detectFeatures("Proteomics identified 400 proteins.").proteomics.generated).toBe(true);
+    // The bare passive is not a generation cue: it reports other people's work as often as the authors' own.
+    expect(detectFeatures("Public microarray cohorts were downloaded from GEO. Microarray profiling was performed on sorted cells.").microarray.generated).toBe(false);
     // Non-deposition features mirror `present`.
     expect(detectFeatures("Western blot analysis.").blotsOrGels.generated).toBe(true);
     expect(detectFeatures("Nothing here.").microarray).toMatchObject({ present: false, generated: false });
     // Reuse and generation cues in ONE sentence: the reuse wording wins for that sentence.
     expect(classifyGeneration("Data were collected from GEO cohorts.", [{ start: 0, end: 4 }])).toBe(false);
+  });
+
+  it("counts data as generated only in a methods-like section or with first-person wording", () => {
+    const intro = "Introduction\nRNA-seq has revealed widespread splicing changes in reactors. Proteomics has been applied to the same question.";
+    const methods = "Materials and Methods\nRNA-seq libraries were prepared from reactor samples and sequenced on a NovaSeq.";
+    const text = `${intro}\n\n${methods}`;
+    const methodsSpans = [{ start: text.indexOf("Materials and Methods"), end: text.length }];
+
+    // Background mention in the Introduction: not generated; the same words in Methods: generated.
+    const f = detectFeatures(text, { methodsSpans });
+    expect(f.rnaSeq.generated).toBe(true);
+    expect(f.proteomics).toMatchObject({ present: true, generated: false });
+
+    // First-person / "in this study" / deposition wording counts anywhere in the text.
+    const firstPerson = `${intro} We performed proteomics on 20 reactors.`;
+    expect(detectFeatures(firstPerson, { methodsSpans: [{ start: firstPerson.length - 1, end: firstPerson.length }] }).proteomics.generated).toBe(true);
+    const inThisStudy = "Discussion\nThe RNA-seq data generated in this study support the model.";
+    expect(classifyGeneration(inThisStudy, [{ start: inThisStudy.indexOf("RNA-seq"), end: inThisStudy.indexOf("RNA-seq") + 7 }], { methodsSpans: [{ start: 0, end: 10 }] })).toBe(true);
+    const deposited = "Discussion\nOur RNA-seq data have been deposited at GEO.";
+    expect(classifyGeneration(deposited, [{ start: deposited.indexOf("RNA-seq"), end: deposited.indexOf("RNA-seq") + 7 }], { methodsSpans: [{ start: 0, end: 10 }] })).toBe(true);
+
+    // Reuse wording wins even inside the methods section.
+    const reusedMethods = "Methods\nRNA-seq data were downloaded from GEO and re-analysed.";
+    expect(detectFeatures(reusedMethods, { methodsSpans: [{ start: 0, end: reusedMethods.length }] }).rnaSeq.generated).toBe(false);
+
+    // No methods-like section at all (a review): nothing is generated, whatever the wording.
+    const review = "Introduction\nRNA-seq has been detected in 12 studies. Sequencing has revealed new alleles. We performed a literature search of proteomics studies. Microarray data, GenBank sequences and crystal structures (PDB) are discussed.";
+    const none = detectFeatures(review, { methodsSpans: [] });
+    for (const key of ["rnaSeq", "proteomics", "microarray", "proteinStructure", "geneSequences"] as const) {
+      expect(none[key].present, key).toBe(true);
+      expect(none[key].generated, key).toBe(false);
+    }
+    // Non-depositable features still mirror `present`.
+    expect(detectFeatures("Western blot analysis of mice.", { methodsSpans: [] }).blotsOrGels.generated).toBe(true);
   });
 
   it("sentenceAround isolates the sentence of a match", () => {

@@ -157,8 +157,42 @@ function looksLikeHeading(
   return isTitleCase(line) || nextOk;
 }
 
+/** The heading that opens the reference list. */
+const REFERENCES_HEADING_RE = /^(references|bibliography|literature cited)$/;
+
+/**
+ * Shapes of a reference-list entry: a numbered line that starts with an author
+ * ("Bartley L.", "Liu SY,", "Smith, J.") or carries bibliographic fields (a
+ * year, volume:pages, a page range, a DOI, "et al.") is a citation, never a
+ * numbered heading.
+ */
+const CITATION_AUTHOR_VANCOUVER = /^[A-Z][\p{L}'’-]+(?:\s+[A-Z][\p{L}'’-]+)?\s+[A-Z]{1,3}[,.;]/u;
+const CITATION_AUTHOR_INITIALS = /^[A-Z][\p{L}'’-]+,\s*[A-Z]\./u;
+const CITATION_FIELDS =
+  /\((?:19|20)\d{2}[a-z]?\)|\b(?:19|20)\d{2}[a-z]?\s*[.;]?\s*$|\b\d{1,4}\s*(?:\(\d{1,4}\))?\s*[:,]\s*[Ee]?\d+|\d+\s*[–—-]\s*\d+|\bdoi\b|\b10\.\d{4,9}\/|\bet al\b/i;
+/** A reference title that wrapped onto its own line reads as a sentence. */
+const CITATION_PROSE = /\b(?:has|have|had)\s+been\b|\b(?:was|were|is|are)\s+(?:detected|observed|reported|shown|found|identified|associated|linked|required)\b/i;
+
+/** True when a numbered line is a bibliography entry rather than a heading. */
+export function looksLikeCitation(rest: string): boolean {
+  return (
+    CITATION_AUTHOR_VANCOUVER.test(rest) ||
+    CITATION_AUTHOR_INITIALS.test(rest) ||
+    CITATION_FIELDS.test(rest) ||
+    CITATION_PROSE.test(rest)
+  );
+}
+
+/**
+ * Highest top-level number a plain numbered heading may carry. A manuscript
+ * never has more than a handful of numbered sections; a reference list does.
+ * Documents with hierarchical numbering ("2.1", "3.2.1") are exempt.
+ */
+const MAX_FLAT_HEADING_NUMBER = 20;
+const HIERARCHICAL_NUMBER = /^\s*\d{1,2}\.\d{1,2}(?:\.\d{1,2})?[.)]?\s+[A-Z(]/;
+
 /** Numbered heading such as "2.1 Cell culture" or "3) Statistics". */
-function numberedHeading(line: string): { level: 1 | 2 | 3; text: string } | null {
+function numberedHeading(line: string, hierarchicalNumbering = false): { level: 1 | 2 | 3; text: string } | null {
   const m = line.match(/^\s*(\d{1,2}(?:\.\d{1,2}){0,3})[.)]?\s+(\S.*)$/);
   if (!m) return null;
   const rest = m[2].trim();
@@ -167,12 +201,49 @@ function numberedHeading(line: string): { level: 1 | 2 | 3; text: string } | nul
   if (/[.?!;,]\s*$/.test(rest)) return null;
   if (!/^[A-Z(]/.test(rest)) return null;
   if (PROSE_MARKERS.test(rest) || isAuthorishLine(rest)) return null;
+  if (looksLikeCitation(rest)) return null;
   // "1 Department of Widget Biology, Example University, Springfield…" is an
   // affiliation, not a numbered heading: a comma plus many words gives it away.
   if (/,/.test(rest) && (words.length >= 6 || AFFILIATION_HINT.test(rest))) return null;
-  const depth = m[1].split(".").length;
+  const parts = m[1].split(".");
+  if (parts.length === 1 && !hierarchicalNumbering && Number(parts[0]) > MAX_FLAT_HEADING_NUMBER) return null;
+  const depth = parts.length;
   const level = (depth >= 3 ? 3 : depth === 2 ? 2 : 1) as 1 | 2 | 3;
   return { level, text: line.trim() };
+}
+
+/**
+ * Line index where a trailing numbered reference list starts when the list
+ * has no heading: a run of at least five sequential entries ("1.", "2.", …)
+ * that read like citations. Mirrors the fallback of the reference parser.
+ */
+export function numberedReferenceRunStart(lines: IndexedLine[]): number | null {
+  let runStart: number | null = null;
+  let expected = 1;
+  let runCount = 0;
+  let best: number | null = null;
+  for (const line of lines) {
+    const m = line.text.match(/^\s*(?:\[(\d{1,3})\]|(\d{1,3})\.)\s+(\S.*)$/);
+    if (!m) continue;
+    const rest = m[3].trim();
+    if (matchKnownSection(normalizeHeading(rest))) continue;
+    const entryLike = rest.split(/\s+/).length >= 6 || looksLikeCitation(rest);
+    if (!entryLike) continue;
+    const value = Number(m[1] ?? m[2]);
+    if (value === expected) {
+      if (runStart === null) runStart = line.i;
+      expected += 1;
+      runCount += 1;
+    } else if (value === 1) {
+      runStart = line.i;
+      expected = 2;
+      runCount = 1;
+    } else {
+      continue;
+    }
+    if (runCount >= 5) best = runStart;
+  }
+  return best;
 }
 
 export interface StructureOptions {
@@ -217,12 +288,25 @@ export function detectStructure(
   const found: Array<{ heading: Heading; known: boolean }> = [];
   /** Line index of the last heading emitted: a subheading may follow one. */
   let lastHeadingLine = -2;
+  /** "2.1"-style numbering anywhere lifts the cap on plain heading numbers. */
+  const hierarchicalNumbering = lines.some((l) => HIERARCHICAL_NUMBER.test(l.text));
+  /** A headingless, trailing numbered list is the reference list. */
+  const referenceRunStart = explicitHeadings ? null : numberedReferenceRunStart(lines);
+  /**
+   * Inside the reference list ("References" passed, or the numbered run
+   * reached) numbered and sentence-case lines are entries, never headings;
+   * only known section names count. A later known level-1 heading
+   * (Nature-style Methods after the references, figure legends,
+   * supplemental information) ends the list.
+   */
+  let inReferenceList = false;
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const raw = line.text.trim();
     if (raw.length === 0) continue;
     if (labelLines?.has(i)) continue;
+    if (i === referenceRunStart) inReferenceList = true;
 
     const normalized = normalizeHeading(raw);
     let level: 1 | 2 | 3 | null = null;
@@ -250,13 +334,14 @@ export function detectStructure(
       } else if (knownSection) {
         continue; // wrapped prose that happens to read like a heading
       } else {
-        const numbered = numberedHeading(raw);
+        const numbered = inReferenceList ? null : numberedHeading(raw, hierarchicalNumbering);
         if (numbered) {
           level = numbered.level;
           headingText = numbered.text;
         } else if (isAllCaps(raw) && raw.split(/\s+/).length <= 12 && !/[.?!]$/.test(raw)) {
           level = STAR_GROUP_HEADINGS.includes(normalized) ? 1 : 2;
         } else if (
+          !inReferenceList &&
           looksLikeHeading(
             lines[i - 1]?.text,
             raw,
@@ -283,16 +368,16 @@ export function detectStructure(
       }
     }
 
-    found.push({
-      heading: {
-        text: headingText,
-        normalized: normalizeHeading(headingText),
-        level,
-        span: { start: line.start, end },
-      },
-      known,
-    });
+    const heading: Heading = {
+      text: headingText,
+      normalized: normalizeHeading(headingText),
+      level,
+      span: { start: line.start, end },
+    };
+    found.push({ heading, known });
     lastHeadingLine = i;
+    if (known && REFERENCES_HEADING_RE.test(heading.normalized)) inReferenceList = true;
+    else if (known && level === 1) inReferenceList = false;
   }
 
   // The title page produces heading-shaped lines: the title itself, numbered
@@ -378,4 +463,29 @@ export function sectionTextFor(text: string, outline: Heading[], heading: Headin
     body: text.slice(heading.span.end, end).trim(),
     span: { start: heading.span.start, end },
   };
+}
+
+/**
+ * Headings that open methods-like text: the methods section under any of its
+ * names, the STAR Methods groups and the availability statements. Data types
+ * mentioned here were produced by the paper; the same words in the
+ * Introduction or Discussion are background.
+ */
+export const METHODS_LIKE_HEADING =
+  /^(star ?★? ?methods|star methods|materials and methods|material and methods|methods and materials|methods?|online methods|experimental procedures|experimental section|methodology|methods and protocols|supplement(?:al|ary) methods|methods? details|key resources? table|resource availability|experimental model and (?:subject|study participant) details|quantification and statistical analysis(?:es)?|data and code availability|data availability(?: statement)?)$/;
+
+/**
+ * Spans of every methods-like section (heading plus body, up to the next
+ * heading of the same or higher rank). Subsections are covered by their
+ * parent's span. Empty when the manuscript has no methods-like section.
+ */
+export function methodsLikeSpans(text: string, outline: Heading[]): TextSpan[] {
+  const spans: TextSpan[] = [];
+  for (const heading of outline) {
+    if (!METHODS_LIKE_HEADING.test(heading.normalized)) continue;
+    const { span } = sectionTextFor(text, outline, heading);
+    if (spans.some((s) => s.start <= span.start && s.end >= span.end)) continue;
+    spans.push(span);
+  }
+  return spans;
 }

@@ -40,6 +40,8 @@ export interface FormatRunControlsProps {
   /** Mode of the run in flight; decides whether the formatting stage shows. */
   runMode?: RunMode;
   stage: RunStage;
+  /** Direct-upload progress (0-100) while `stage` is "uploading"; null when unknown. */
+  uploadPercent?: number | null;
   error?: string | null;
 }
 
@@ -48,7 +50,9 @@ const ACCEPT = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-office
 /** Value of the "journal default" option in the profile select. */
 export const DEFAULT_PROFILE_OPTION = "__journal_default__";
 
-const STAGES: Array<{ id: RunStage; label: string; percent: number; formatOnly?: boolean }> = [
+const STAGES: Array<{ id: RunStage; label: string; percent: number; formatOnly?: boolean; uploadOnly?: boolean }> = [
+  // Only when a chosen file is sent; its percent is replaced by the real upload progress.
+  { id: "uploading", label: "Uploading file", percent: 10, uploadOnly: true },
   { id: "parsing", label: "Parsing manuscript", percent: 20 },
   { id: "rules", label: "Running rule checks", percent: 45 },
   { id: "ai", label: "AI review of judgement calls", percent: 70 },
@@ -74,6 +78,7 @@ export function FormatRunControls({
   running,
   runMode = "format",
   stage,
+  uploadPercent = null,
   error,
 }: FormatRunControlsProps) {
   const fileInputId = useId();
@@ -86,9 +91,11 @@ export function FormatRunControls({
   const unsupportedFile = file !== null && kind === "unknown";
   const canRun = !running && !unsupportedFile && (Boolean(file) || Boolean(selectedManuscriptId));
 
-  const stages = STAGES.filter((s) => !s.formatOnly || runMode === "format");
+  const stages = STAGES.filter((s) => (!s.formatOnly || runMode === "format") && (!s.uploadOnly || file !== null));
   const stageIndex = stages.findIndex((s) => s.id === stage);
-  const progress = stage === "done" ? 100 : stageIndex >= 0 ? stages[stageIndex].percent : 5;
+  // While uploading, the bar follows the real transfer within the stage's share (0-10 %).
+  const uploadProgress = stage === "uploading" && uploadPercent !== null ? Math.round((uploadPercent / 100) * 10) : null;
+  const progress = stage === "done" ? 100 : uploadProgress ?? (stageIndex >= 0 ? stages[stageIndex].percent : 5);
 
   // Options: the registry list, plus the resolved profile when the registry
   // does not know it (or failed to load) so the select always shows it.
@@ -284,6 +291,7 @@ export function FormatRunControls({
                   >
                     {state === "done" ? "✓ " : state === "active" ? "… " : ""}
                     {item.label}
+                    {item.id === "uploading" && state === "active" && uploadPercent !== null ? ` (${uploadPercent}%)` : ""}
                   </li>
                 );
               })}

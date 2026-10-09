@@ -194,6 +194,31 @@ export const formatCheckUploadSchema = z.object({
   format: formatFlagSchema,
 });
 
+/**
+ * JSON body of POST /api/format/check after a direct upload: `sourcePath` is
+ * the key POST /api/format/upload-init handed out (the route checks that it
+ * belongs to the caller), `fileName` the original name for the report.
+ */
+export const formatCheckDirectSchema = z.object({
+  sourcePath: z.string().trim().min(1).max(512),
+  fileName: z.string().trim().min(1).max(255),
+  journalSlug: slugSchema.optional(),
+  manuscriptId: cuidSchema.optional(),
+  profileId: formatProfileIdSchema.optional(),
+  format: formatFlagSchema,
+});
+
+/** Body of POST /api/format/upload-init (file metadata only; the bytes go straight to storage). */
+export const formatUploadInitSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().max(200).optional().nullable(),
+  size: z
+    .number()
+    .int()
+    .positive("size must be a positive number of bytes")
+    .max(50 * 1024 * 1024, "File exceeds the 50 MB limit"),
+});
+
 /** Body of POST /api/format/check-manuscript. */
 export const formatCheckManuscriptSchema = z.object({
   manuscriptId: cuidSchema,

@@ -16,7 +16,7 @@ import {
   cleanPdfPages,
   extractPdfPages,
 } from "./parse/pdf-clean";
-import { detectStructure } from "./parse/headings";
+import { detectStructure, methodsLikeSpans } from "./parse/headings";
 import { assessLegendPlacement, parseFiguresAndTables } from "./parse/figures";
 import { parseReferences } from "./parse/references";
 import {
@@ -168,6 +168,10 @@ export async function buildManuscriptModel(input: BuildModelInput): Promise<Manu
   // keeps every span valid against the full text.
   const referencesStart = referenceListStart(text, outline);
   const prose = text.slice(0, referencesStart);
+  // Where the paper describes its own work: a data type named here was
+  // generated; the same words in the Introduction or Discussion (or in a
+  // review, which has no methods at all) are background.
+  const methodsSpans = methodsLikeSpans(text, outline);
 
   return {
     sourceType: source.sourceType,
@@ -196,7 +200,7 @@ export async function buildManuscriptModel(input: BuildModelInput): Promise<Manu
     references,
     statements,
     starMethods,
-    features: detectFeatures(prose),
+    features: detectFeatures(prose, { methodsSpans }),
     // Accessions may legitimately appear anywhere, including a data statement
     // placed after the reference list.
     accessions: detectAccessions(text),

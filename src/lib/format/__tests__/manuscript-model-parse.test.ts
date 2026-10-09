@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { cleanPdfPages } from "../parse/pdf-clean";
-import { detectStructure, findHeading } from "../parse/headings";
+import { detectStructure, findHeading, looksLikeCitation, methodsLikeSpans, numberedReferenceRunStart } from "../parse/headings";
 import { parseFiguresAndTables } from "../parse/figures";
 import {
   parseFrontMatter,
@@ -183,6 +183,158 @@ describe("detectStructure", () => {
     );
     const { outline } = structure(fragment);
     expect(outline.some((h) => h.normalized === "competing interests")).toBe(false);
+  });
+});
+
+describe("detectStructure — reference lists and numbered headings", () => {
+  const body = [
+    "Summary",
+    "Widgets matter in reactors.",
+    "Introduction",
+    "Reactors need cooling and widgets.",
+    "Discussion",
+    "Widgets remain useful.",
+  ];
+  const vancouverList = [
+    "References",
+    "1. Smith J, Roe R. Widgets in reactors. J Widgets. 2019;12(3):100-110.",
+    "2. Doe A. Cooling without widgets",
+    "12. The loss of alleles on chromosome 3 has been detected",
+    "in many reactor lineages. Reactor Res. 2020;4:1-9.",
+    "86. Bartley L. A CRISPR Platform for Rapid",
+    "Reactor Editing. Nat Reactors. 2021;8:55-60.",
+    "91. Marignani P. Loss of tumour suppressors",
+    "in cooling cells. Cell Cooling. 2018;2:7-8.",
+  ];
+
+  it("never takes a line of the numbered reference list for a section heading", () => {
+    const text = normalizeText([...body, ...vancouverList].join("\n"));
+    const { outline, sections } = structure(text);
+    expect(outline.map((h) => h.normalized)).toEqual(["summary", "introduction", "discussion", "references"]);
+    // Everything after References belongs to the References section.
+    expect(sections.map((s) => s.heading.normalized)).toEqual(["summary", "introduction", "discussion", "references"]);
+    expect(sections[3].body).toContain("91. Marignani P.");
+  });
+
+  it("still finds known back-matter headings after the reference list", () => {
+    const text = normalizeText(
+      [...body, ...vancouverList, "Figure Legends", "Figure 1. Widgets.", "(A) A widget.", "Supplemental Information", "Figure S1. More widgets."].join("\n")
+    );
+    const { outline } = structure(text);
+    const names = outline.map((h) => h.normalized);
+    expect(names).toContain("figure legends");
+    expect(names).toContain("supplemental information");
+    expect(names.some((n) => /bartley|marignani|chromosome/.test(n))).toBe(false);
+  });
+
+  it("re-enables numbered headings after a Nature-style Methods section that follows the references", () => {
+    const text = normalizeText(
+      [...body, ...vancouverList, "Methods", "1. Reactor assembly", "Parts were assembled by hand.", "2. Statistics", "Two-tailed t tests were used."].join("\n")
+    );
+    const { outline } = structure(text);
+    const names = outline.map((h) => h.normalized);
+    expect(names).toContain("methods");
+    expect(names).toContain("reactor assembly");
+    expect(names).toContain("statistics");
+    expect(names.some((n) => /bartley|marignani/.test(n))).toBe(false);
+  });
+
+  it("rejects numbered lines that read like citations even before the References heading", () => {
+    const text = normalizeText(
+      [...body, "3. Bartley L. A CRISPR Platform for Rapid", "5. Smith, J. Widgets and their uses", "7. Roe R, Doe A. Cooling. Nature 12:1-9", "9. Cooling has been detected in reactors", "4. Reactor Assembly", "Parts were assembled by hand."].join("\n")
+    );
+    const { outline } = structure(text);
+    const names = outline.map((h) => h.normalized);
+    expect(names).toContain("reactor assembly");
+    expect(names.some((n) => /bartley|smith|roe|has been detected/.test(n))).toBe(false);
+  });
+
+  it("looksLikeCitation recognises author initials, years, volume:pages, DOIs and et al.", () => {
+    for (const line of [
+      "Bartley L. A CRISPR Platform for Rapid",
+      "Liu SY, Chen X. Widgets",
+      "Smith, J. Widgets and their uses",
+      "Widgets and their uses (2019)",
+      "Widgets and their uses. Nature 2019",
+      "J Widgets 12(3):100",
+      "Nat Reactors 8, 55-60",
+      "Widgets doi 10.1000/xyz123",
+      "Widgets et al. Reactors",
+      "The loss of alleles has been detected",
+    ]) {
+      expect(looksLikeCitation(line), line).toBe(true);
+    }
+    for (const line of ["Reactor Assembly", "Western Blot Analysis", "Statistical analysis", "DNA Extraction", "Cell Culture and Transfection"]) {
+      expect(looksLikeCitation(line), line).toBe(false);
+    }
+  });
+
+  it("caps plain heading numbers at 20 unless the document numbers hierarchically", () => {
+    const flat = normalizeText([...body, "4. Reactor Assembly", "Parts were assembled.", "24. Reactor Cooling", "More parts.", "86. Bartley Platform", "Text."].join("\n"));
+    const flatNames = structure(flat).outline.map((h) => h.normalized);
+    expect(flatNames).toContain("reactor assembly");
+    expect(flatNames).not.toContain("reactor cooling");
+    expect(flatNames).not.toContain("bartley platform");
+
+    const hierarchical = normalizeText([...body, "4. Reactor Assembly", "4.1 Parts", "Parts were assembled.", "24. Reactor Cooling", "More parts."].join("\n"));
+    const hierNames = structure(hierarchical).outline.map((h) => h.normalized);
+    expect(hierNames).toContain("parts");
+    expect(hierNames).toContain("reactor cooling");
+  });
+
+  it("treats a headingless trailing numbered run of citations as the reference list", () => {
+    const list = [
+      "1. Smith J, Roe R. Widgets in reactors. J Widgets. 2019;12(3):100-110.",
+      "2. Doe A, Poe E. Cooling without widgets. Reactor Res. 2020;4:1-9.",
+      "3. Lee K, Kim H. Sprockets and gadgets in reactor design. Nat Reactors. 2021;8:55-60.",
+      "4. Marignani P. Loss of tumour suppressors",
+      "in cooling cells. Cell Cooling. 2018;2:7-8.",
+      "5. Bartley L. A CRISPR Platform for Rapid",
+      "Reactor Editing. Nat Reactors. 2021;8:55-60.",
+      "6. Chen X. Widgets Revisited",
+    ];
+    const text = normalizeText([...body, ...list].join("\n"));
+    const lines = indexLines(text);
+    expect(numberedReferenceRunStart(lines)).toBe(body.length);
+    const names = structure(text).outline.map((h) => h.normalized);
+    expect(names).toEqual(["summary", "introduction", "discussion"]);
+    // Numbered section headings are not a reference run.
+    const sections = normalizeText(["1. Introduction", "Text.", "2. Results", "Text.", "3. Discussion", "Text.", "4. Methods", "Text.", "5. Conclusions", "Text."].join("\n"));
+    expect(numberedReferenceRunStart(indexLines(sections))).toBeNull();
+  });
+});
+
+describe("methodsLikeSpans", () => {
+  it("covers the methods section under any name, with its subsections, and nothing else", () => {
+    const text = normalizeText(
+      ["Summary", "Widgets matter.", "Introduction", "RNA-seq has revealed much.", "Results", "Widgets rose.", "Materials and Methods", "Cell culture", "Cells were grown.", "RNA sequencing", "Libraries were prepared.", "Discussion", "Widgets are useful.", "References", "1. Smith J. Widgets. J Widgets 1:1-2."].join("\n")
+    );
+    const { outline } = structure(text);
+    const spans = methodsLikeSpans(text, outline);
+    expect(spans).toHaveLength(1);
+    const covered = text.slice(spans[0].start, spans[0].end);
+    expect(covered).toContain("Materials and Methods");
+    expect(covered).toContain("Libraries were prepared.");
+    expect(covered).not.toContain("Discussion");
+    expect(covered).not.toContain("RNA-seq has revealed");
+  });
+
+  it("is empty for a manuscript without a methods section", () => {
+    const text = normalizeText(["Summary", "Widgets matter.", "Introduction", "Text.", "Discussion", "Text.", "References", "1. Smith J. Widgets."].join("\n"));
+    const { outline } = structure(text);
+    expect(methodsLikeSpans(text, outline)).toEqual([]);
+  });
+
+  it("covers the STAR Methods groups and availability statements as one span", () => {
+    const text = normalizeText(
+      ["Summary", "Widgets.", "Results", "Text.", "STAR Methods", "KEY RESOURCES TABLE", "Reagent | Source | Identifier", "RESOURCE AVAILABILITY", "Data and code availability", "RNA-seq data have been deposited.", "METHOD DETAILS", "Sequencing", "Libraries were prepared.", "References", "1. Smith J. Widgets."].join("\n")
+    );
+    const { outline } = structure(text);
+    const spans = methodsLikeSpans(text, outline);
+    expect(spans).toHaveLength(1);
+    const covered = text.slice(spans[0].start, spans[0].end);
+    expect(covered).toContain("Libraries were prepared.");
+    expect(covered).not.toContain("References");
   });
 });
 

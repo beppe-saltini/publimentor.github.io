@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { postFileCheck } from "./direct-upload";
 import { normalizeFormatting } from "./format-result-utils";
 import { assembleLetter, readJsonResponse, summarize } from "./report-utils";
 import type {
@@ -89,6 +90,8 @@ export function useFormatCheck({ journalSlug }: UseFormatCheckOptions) {
   const [running, setRunning] = useState(false);
   const [runMode, setRunMode] = useState<RunMode>("format");
   const [stage, setStage] = useState<RunStage>("idle");
+  // Real progress of the direct upload (null until the PUT reports something).
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
 
@@ -248,28 +251,40 @@ export function useFormatCheck({ journalSlug }: UseFormatCheckOptions) {
       setRunError(null);
       setRunning(true);
       setRunMode(mode);
-      setStage("parsing");
+      setUploadPercent(null);
+      // A chosen file is uploaded first (direct upload, see direct-upload.ts);
+      // the indicative check stages start when the check request goes out.
+      setStage(file ? "uploading" : "parsing");
       clearTimers();
-      for (const { stage: next, after, formatOnly } of STAGE_TIMINGS) {
-        if (formatOnly && !format) continue;
-        timersRef.current.push(
-          setTimeout(() => {
-            if (aliveRef.current) setStage(next);
-          }, after),
-        );
-      }
+      let checkStarted = false;
+      const startCheckStages = () => {
+        if (checkStarted || !aliveRef.current) return;
+        checkStarted = true;
+        setStage("parsing");
+        for (const { stage: next, after, formatOnly } of STAGE_TIMINGS) {
+          if (formatOnly && !format) continue;
+          timersRef.current.push(
+            setTimeout(() => {
+              if (aliveRef.current) setStage(next);
+            }, after),
+          );
+        }
+      };
 
       try {
         let response: Response;
         if (file) {
-          const body = new FormData();
-          body.append("file", file, file.name);
-          if (journalSlug) body.append("journalSlug", journalSlug);
-          if (selectedManuscriptId) body.append("manuscriptId", selectedManuscriptId);
-          if (selectedProfileId) body.append("profileId", selectedProfileId);
-          body.append("format", format ? "true" : "false");
-          response = await fetch("/api/format/check", { method: "POST", body });
+          response = await postFileCheck(
+            { file, journalSlug, manuscriptId: selectedManuscriptId, profileId: selectedProfileId, format },
+            {
+              onUploadProgress: (percent) => {
+                if (aliveRef.current) setUploadPercent(percent);
+              },
+              onCheckStart: startCheckStages,
+            },
+          );
         } else {
+          startCheckStages();
           response = await fetch("/api/format/check-manuscript", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -461,6 +476,7 @@ export function useFormatCheck({ journalSlug }: UseFormatCheckOptions) {
     running,
     runMode,
     stage,
+    uploadPercent,
     runError,
     run,
     reportId: loaded?.reportId ?? null,

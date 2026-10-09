@@ -7,6 +7,13 @@
  *   format-reports/{reportId}/formatted.docx       rebuilt journal-ready document
  *   format-reports/{reportId}/tracked.docx         original with tracked changes (docx sources)
  *
+ * Files the browser uploads straight to the bucket (POST /api/format/upload-init
+ * hands out a signed URL so the manuscript never travels through a Vercel
+ * function, whose body limit is 4.5 MB) live under a per-user prefix and are
+ * used as the report's source in place:
+ *
+ *   format-reports/uploads/{userId}/{uuid}/source.{pdf|docx}
+ *
  * src/lib/storage.ts's StorageProvider.upload derives its own path from a
  * manuscript/publisher layout, so it cannot write these keys. This module talks
  * to Supabase Storage directly when STORAGE_PROVIDER is "supabase" and mirrors
@@ -39,16 +46,38 @@ export function sourceExtensionOf(sourcePath: string | null | undefined): Source
   return match ? (match[1] as SourceExtension) : null;
 }
 
+/** Prefix of the files the browser uploads directly (see the module comment). */
+export const FORMAT_UPLOADS_PREFIX = `${FORMAT_REPORTS_PREFIX}/uploads`;
+
+/** Storage key for a direct upload; `uploadId` is a UUID minted by upload-init. */
+export function formatUploadPath(userId: string, uploadId: string, sourceExt: SourceExtension): string {
+  return `${FORMAT_UPLOADS_PREFIX}/${userId}/${uploadId}/source.${sourceExt}`;
+}
+
+/** The prefix every direct upload of `userId` lives under (ownership check of POST /check). */
+export function formatUploadPrefixFor(userId: string): string {
+  return `${FORMAT_UPLOADS_PREFIX}/${userId}/`;
+}
+
 /**
  * Only keys of the form format-reports/<id>/<file> are accepted, which rules
  * out path traversal on the local provider and stray writes elsewhere in the
  * bucket. Report ids are cuids (and the routes validate them), file names are
- * fixed by formatReportPaths.
+ * fixed by formatReportPaths. "uploads" is reserved for the direct-upload
+ * layout, whose keys are matched separately and must end in a source file.
  */
-const KEY_PATTERN = /^format-reports\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/;
+const KEY_PATTERN = /^format-reports\/(?!uploads\/)[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/;
+const UPLOAD_KEY_PATTERN = /^format-reports\/uploads\/[A-Za-z0-9_-]{1,64}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/source\.(pdf|docx)$/;
+
+/** True for a well-formed direct-upload key (any user). */
+export function isFormatUploadKey(key: string): boolean {
+  return UPLOAD_KEY_PATTERN.test(key);
+}
 
 export function assertFormatReportKey(key: string): void {
-  if (!KEY_PATTERN.test(key)) throw new Error(`Invalid format-report storage key: ${key}`);
+  if (!KEY_PATTERN.test(key) && !UPLOAD_KEY_PATTERN.test(key)) {
+    throw new Error(`Invalid format-report storage key: ${key}`);
+  }
 }
 
 export function isSupabaseStorage(): boolean {

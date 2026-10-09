@@ -169,6 +169,12 @@ export interface PerformCheckInput {
   format?: boolean;
   /** Request start (ms since epoch) so the formatter can budget Crossref lookups. */
   startedAt?: number;
+  /**
+   * Storage key the bytes were downloaded from when the browser uploaded the
+   * file directly (format-reports/uploads/...). The object is reused as the
+   * report's source in place: nothing is copied and storeSource is skipped.
+   */
+  sourcePath?: string | null;
 }
 
 /**
@@ -210,18 +216,22 @@ export async function performFormatCheck(input: PerformCheckInput): Promise<Chec
       checkedById: input.userId,
       checkedAt: checkedAtSafe,
       profileOverride: input.profileId ?? null,
+      // A direct upload is the source already; the multipart path stores it below.
+      sourcePath: input.sourcePath ?? null,
     },
     select: { id: true },
   });
 
   // Keep the source even when formatting is off so the editor can format later
   // via POST /reports/[id]/format. Storage trouble must not fail the check.
-  let sourcePath: string | null = null;
-  try {
-    sourcePath = await storeSource(row.id, input.buffer, input.fileType);
-    await prisma.formatCheckReport.update({ where: { id: row.id }, data: { sourcePath } });
-  } catch (error) {
-    console.error("[format] Could not store the source file:", error);
+  let sourcePath: string | null = input.sourcePath ?? null;
+  if (!sourcePath) {
+    try {
+      sourcePath = await storeSource(row.id, input.buffer, input.fileType);
+      await prisma.formatCheckReport.update({ where: { id: row.id }, data: { sourcePath } });
+    } catch (error) {
+      console.error("[format] Could not store the source file:", error);
+    }
   }
 
   await auditLogger.log({
@@ -260,6 +270,7 @@ export async function performFormatCheck(input: PerformCheckInput): Promise<Chec
         fileType: input.fileType,
         journalName: input.journal?.name ?? profile.name,
         elapsedMs: Date.now() - startedAt,
+        sourcePath,
       });
       await prisma.formatCheckReport.update({ where: { id: row.id }, data: formatted.data });
       body.formatting = formatted.block;

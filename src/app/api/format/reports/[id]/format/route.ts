@@ -100,6 +100,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       journalName: journal?.name ?? profile.name,
       repairReferences,
       elapsedMs: Date.now() - startedAt,
+      // A direct upload stays where it is; the default key would point at nothing.
+      sourcePath: row.sourcePath,
     });
 
     const updated = await prisma.formatCheckReport.update({

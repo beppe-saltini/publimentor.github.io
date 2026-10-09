@@ -90,6 +90,7 @@ export function FormatCheckContent({ journalSlug, publisherId, hideHeading }: Fo
           running={state.running}
           runMode={state.runMode}
           stage={state.stage}
+          uploadPercent={state.uploadPercent}
           error={state.runError}
         />
         <FormatPreviousReports

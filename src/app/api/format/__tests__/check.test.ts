@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DOCX_BYTES,
+  DOCX_MIME_TYPE,
   JOURNAL_ID,
   MANUSCRIPT_ID,
+  OTHER_USER_ID,
   PDF_BYTES,
   REPORT_ID,
   USER_ID,
   genericProfile,
+  jsonRequest,
   makeFile,
   multipartRequest,
   sampleComposedLetter,
@@ -33,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   formatManuscript: vi.fn(),
   composeAuthorLetter: vi.fn(),
   putObject: vi.fn(),
+  getObject: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -56,8 +60,10 @@ vi.mock("../_lib/format-lib", () => ({
 vi.mock("../_lib/format-storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../_lib/format-storage")>()),
   putObject: mocks.putObject,
+  getObject: mocks.getObject,
 }));
 
+import { ObjectNotFoundError } from "../_lib/format-storage";
 import { POST, dynamic, maxDuration } from "../check/route";
 
 beforeEach(() => {
@@ -74,6 +80,7 @@ beforeEach(() => {
   mocks.formatManuscript.mockResolvedValue(sampleFormatResult());
   mocks.composeAuthorLetter.mockReturnValue(sampleComposedLetter);
   mocks.putObject.mockResolvedValue(undefined);
+  mocks.getObject.mockResolvedValue(Buffer.from(PDF_BYTES));
 });
 
 const pdfFile = () => makeFile("paper.pdf", PDF_BYTES, "application/pdf");
@@ -344,5 +351,128 @@ describe("POST /api/format/check — profile override and formatting", () => {
     expect(mocks.formatManuscript).not.toHaveBeenCalled();
     expect(body.formattingError).toMatch(/could not be stored/);
     expect(mocks.prisma.formatCheckReport.update).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------------
+// JSON path: the browser uploaded the file straight to storage (upload-init)
+// ------------------------------------------------------------------
+
+const UPLOAD_ID = "6f1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
+const ownUpload = (ext = "pdf") => `format-reports/uploads/${USER_ID}/${UPLOAD_ID}/source.${ext}`;
+const otherUpload = `format-reports/uploads/${OTHER_USER_ID}/${UPLOAD_ID}/source.pdf`;
+const directRequest = (body: Record<string, unknown>) => jsonRequest("http://localhost/api/format/check", "POST", body);
+
+describe("POST /api/format/check — JSON body after a direct upload", () => {
+  it("returns 401 and 429 before reading the body", async () => {
+    mocks.auth.mockResolvedValue(null);
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }))).status).toBe(401);
+    mocks.auth.mockResolvedValue({ user: { id: USER_ID } });
+    mocks.checkRateLimit.mockResolvedValue({ allowed: false, remaining: 0, resetIn: 30_000 });
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }))).status).toBe(429);
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for malformed JSON or a body without sourcePath/fileName", async () => {
+    const raw = new Request("http://localhost/api/format/check", { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+    expect((await POST(raw)).status).toBe(400);
+    expect((await POST(directRequest({ fileName: "paper.pdf" }))).status).toBe(400);
+    expect((await POST(directRequest({ sourcePath: ownUpload() }))).status).toBe(400);
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for an upload under another user's prefix, without touching storage", async () => {
+    const response = await POST(directRequest({ sourcePath: otherUpload, fileName: "paper.pdf" }));
+    expect(response.status).toBe(403);
+    expect(mocks.getObject).not.toHaveBeenCalled();
+    expect(mocks.prisma.formatCheckReport.create).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a key that is not a well-formed direct upload (no traversal, no report keys)", async () => {
+    for (const sourcePath of [
+      `format-reports/uploads/${USER_ID}/../${OTHER_USER_ID}/${UPLOAD_ID}/source.pdf`,
+      `format-reports/uploads/${USER_ID}/${UPLOAD_ID}/source.tex`,
+      `format-reports/uploads/${USER_ID}/not-a-uuid/source.pdf`,
+      `format-reports/uploads/${USER_ID}/${UPLOAD_ID}/formatted.docx`,
+    ]) {
+      const response = await POST(directRequest({ sourcePath, fileName: "paper.pdf" }));
+      expect(response.status, sourcePath).toBe(400);
+    }
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("validates profile, manuscript and journal before downloading the upload", async () => {
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf", profileId: "nature" }))).status).toBe(400);
+    mocks.prisma.journal.findUnique.mockResolvedValue(null);
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf", journalSlug: "nope" }))).status).toBe(404);
+    mocks.findAccessibleManuscript.mockResolvedValue(null);
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf", manuscriptId: MANUSCRIPT_ID }))).status).toBe(404);
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the uploaded object is gone from storage", async () => {
+    mocks.getObject.mockRejectedValue(new ObjectNotFoundError(ownUpload()));
+    const response = await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }));
+    expect(response.status).toBe(404);
+    expect(mocks.buildManuscriptModel).not.toHaveBeenCalled();
+  });
+
+  it("rejects downloaded bytes that do not match the declared type (400) or exceed 25 MB (413)", async () => {
+    mocks.getObject.mockResolvedValue(Buffer.from("not a pdf at all"));
+    const corrupt = await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }));
+    expect(corrupt.status).toBe(400);
+    expect((await corrupt.json()).error).toMatch(/valid PDF/);
+
+    mocks.getObject.mockResolvedValue(Buffer.concat([PDF_BYTES, Buffer.alloc(25 * 1024 * 1024)]));
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }))).status).toBe(413);
+    expect(mocks.buildManuscriptModel).not.toHaveBeenCalled();
+  });
+
+  it("downloads the upload, runs the pipeline and reuses the object as the report source in place", async () => {
+    const response = await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf", journalSlug: "iscience" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(mocks.getObject).toHaveBeenCalledWith(ownUpload());
+    expect(mocks.buildManuscriptModel).toHaveBeenCalledWith({ buffer: expect.any(Buffer), fileName: "paper.pdf", mimeType: "application/pdf" });
+    expect(mocks.runFormatChecks).toHaveBeenCalledWith(sampleModel, sampleProfile, { llm: true });
+    expect(body.reportId).toBe(REPORT_ID);
+    expect(body.report).toEqual({ ...sampleReport, letter: { ...sampleReport.letter, text: sampleComposedLetter.text } });
+    expect(body.formatting.downloads.formatted).toBe(`/api/format/reports/${REPORT_ID}/file?kind=formatted`);
+
+    // The source is recorded at creation and never re-uploaded: only the engine's output is written.
+    expect(mocks.prisma.formatCheckReport.create.mock.calls[0][0].data).toMatchObject({
+      journalId: JOURNAL_ID,
+      fileName: "paper.pdf",
+      sourcePath: ownUpload(),
+    });
+    expect(mocks.putObject.mock.calls.map((c) => c[0])).toEqual([`format-reports/${REPORT_ID}/formatted.docx`]);
+    const updates = mocks.prisma.formatCheckReport.update.mock.calls.map((c) => c[0]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].data).toMatchObject({ sourcePath: ownUpload(), formattedPath: `format-reports/${REPORT_ID}/formatted.docx` });
+  });
+
+  it("hands a .docx upload's bytes to the engine, honours format=false and links a manuscript", async () => {
+    mocks.getObject.mockResolvedValue(Buffer.from(DOCX_BYTES));
+    mocks.buildManuscriptModel.mockResolvedValue({ ...sampleModel, sourceType: "docx", fileName: "paper.docx" });
+    mocks.findAccessibleManuscript.mockResolvedValue({ id: MANUSCRIPT_ID });
+    mocks.prisma.manuscript.findUnique.mockResolvedValue({ id: MANUSCRIPT_ID, title: "Library title", journalId: JOURNAL_ID });
+
+    const response = await POST(directRequest({ sourcePath: ownUpload("docx"), fileName: "paper.docx", manuscriptId: MANUSCRIPT_ID, format: false }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(mocks.buildManuscriptModel.mock.calls[0][0].mimeType).toBe(DOCX_MIME_TYPE);
+    expect(mocks.formatManuscript).not.toHaveBeenCalled();
+    expect(mocks.putObject).not.toHaveBeenCalled();
+    expect(mocks.prisma.formatCheckReport.update).not.toHaveBeenCalled();
+    expect(mocks.prisma.formatCheckReport.create.mock.calls[0][0].data).toMatchObject({ manuscriptId: MANUSCRIPT_ID, sourcePath: ownUpload("docx") });
+    expect(body.manuscript.title).toBe(sampleModel.title);
+    expect(body.formatting).toBeUndefined();
+    expect(body.formattingError).toBeUndefined();
+  });
+
+  it("returns 422 when the downloaded file cannot be parsed", async () => {
+    mocks.buildManuscriptModel.mockRejectedValue(new Error("bad xref"));
+    expect((await POST(directRequest({ sourcePath: ownUpload(), fileName: "paper.pdf" }))).status).toBe(422);
   });
 });

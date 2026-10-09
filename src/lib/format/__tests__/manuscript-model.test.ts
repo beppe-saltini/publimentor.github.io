@@ -394,6 +394,54 @@ async function buildDocxBuffer(): Promise<Buffer> {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
+describe("buildManuscriptModel — review article (no methods)", () => {
+  const REVIEW = [
+    "Widgets in reactor biology: a review",
+    "Jane Smith1 and John Roe2",
+    "1 Department of Widgets, Example University, City 10001, Country.",
+    "",
+    "Summary",
+    "We review how widgets shape reactor cooling in mice and patients.",
+    "",
+    "Introduction",
+    "RNA-seq has revealed widespread widget expression in mouse models and in patients with",
+    "reactor disease. Proteomics has been applied to the same question, and microarray",
+    "studies have detected widgets in every tissue examined. Crystal structures (PDB) exist.",
+    "",
+    "Discussion",
+    "Sequencing has revealed that the loss of widgets has been detected in many lineages.",
+    "GenBank sequences of widget homologues are now available for most species.",
+    "",
+    "Declaration of Interests",
+    "The authors declare no competing interests.",
+    "",
+    "References",
+    "1. Smith J, Roe R. Widgets in reactors. J Widgets. 2019;12(3):100-110.",
+    "2. Doe A. Cooling without widgets. Reactor Res. 2020;4:1-9.",
+    "12. The loss of alleles on chromosome 3 has been detected",
+    "in many reactor lineages. Reactor Res. 2020;4:1-9.",
+    "86. Bartley L. A CRISPR Platform for Rapid",
+    "Reactor Editing. Nat Reactors. 2021;8:55-60.",
+    "91. Marignani P. Loss of tumour suppressors",
+    "in cooling cells. Cell Cooling. 2018;2:7-8.",
+  ].join("\n");
+
+  it("keeps reference entries out of the outline and reports no generated data", async () => {
+    const model = await buildManuscriptModel({ text: REVIEW, fileName: "review.txt" });
+    expect(model.outline.map((h) => h.normalized)).toEqual(["summary", "introduction", "discussion", "declaration of interests", "references"]);
+    expect(model.sections.map((s) => s.heading.normalized)).toEqual(["summary", "introduction", "discussion", "declaration of interests", "references"]);
+    expect(model.starMethods.headingText).toBeUndefined();
+    // The data types are mentioned, but a review generates none of them.
+    for (const key of ["rnaSeq", "proteomics", "microarray", "proteinStructure", "geneSequences"] as const) {
+      expect(model.features[key].present, key).toBe(true);
+      expect(model.features[key].generated, key).toBe(false);
+    }
+    // Subjects are mentioned too; the ethics rules decide what that means.
+    expect(model.features.vertebrates.present).toBe(true);
+    expect(model.features.humans.present).toBe(true);
+  });
+});
+
 describe("htmlToLines", () => {
   it("keeps heading levels and joins table rows", () => {
     const { lines, explicitHeadings } = htmlToLines(

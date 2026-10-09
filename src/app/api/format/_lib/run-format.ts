@@ -189,6 +189,12 @@ export interface RunFormattingInput {
   repairReferences?: boolean;
   /** Milliseconds already spent in this request (checks, download...). */
   elapsedMs?: number;
+  /**
+   * Where the source bytes already live when it is not the report's own
+   * source.{pdf|docx} (a direct upload reused in place); recorded as is in
+   * `data.sourcePath` instead of the default key.
+   */
+  sourcePath?: string | null;
 }
 
 export interface RunFormattingResult {
@@ -218,8 +224,9 @@ export async function storeSource(reportId: string, buffer: Buffer, fileType: Ac
 
 /**
  * Run the engine, store its documents and return both the response block and
- * the row columns to persist. The source must already be stored (storeSource);
- * its key is returned in `data.sourcePath` for convenience.
+ * the row columns to persist. The source must already be stored (storeSource,
+ * or a direct upload named by `sourcePath`); its key is returned in
+ * `data.sourcePath` for convenience.
  */
 export async function runFormatting(input: RunFormattingInput): Promise<RunFormattingResult> {
   const decision = repairDecision(input);
@@ -254,7 +261,7 @@ export async function runFormatting(input: RunFormattingInput): Promise<RunForma
     block,
     data: {
       formatPlan: toJson(plan),
-      sourcePath: paths.source,
+      sourcePath: input.sourcePath ?? paths.source,
       formattedPath: paths.formatted,
       trackedPath: hasTracked ? paths.tracked : null,
       changeLogText: result.changeLog,

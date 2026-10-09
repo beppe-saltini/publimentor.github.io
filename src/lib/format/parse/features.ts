@@ -7,7 +7,7 @@
  * a check can quote why it fired.
  */
 
-import type { AccessionRef, Feature, FeatureKey, Hit, PhraseHits } from "./model-types";
+import type { AccessionRef, Feature, FeatureKey, Hit, PhraseHits, TextSpan } from "./model-types";
 import { contextAround, matchAll } from "./text-utils";
 
 /** Regexes are deliberately broad; the evidence snippets keep them auditable. */
@@ -62,9 +62,16 @@ const FEATURE_PATTERNS: Record<FeatureKey, RegExp> = {
  */
 export const DEPOSITABLE_FEATURES: readonly FeatureKey[] = ["rnaSeq", "proteomics", "microarray", "proteinStructure", "geneSequences"];
 
-/** Wording that says the authors produced the data themselves. */
+/**
+ * Wording that says the authors produced the data themselves, strong enough
+ * to count anywhere in the text: first person ("we performed", "we
+ * generated"), "in this study", or a deposition ("deposited", "accession").
+ * The bare passive ("sequencing was performed", "has been detected") is not
+ * enough: in an Introduction, a Discussion or a review it reports other
+ * people's work.
+ */
 const GENERATED_RE =
-  /\bwe\s+(?:performed|conducted|generated|sequenced|profiled|carried out|determined|solved|collected)\b|\b(?:was|were)\s+(?:performed|conducted|generated|carried out|collected|determined|solved|sequenced|profiled)\b|\bsubjected to\b|\bdeposited\b|\baccession\b|\bgenerated in this (?:study|paper|work)\b|\blibrar(?:y|ies)\s+(?:was|were)\s+(?:prepared|constructed|generated)\b|\blibrary preparation\b|\bsequenc(?:ed|ing)\s+(?:was\s+)?(?:performed|done)\s+on\b|\bsequenced on\b/i;
+  /\bwe\s+(?:(?:also|then|first|next|further|therefore|additionally|subsequently)\s+)?(?:performed|conducted|generated|sequenced|profiled|carried out|determined|solved|collected|produced|acquired|measured|obtained)\b|\b(?:was|were)\s+(?:performed|conducted|generated|carried out|collected|determined|solved|sequenced|profiled|acquired|obtained|produced)\s+(?:in|for|as part of)\s+(?:this|the present|our)\s+(?:study|paper|work|manuscript|analysis)\b|\b(?:generated|produced|obtained|collected|acquired)\s+in\s+(?:this|the present|our)\s+(?:study|paper|work)\b|\bour\s+(?:own\s+)?(?:RNA[-\s]?seq|sequencing|proteomics?|microarray|structural|crystallographic|cryo[-\s]?EM)\s+(?:data|dataset|experiments?|analysis)\b|\bdeposited\b|\baccession\b/i;
 
 /** Wording that says the data came from somewhere else. */
 const REUSED_RE =
@@ -95,15 +102,47 @@ export function sentenceAround(text: string, start: number, end: number, cap = 3
   return text.slice(from, to).replace(/\s+/g, " ").trim();
 }
 
+/** Where the manuscript's methods-like text sits; see `methodsLikeSpans`. */
+export interface FeatureContext {
+  /**
+   * Spans of the methods-like sections (Methods, Materials and Methods, STAR
+   * Methods and its groups, Experimental procedures, availability
+   * statements, and everything nested under them). An empty array means the
+   * manuscript has no methods section at all — a review, a perspective — and
+   * then no data type counts as generated.
+   */
+  methodsSpans: TextSpan[];
+}
+
+function inAnySpan(spans: TextSpan[], start: number): boolean {
+  return spans.some((s) => start >= s.start && start < s.end);
+}
+
 /**
  * Did the paper generate this kind of data? Each mention is judged by its
- * sentence: reuse wording (public cohorts, downloaded datasets) wins over
- * generation wording within one sentence ("data were collected from GEO").
- * One sentence that clearly reports generation makes the feature generated;
- * otherwise any explicit reuse marks it reused; with neither we assume
- * generated, because a missed deposition is the costlier error.
+ * sentence and its place in the manuscript:
+ *
+ *  - reuse wording (public cohorts, downloaded datasets) marks the mention
+ *    as reused, and wins over generation wording within one sentence ("data
+ *    were collected from GEO");
+ *  - a mention inside a methods-like section is generated (methods describe
+ *    what the authors did);
+ *  - a mention elsewhere is generated only when its sentence says so in the
+ *    first person or with "in this study" / "deposited" / "accession";
+ *    "sequencing has revealed" in an Introduction is background.
+ *
+ * One generated mention makes the feature generated. Without a context (no
+ * structural information, as in text-only callers) the old sentence-level
+ * rule applies: a mention with neither cue is assumed generated, because a
+ * missed deposition is the costlier error. With a context that lists no
+ * methods-like section at all, nothing counts as generated.
  */
-export function classifyGeneration(text: string, spans: Array<{ start: number; end: number }>): boolean {
+export function classifyGeneration(
+  text: string,
+  spans: Array<{ start: number; end: number }>,
+  context?: FeatureContext
+): boolean {
+  if (context && context.methodsSpans.length === 0) return false;
   let reused = false;
   for (const span of spans) {
     const sentence = sentenceAround(text, span.start, span.end);
@@ -112,12 +151,18 @@ export function classifyGeneration(text: string, spans: Array<{ start: number; e
       continue;
     }
     if (GENERATED_RE.test(sentence)) return true;
+    if (context && inAnySpan(context.methodsSpans, span.start)) return true;
   }
+  if (context) return false;
   return !reused;
 }
 
-/** Builds the feature map with up to three evidence snippets each. */
-export function detectFeatures(text: string): Record<FeatureKey, Feature> {
+/**
+ * Builds the feature map with up to three evidence snippets each. `context`
+ * tells where the methods-like text is, which decides `generated` for the
+ * depositable data types; without it the sentence wording alone decides.
+ */
+export function detectFeatures(text: string, context?: FeatureContext): Record<FeatureKey, Feature> {
   const out = {} as Record<FeatureKey, Feature>;
   for (const key of Object.keys(FEATURE_PATTERNS) as FeatureKey[]) {
     const hits = matchAll(text, FEATURE_PATTERNS[key]);
@@ -132,7 +177,8 @@ export function detectFeatures(text: string): Record<FeatureKey, Feature> {
       if (evidence.length >= 3) break;
     }
     const present = hits.length > 0;
-    const generated = present && (DEPOSITABLE_FEATURES.includes(key) ? classifyGeneration(text, hits.map((h) => h.span)) : true);
+    const generated =
+      present && (DEPOSITABLE_FEATURES.includes(key) ? classifyGeneration(text, hits.map((h) => h.span), context) : true);
     out[key] = { present, evidence, generated };
   }
   return out;

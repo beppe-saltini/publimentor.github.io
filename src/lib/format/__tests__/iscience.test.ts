@@ -327,8 +327,12 @@ describe("tables and supplemental items", () => {
 });
 
 describe("ethics", () => {
+  /** A model with a plain Methods section, so missing statements are a real failure. */
+  const withMethods = (overrides: Partial<ManuscriptModel> = {}) =>
+    makeModel({ starMethods: { ...makeModel().starMethods, headingText: "Methods" }, outline: [heading("Methods", 0)], ...overrides });
+
   it("animal and human work: approval, consent, sex and age", () => {
-    const animal = makeModel({ features: { ...makeModel().features, vertebrates: { present: true, evidence: ["mice"] } } });
+    const animal = withMethods({ features: { ...makeModel().features, vertebrates: { present: true, evidence: ["mice"] } } });
     expect(applies("ethics.vertebrates", makeModel())).toBe(false);
     expect(run("ethics.vertebrates", animal).status).toBe("fail");
     animal.statements.ethicsAnimal = statement("Ethics", "Approved by the IACUC.");
@@ -337,10 +341,35 @@ describe("ethics", () => {
     animal.features.ageReported = { present: true, evidence: ["8 weeks"] };
     expect(run("ethics.vertebrates", animal).status).toBe("pass");
 
-    const human = makeModel({ features: { ...makeModel().features, humans: { present: true, evidence: ["patients"] } }, statements: { ethicsHuman: statement("Ethics", "IRB approved.") } });
+    const human = withMethods({ features: { ...makeModel().features, humans: { present: true, evidence: ["patients"] } }, statements: { ethicsHuman: statement("Ethics", "IRB approved.") } });
     expect(run("ethics.humans", human).summary).toContain("informed consent");
     human.statements.informedConsent = statement("Ethics", "Written informed consent was obtained.");
     expect(run("ethics.humans", human).status).toBe("review");
+  });
+
+  it("asks instead of failing when mice or patients are mentioned but there is no methods section (review article)", () => {
+    // No starMethods.headingText, no Methods heading in the outline, no ethics statement.
+    const review = makeModel({
+      outline: [heading("Summary", 0), heading("Introduction", 20), heading("Discussion", 400), heading("References", 900)],
+      features: { ...makeModel().features, vertebrates: { present: true, evidence: ["mouse models"] }, humans: { present: true, evidence: ["patients"] } },
+    });
+    const animal = run("ethics.vertebrates", review);
+    expect(animal.status).toBe("review");
+    expect(animal.summary).toMatch(/Animal work is mentioned but the manuscript has no methods section; if experimental work was done, add the approval, sex and age statements/);
+    const human = run("ethics.humans", review);
+    expect(human.status).toBe("review");
+    expect(human.summary).toMatch(/Human work is mentioned but the manuscript has no methods section/);
+    expect(human.summary).toContain("consent");
+
+    // The same model with a methods section (any alias in the outline) fails as before.
+    const withMaterials = makeModel({ ...review, outline: [...review.outline, heading("Materials and Methods", 500)] });
+    expect(run("ethics.vertebrates", withMaterials).status).toBe("fail");
+    const withStar = makeModel({ ...review, starMethods: { ...review.starMethods, headingText: "STAR Methods" } });
+    expect(run("ethics.humans", withStar).status).toBe("fail");
+    // A review article whose approval wording is present anyway is judged on it.
+    const approved = makeModel({ ...review, statements: { ethicsAnimal: statement("Ethics", "Approved by the IACUC.") } });
+    expect(run("ethics.vertebrates", approved).status).toBe("review");
+    expect(run("ethics.vertebrates", approved).summary).toContain("approval present");
   });
 
   it("falls back to the wording in the text when the parser found no statement", () => {

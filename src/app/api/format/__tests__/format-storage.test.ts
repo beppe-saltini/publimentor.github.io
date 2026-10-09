@@ -17,7 +17,10 @@ import {
   ObjectNotFoundError,
   assertFormatReportKey,
   formatReportPaths,
+  formatUploadPath,
+  formatUploadPrefixFor,
   getObject,
+  isFormatUploadKey,
   isSupabaseStorage,
   localStorageBase,
   putObject,
@@ -25,6 +28,8 @@ import {
 } from "../_lib/format-storage";
 
 const REPORT_ID = "crepo000000000000000000001";
+const USER_ID = "cuser000000000000000000001";
+const UPLOAD_ID = "6f1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
 let tmpDir: string;
 const envBackup = { STORAGE_PROVIDER: process.env.STORAGE_PROVIDER, LOCAL_STORAGE_PATH: process.env.LOCAL_STORAGE_PATH, VERCEL: process.env.VERCEL };
 
@@ -67,6 +72,30 @@ describe("paths and keys", () => {
     expect(() => assertFormatReportKey(`format-reports/${REPORT_ID}/sub/dir.docx`)).toThrow(/Invalid/);
     await expect(putObject("format-reports/../x.pdf", Buffer.from("x"), "application/pdf")).rejects.toThrow(/Invalid/);
     await expect(getObject("format-reports/../x.pdf")).rejects.toThrow(/Invalid/);
+  });
+
+  it("accepts direct-upload keys only in their exact per-user layout", () => {
+    const key = formatUploadPath(USER_ID, UPLOAD_ID, "docx");
+    expect(key).toBe(`format-reports/uploads/${USER_ID}/${UPLOAD_ID}/source.docx`);
+    expect(key.startsWith(formatUploadPrefixFor(USER_ID))).toBe(true);
+    expect(key.startsWith(formatUploadPrefixFor("cuser000000000000000000002"))).toBe(false);
+    expect(sourceExtensionOf(key)).toBe("docx");
+
+    expect(isFormatUploadKey(key)).toBe(true);
+    expect(() => assertFormatReportKey(key)).not.toThrow();
+    for (const bad of [
+      `format-reports/uploads/${USER_ID}/${UPLOAD_ID}/formatted.docx`,
+      `format-reports/uploads/${USER_ID}/${UPLOAD_ID}/source.tex`,
+      `format-reports/uploads/${USER_ID}/not-a-uuid/source.pdf`,
+      `format-reports/uploads/${USER_ID}/../x/${UPLOAD_ID}/source.pdf`,
+      `format-reports/uploads/${UPLOAD_ID}/source.pdf`,
+      "format-reports/uploads/source.pdf",
+    ]) {
+      expect(isFormatUploadKey(bad), bad).toBe(false);
+      expect(() => assertFormatReportKey(bad), bad).toThrow(/Invalid/);
+    }
+    // A report id can never be "uploads", so the two layouts cannot collide.
+    expect(() => assertFormatReportKey("format-reports/uploads/source.pdf")).toThrow(/Invalid/);
   });
 });
 

@@ -244,13 +244,34 @@ describe("helpers", () => {
     expect(Array.from(longestIncreasingRun([10, 30, 20, 40])).sort()).toEqual([0, 1, 3]);
   });
 
+  /** A top-level section whose span is placed right after `after` in the source. */
+  const sectionAfter = (model: ReturnType<typeof makeModel>, after: string, text: string, body: string) => {
+    const anchor = model.sections.find((s) => s.heading.text === after)!;
+    const sec = section(text, body);
+    sec.span = { start: anchor.span.end + 1, end: anchor.span.end + 1 + text.length + body.length + 2 };
+    sec.heading.span = { start: sec.span.start, end: sec.span.start + text.length };
+    return sec;
+  };
+
   it("sections unknown to the journal are kept at the end of Discussion with an author action", async () => {
     const model = makeModel();
-    model.sections.splice(4, 0, section("Perspectives", "Some outlook text."));
+    model.sections.splice(4, 0, sectionAfter(model, "Discussion", "Perspectives", "Some outlook text."));
     const plan = await planFormatting(model, iscienceTarget, { repairReferences: false });
     const disc = plan.layout!.slots.find((s) => s.slotId === "discussion")!;
     expect(disc.blocks.some((b) => b.type === "heading" && b.text === "Perspectives")).toBe(true);
     expect(plan.authorActions.some((a) => /"Perspectives"/.test(a.text))).toBe(true);
+  });
+
+  it("never reports an orphan section that sits after the References heading (reference entries taken for headings)", async () => {
+    const model = makeModel();
+    const entry = "86. Bartley L. A CRISPR Platform for Rapid";
+    model.sections.push(sectionAfter(model, "References", entry, "Gene Editing. J Widgets 12, 1-9 (2020)."));
+    model.outline = model.sections.map((s) => s.heading);
+    const plan = await planFormatting(model, iscienceTarget, { repairReferences: false });
+    const disc = plan.layout!.slots.find((s) => s.slotId === "discussion")!;
+    expect(disc.blocks.some((b) => b.type === "heading" && b.text === entry)).toBe(false);
+    expect(plan.authorActions.some((a) => /Bartley|integrate or remove/.test(a.text))).toBe(false);
+    expect(plan.operations.some((o) => /Bartley/.test(o.description))).toBe(false);
   });
 });
 

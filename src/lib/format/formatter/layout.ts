@@ -12,6 +12,8 @@ import { countWords, findSectionForSlot, makeOp, mentionsGenerativeAi, normalize
 import { buildDataAndCode, buildLeadContact, buildMaterialsAvailability, inferLeadContactName, leadContactFromAuthorsLine, markLeadContact, nextFootnoteNumber, statementBlocks } from "./statements";
 import type { FormatLayout, FormatOperation, LayoutBlock, LayoutSlot, TargetSlot, TargetStructure } from "./types";
 
+const REFERENCES_HEADING_RE = /^(references|bibliography|literature cited)$/;
+
 export interface LayoutResult {
   layout: FormatLayout;
   operations: FormatOperation[];
@@ -384,13 +386,25 @@ export class LayoutBuilder {
     if (typeof start === "number" && start >= 0) this.sourceOrder.push({ slotId, start });
   }
 
+  /** Offset of the References heading, when the manuscript has one. */
+  private referencesStart(): number | undefined {
+    const isRefs = (text: string) => REFERENCES_HEADING_RE.test(normalizeHeading(text));
+    const heading = this.model.outline.filter((h) => isRefs(h.text)).pop();
+    if (heading) return heading.span.start;
+    return this.model.sections.find((s) => isRefs(s.heading.text))?.span.start;
+  }
+
   /** Sections that matched no slot: keep them (end of Discussion) and flag them. */
   private placeUnmappedSections(slots: LayoutSlot[]) {
     const discussion = slots.find((s) => s.slotId === "discussion");
+    const referencesStart = this.referencesStart();
     for (const sec of this.model.sections) {
       if (this.consumed.has(sec)) continue;
       const n = normalizeHeading(sec.heading.text);
       if (!n || /^(references|supplementary information|supplemental information|highlights|graphical abstract|key ?words|keywords|abstract|summary|extended data)$/.test(n)) continue;
+      // Whatever the parser took for a section inside the reference list is a
+      // reference entry, not a section the authors wrote: never report it.
+      if (referencesStart !== undefined && sec.span.start > referencesStart) continue;
       const fullText = [sec.body, ...Array.from(walkSections(sec.children), (c) => `${c.heading.text} ${c.body}`)].join(" ");
       if (/^additional information$/.test(n) && /correspond/i.test(fullText)) {
         this.ops.push(makeOp(this.ids, "note", `Dropped the Nature-style "${sec.heading.text.trim()}" paragraph (its correspondence information is now in the Lead Contact statement).`, { before: snippet(sec.body) }));

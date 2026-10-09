@@ -38,6 +38,15 @@ export function methodsSection(model: ManuscriptModel): Section | undefined {
   return findSection(model, METHODS_ALIASES);
 }
 
+/**
+ * Does the manuscript have a methods section at all? A review or a
+ * perspective has none, and then a mention of mice or patients is not a
+ * report of experimental work.
+ */
+export function hasMethodsSection(model: ManuscriptModel): boolean {
+  return Boolean(model.starMethods.headingText) || methodsSection(model) !== undefined || outlineHas(model, METHODS_ALIASES);
+}
+
 // ---------------------------------------------------------------------------
 // Title and summary
 // ---------------------------------------------------------------------------
@@ -350,6 +359,12 @@ export function ethicsCheck(model: ManuscriptModel, kind: "animal" | "human"): R
   if (!model.features.sexReported.present) toReview.push("sex of subjects");
   if (!model.features.ageReported.present) toReview.push("age or developmental stage");
   const subject = kind === "animal" ? "Animal" : "Human";
+  if (missing.length && !hasMethodsSection(model)) {
+    // No methods section anywhere: the animals or patients are probably the
+    // subject of the discussion, not of experiments. Ask rather than fail.
+    const needed = kind === "animal" ? "approval, sex and age statements" : "approval, consent, sex and age statements";
+    return review(`${subject} work is mentioned but the manuscript has no methods section; if experimental work was done, add the ${needed}`, ev, "medium");
+  }
   if (missing.length) return fail(`${subject} work: missing ${missing.join(" and ")}`, ev);
   if (toReview.length) return review(`${subject} work: approval present; not found: ${toReview.join(", ")}`, ev);
   return pass(`${subject} work: approval${kind === "human" ? ", consent" : ""}, sex and age reported`, ev, confidence);
