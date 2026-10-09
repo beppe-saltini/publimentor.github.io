@@ -186,6 +186,28 @@ describe("detectStructure", () => {
   });
 });
 
+describe("detectStructure — methods subheadings that start with Data/Statistical", () => {
+  it("keeps 'Statistical analysis' and 'Data analysis' as headings", () => {
+    const text = [
+      "Materials and Methods",
+      "Cell culture",
+      "Cells were grown in DMEM with 10% FBS.",
+      "Data analysis",
+      "Images were quantified with ImageJ.",
+      "Statistical analysis",
+      "Two groups were compared by t-tests.",
+      "References",
+      "1. Smith J. A paper. J Test. 2020;1(1):1-2.",
+      "2. Jones K. Another paper. J Test. 2021;2(1):3-4.",
+      "3. Lee H. Third paper. J Test. 2022;3(1):5-6.",
+    ].join("\n");
+    const { outline } = structure(text);
+    const headings = outline.map((h) => h.text);
+    expect(headings).toContain("Data analysis");
+    expect(headings).toContain("Statistical analysis");
+  });
+});
+
 describe("detectStructure — reference lists and numbered headings", () => {
   const body = [
     "Summary",

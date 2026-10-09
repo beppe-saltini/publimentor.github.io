@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildManuscriptModel, detectSourceType, excerpt } from "../manuscript-model";
 import { htmlToLines } from "../parse/docx";
+import { buildDocx, STYLES_WITHOUT_HEADINGS, type FixtureParagraph } from "../formatter/__tests__/docx-fixture";
 
 // ============================================================
 // Fixtures
@@ -488,5 +489,63 @@ describe("buildManuscriptModel — DOCX", () => {
     expect(model.references.style).toBe("numbered");
     expect(model.references.count).toBe(3);
     expect(model.references.entries[1].usesEtAl).toBe(true);
+  });
+
+  it("falls back to the text heading heuristics when the headings are bold paragraphs without Word styles", async () => {
+    const bold = (text: string): FixtureParagraph => ({ text: [{ text, bold: true }] });
+    const paragraphs: FixtureParagraph[] = [
+      { text: "Widget biogenesis improves reactor cooling" },
+      { text: "Jane Smith1 and John Roe2" },
+      { text: "1 Department of Widgets, Example University, City 10001, Country." },
+      bold("Summary"),
+      { text: "We show that widgets cool reactors in mice." },
+      bold("Introduction"),
+      { text: "Widgets have long been studied1,2." },
+      bold("Results"),
+      bold("Widgets cool reactors"),
+      { text: "Cooling improved after widget expression (Fig. 1a)." },
+      bold("Discussion"),
+      { text: "Widgets matter for reactor design." },
+      bold("Materials and Methods"),
+      bold("Mice"),
+      { text: "Female BALB/c mice (6–8 weeks) were used. All procedures were approved by the IACUC." },
+      bold("Statistics"),
+      { text: "Two-tailed t tests were used in GraphPad Prism v9." },
+      bold("Declaration of Interests"),
+      { text: "The authors declare no competing interests." },
+      bold("References"),
+      { text: "1. Smith J, Roe R. Widgets in reactors. J Widgets. 2019;12(3):100-110." },
+      { text: "2. Doe A. Cooling without widgets. Reactor Res. 2020;4:1-9." },
+      { text: "3. Poe E. Measuring cooling. Reactor Res. 2021;5:10-19." },
+    ];
+    const buffer = await buildDocx(paragraphs, { stylesXml: STYLES_WITHOUT_HEADINGS });
+    const model = await buildManuscriptModel({ buffer, fileName: "bold-headings.docx" });
+
+    expect(model.sourceType).toBe("docx");
+    expect(model.docx?.usesHeadingStyles).toBe(false);
+    // No <h1>-<h3> from mammoth: the PDF-style heuristics recover the outline.
+    expect(model.outline.map((h) => h.normalized)).toEqual([
+      "summary",
+      "introduction",
+      "results",
+      "widgets cool reactors",
+      "discussion",
+      "materials and methods",
+      "mice",
+      "statistics",
+      "declaration of interests",
+      "references",
+    ]);
+    expect(model.sections.map((s) => s.heading.normalized)).toEqual(["summary", "introduction", "results", "discussion", "materials and methods", "declaration of interests", "references"]);
+    expect(model.sections[2].children.map((c) => c.heading.text)).toEqual(["Widgets cool reactors"]);
+    // Statements and features are populated from the recovered sections.
+    expect(model.summary?.text).toContain("widgets cool reactors");
+    expect(model.statements.declarationOfInterests?.text).toContain("no competing interests");
+    expect(model.starMethods.present).toBe(false);
+    expect(model.starMethods.headingText).toBe("Materials and Methods");
+    expect(model.starMethods.headings).toEqual(["Mice", "Statistics"]);
+    expect(model.features.vertebrates.present).toBe(true);
+    expect(model.references.style).toBe("numbered");
+    expect(model.references.count).toBe(3);
   });
 });

@@ -30,7 +30,8 @@ import {
 import { buildChangeLog } from "./change-log";
 import { buildLayout } from "./layout";
 import { normalizeHeading } from "./plan-utils";
-import type { FormatLayout, FormatPlan, FormattedDocument, LayoutBlock, LayoutSlot, TargetStructure } from "./types";
+import { splitSuperscriptCitations, superscriptCitationMax } from "./superscript-citations";
+import type { FormatLayout, FormatPlan, FormattedDocument, LayoutBlock, LayoutSlot, TargetSlot, TargetStructure } from "./types";
 
 const FONT = "Calibri";
 const SIZE = 22; // half-points => 11 pt
@@ -39,24 +40,65 @@ const REFS = "fmt-references";
 const TABLE_WIDTH = 9360; // 6.5" in DXA
 const KRT_COLS = [3600, 2600, 3160];
 
-/** Split text into runs, highlighting "[...]" tokens in yellow. */
-export function tokenRuns(text: string, opts: { bold?: boolean; italics?: boolean; highlightAll?: boolean } = {}): TextRun[] {
+export interface TokenRunOptions {
+  bold?: boolean;
+  italics?: boolean;
+  highlightAll?: boolean;
+  /**
+   * Reference count: trailing citation numbers glued to words by PDF
+   * extraction ("signals8,9.") become superscript runs. 0/undefined leaves
+   * the digits alone (see ./superscript-citations).
+   */
+  superscriptMax?: number;
+}
+
+/** Split text into runs, highlighting "[...]" tokens in yellow (and superscripting citations when asked). */
+export function tokenRuns(text: string, opts: TokenRunOptions = {}): TextRun[] {
   const base = { font: FONT, size: SIZE, bold: opts.bold, italics: opts.italics };
   if (opts.highlightAll) return [new TextRun({ ...base, text, highlight: "yellow" })];
   const runs: TextRun[] = [];
+  const plain = (t: string) => {
+    if (!t) return;
+    if (!opts.superscriptMax) {
+      runs.push(new TextRun({ ...base, text: t }));
+      return;
+    }
+    for (const seg of splitSuperscriptCitations(t, opts.superscriptMax)) {
+      runs.push(new TextRun(seg.superscript ? { ...base, text: seg.text, superScript: true } : { ...base, text: seg.text }));
+    }
+  };
   const re = /\[[^\]\n]{1,120}\]/g;
   let last = 0;
   for (const m of text.matchAll(re)) {
-    if (m.index! > last) runs.push(new TextRun({ ...base, text: text.slice(last, m.index) }));
+    if (m.index! > last) plain(text.slice(last, m.index));
     runs.push(new TextRun({ ...base, text: m[0], highlight: "yellow" }));
     last = m.index! + m[0].length;
   }
-  if (last < text.length) runs.push(new TextRun({ ...base, text: text.slice(last) }));
+  if (last < text.length) plain(text.slice(last));
   return runs.length > 0 ? runs : [new TextRun({ ...base, text })];
 }
 
-function para(text: string, extra: Partial<IParagraphOptions> = {}, runOpts: Parameters<typeof tokenRuns>[1] = {}): Paragraph {
+function para(text: string, extra: Partial<IParagraphOptions> = {}, runOpts: TokenRunOptions = {}): Paragraph {
   return new Paragraph({ children: tokenRuns(text, runOpts), spacing: { after: 120 }, ...extra });
+}
+
+/** Slot kinds whose running text carries citations; legends, tables, the KRT, titles and the reference list never get superscripts. */
+const CITING_SLOT_KINDS = new Set<NonNullable<TargetSlot["kind"]> | "default">(["summary", "body", "methods", "statement", "default"]);
+
+function findTargetSlot(slots: TargetSlot[], id: string): TargetSlot | undefined {
+  for (const s of slots) {
+    if (s.id === id) return s;
+    const child = s.children ? findTargetSlot(s.children, id) : undefined;
+    if (child) return child;
+  }
+  return undefined;
+}
+
+/** Reference count to superscript against inside `slotId`, or 0 when the slot's text is not citing prose. */
+export function slotSuperscriptMax(target: TargetStructure, slotId: string, superscriptMax: number): number {
+  if (superscriptMax <= 0) return 0;
+  const slot = findTargetSlot(target.slots, slotId);
+  return CITING_SLOT_KINDS.has(slot?.kind ?? "default") ? superscriptMax : 0;
 }
 
 function heading(text: string, level: 1 | 2 | 3): Paragraph {
@@ -109,7 +151,7 @@ function referenceParagraphs(plan: FormatPlan): Paragraph[] {
   );
 }
 
-function blockToParagraphs(block: LayoutBlock, plan: FormatPlan, target: TargetStructure, baseLevel: 1 | 2): Array<Paragraph | Table> {
+function blockToParagraphs(block: LayoutBlock, plan: FormatPlan, target: TargetStructure, baseLevel: 1 | 2, superscriptMax = 0): Array<Paragraph | Table> {
   switch (block.type) {
     case "heading":
       return [heading(block.text, Math.min(3, Math.max(block.level, baseLevel + 1)) as 2 | 3)];
@@ -120,23 +162,24 @@ function blockToParagraphs(block: LayoutBlock, plan: FormatPlan, target: TargetS
     case "references":
       return referenceParagraphs(plan);
     case "paragraph":
-      if (block.style === "bullet") return [new Paragraph({ children: tokenRuns(block.text.replace(/^•\s*/, "")), numbering: { reference: BULLETS, level: 0 }, spacing: { after: 80 } })];
+      if (block.style === "bullet") return [new Paragraph({ children: tokenRuns(block.text.replace(/^•\s*/, ""), { superscriptMax }), numbering: { reference: BULLETS, level: 0 }, spacing: { after: 80 } })];
       if (block.style === "legend_title") return [para(block.text, { spacing: { before: 200, after: 60 } }, { bold: true })];
-      if (block.style === "italic_note") return [para(block.text, {}, { italics: true })];
-      return [para(block.text)];
+      if (block.style === "italic_note") return [para(block.text, {}, { italics: true, superscriptMax })];
+      return [para(block.text, {}, { superscriptMax })];
   }
 }
 
-function slotToChildren(slot: LayoutSlot, plan: FormatPlan, target: TargetStructure): Array<Paragraph | Table> {
+function slotToChildren(slot: LayoutSlot, plan: FormatPlan, target: TargetStructure, superscriptMax: number): Array<Paragraph | Table> {
   const out: Array<Paragraph | Table> = [heading(slot.heading, slot.level)];
+  const slotMax = slotSuperscriptMax(target, slot.slotId, superscriptMax);
   for (const b of slot.blocks) {
     // A source subheading that is the slot heading itself ("Quantification and
     // statistical analysis" under "Quantification and Statistical Analysis")
     // would print twice; the layout drops these, this is the safety net.
     if (b.type === "heading" && normalizeHeading(b.text) === normalizeHeading(slot.heading)) continue;
-    out.push(...blockToParagraphs(b, plan, target, slot.level));
+    out.push(...blockToParagraphs(b, plan, target, slot.level, slotMax));
   }
-  for (const child of slot.children) out.push(...slotToChildren(child, plan, target));
+  for (const child of slot.children) out.push(...slotToChildren(child, plan, target, superscriptMax));
   return out;
 }
 
@@ -176,8 +219,11 @@ export function outputFileName(model: ManuscriptModel, profileId: string): strin
 
 export async function renderFormattedDocx(model: ManuscriptModel, plan: FormatPlan, target: TargetStructure, meta: { journalName: string }): Promise<FormattedDocument> {
   const layout = plan.layout || buildLayout(model, target).layout;
+  // Glued superscript citations ("signals8,9.") are restored in citing prose
+  // only when the manuscript or the journal uses superscript numbering.
+  const superscriptMax = superscriptCitationMax(model.references, target, plan.references.length);
   const children: Array<Paragraph | Table> = [...titlePage(layout.titlePage, target, meta.journalName)];
-  for (const slot of layout.slots) children.push(...slotToChildren(slot, plan, target));
+  for (const slot of layout.slots) children.push(...slotToChildren(slot, plan, target, superscriptMax));
   children.push(...changeLogPage(plan));
 
   const doc = new Document({

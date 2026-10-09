@@ -58,6 +58,29 @@ describe("renderFormattedDocx", () => {
     expect(xml).toContain("[not verified on Crossref");
   });
 
+  it("restores glued superscript citations in citing prose only, leaving gene names and legends alone", async () => {
+    const model = makeModel();
+    // Introduction already reads "...studied1,2."; add gene names plus one more citation.
+    model.sections[1].body += " TSPAN4, CD8, p53, H1299 and 4T1 cells were used3.";
+    // A legend is never citing prose: "cells3." stays flat there.
+    model.figureLegends[1].body = "a, Sprocket loss in 4T1 cells3. n = 3.";
+    const plan = await planFormatting(model, iscienceTarget, { repairReferences: false });
+    const doc = await renderFormattedDocx(model, plan, iscienceTarget, { journalName: "iScience" });
+    const zip = await JSZip.loadAsync(doc.buffer);
+    const xml = await zip.file("word/document.xml")!.async("string");
+
+    const superscriptRuns = Array.from(xml.matchAll(/<w:r>(?:(?!<\/w:r>)[\s\S])*?<w:vertAlign w:val="superscript"\/>(?:(?!<\/w:r>)[\s\S])*?<w:t[^>]*>([^<]*)<\/w:t><\/w:r>/g), (m) => m[1]);
+    expect(superscriptRuns).toEqual(["1,2", "3"]);
+    // The text itself is unchanged, only split into runs: gene names sit in a plain run right before the superscript.
+    expect(xml).toContain("TSPAN4, CD8, p53, H1299 and 4T1 cells were used</w:t>");
+    expect(xml).toContain("Widgets have long been studied</w:t>");
+    expect(xml).toContain("a, Sprocket loss in 4T1 cells3. n = 3.</w:t>");
+    const { value: html } = await mammoth.convertToHtml({ buffer: doc.buffer });
+    expect(html).toContain("studied<sup>1,2</sup>.");
+    expect(html).toContain("were used<sup>3</sup>.");
+    expect(html).toContain("4T1 cells3. n = 3.");
+  });
+
   it("derives the file name from the original and sanitizes it", () => {
     expect(outputFileName(makeModel({ fileName: "My Paper (final).docx" }), "iscience")).toBe("My-Paper-final-iscience-formatted.docx");
     expect(outputFileName(makeModel({ fileName: undefined }), "generic")).toBe("manuscript-generic-formatted.docx");

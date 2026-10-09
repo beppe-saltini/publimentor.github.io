@@ -96,8 +96,10 @@ const LABEL_START =
   /^\s*(?:supplementary|supplemental|extended data)?\s*(?:fig(?:ure)?s?\.?|table|video|movie|data|scheme|appendix figure)\s*s?\d/i;
 
 /** Sentence openers that mark running prose rather than a heading. */
+// "Data ..." and "Statistical ..." open common methods subheadings ("Data analysis",
+// "Statistical analysis"), so they are deliberately not treated as prose openers.
 const PROSE_OPENERS =
-  /^(we|here|in|thus|therefore|however|although|because|together|consistent|by|to|these|this|the|next|finally|notably|moreover|furthermore|conversely|importantly|first|second|third|when|while|after|during|as|at|for|all|both|using|given|whereas|similarly|accordingly|overall|collectively|interestingly|data|values?|statistical)\b/i;
+  /^(we|here|in|thus|therefore|however|although|because|together|consistent|by|to|these|this|the|next|finally|notably|moreover|furthermore|conversely|importantly|first|second|third|when|while|after|during|as|at|for|all|both|using|given|whereas|similarly|accordingly|overall|collectively|interestingly|values?)\b/i;
 
 /** Markers of running prose anywhere in the line. */
 const PROSE_MARKERS =

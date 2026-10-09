@@ -7,6 +7,7 @@
  */
 
 import type { FigureLegend, Hit, ManuscriptModel, Section, TextSpan } from "../manuscript-model";
+import { methodsLikeSpans } from "../parse/headings";
 import {
   type RuleOutcome,
   type CheckEvidence,
@@ -36,6 +37,36 @@ export const METHODS_ALIASES = [
 /** The section holding the methods, whatever the journal calls it. */
 export function methodsSection(model: ManuscriptModel): Section | undefined {
   return findSection(model, METHODS_ALIASES);
+}
+
+/** Heading plus body of a section and, recursively, of its subsections. */
+function flattenSection(section: Section, includeHeading: boolean): string {
+  const parts = [includeHeading ? section.heading.text.trim() : "", section.body.trim(), ...section.children.map((c) => flattenSection(c, true))];
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * The complete methods text for the semantic (LLM) checks: STAR Methods or a
+ * classic "Materials and Methods"/"Methods"/"Experimental procedures" section
+ * with all of its subsections. `Section.body` alone is useless here: in a
+ * manuscript whose methods are split into subsections the parent body is
+ * empty, which is why these checks used to report "no excerpt" on
+ * Nature/Vancouver-style papers. The parser's methods-like spans (which also
+ * cover the availability statements) are used first; a hand-built model
+ * without `text` falls back to the section tree. Undefined when the
+ * manuscript has no methods text at all (a review, a perspective).
+ */
+export function methodsText(model: ManuscriptModel): string | undefined {
+  const spans = methodsLikeSpans(model.text, model.outline);
+  const fromSpans = spans
+    .map((s) => model.text.slice(s.start, s.end).trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+  if (fromSpans) return fromSpans;
+  const section = methodsSection(model);
+  const fromTree = section ? flattenSection(section, false) : "";
+  return fromTree || undefined;
 }
 
 /**

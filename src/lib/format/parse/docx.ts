@@ -5,7 +5,9 @@
  *  1. mammoth converts the document to HTML, which preserves Word heading
  *     styles as <h1>-<h3>, paragraphs, lists and tables. We flatten that into
  *     line-oriented text and remember which lines are headings, so the shared
- *     structure code can skip its PDF heuristics entirely.
+ *     structure code can skip its PDF heuristics entirely. A document whose
+ *     headings are bold "Normal" paragraphs yields no <h1>-<h3>; the model
+ *     builder then falls back to the PDF-style text heuristics.
  *  2. jszip reads word/document.xml for the facts HTML cannot carry: Word
  *     tables, inline images, OMML and MathType equations, tracked changes and
  *     whether heading styles are used at all.

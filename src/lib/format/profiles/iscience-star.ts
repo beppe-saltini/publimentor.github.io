@@ -9,7 +9,7 @@
 import type { ManuscriptModel } from "../manuscript-model";
 import type { FormatCheck } from "../profile";
 import { clipText, def, hasMethods, rule } from "./iscience-def";
-import { depositionCheck, methodsSection } from "./shared-rules";
+import { depositionCheck, methodsText } from "./shared-rules";
 import {
   dataCodeAvailabilityCheck,
   leadContactStatementCheck,
@@ -41,9 +41,13 @@ import {
 } from "./iscience-star-rules";
 
 const star = (m: ManuscriptModel) => m.starMethods.present;
+/**
+ * Methods text for the semantic checks, STAR or classic ("Materials and
+ * Methods" with subsections), clipped so one manuscript stays one prompt.
+ */
 const methodsExcerpt = (m: ManuscriptModel, n = 9000) => {
-  const section = methodsSection(m);
-  return section ? clipText(section.body, n) : null;
+  const text = methodsText(m);
+  return text ? clipText(text, n) : null;
 };
 
 export const starChecks: FormatCheck[] = [

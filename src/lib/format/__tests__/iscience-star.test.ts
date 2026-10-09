@@ -3,10 +3,55 @@
  * detectors (spreadsheet rows 44-72), on synthetic models.
  */
 
-import { describe, it, expect } from "vitest";
-import type { ManuscriptModel } from "../manuscript-model";
+import { describe, it, expect, vi } from "vitest";
+import { buildManuscriptModel, type ManuscriptModel } from "../manuscript-model";
+import { runFormatChecks } from "../evaluate";
 import { iscienceProfile } from "../profiles/iscience";
+import { methodsSection, methodsText } from "../profiles/shared-rules";
 import { compliantIscienceModel, heading, makeModel, section, statement } from "./profile-fixtures";
+
+const LLM_METHOD_CHECKS = ["star.references_in_lieu", "star.method_details", "references.datasets_code_cited"] as const;
+
+/** A synthetic Vancouver-style manuscript: classic methods split into subsections. */
+const CLASSIC_METHODS_MANUSCRIPT = [
+  "Widget biogenesis improves reactor cooling",
+  "Jane Smith1 and John Roe2",
+  "1 Department of Widgets, Example University, City 10001, Country.",
+  "",
+  "Abstract",
+  "We show that widgets cool reactors.",
+  "",
+  "Introduction",
+  "Widgets have long been studied1,2.",
+  "",
+  "Results",
+  "Widgets cooled reactors (Fig. 1a).",
+  "",
+  "Discussion",
+  "Widgets matter.",
+  "",
+  "Materials and Methods",
+  "Cell culture",
+  "Widget cells (ATCC CRL-0001) were cultured in RPMI with 10% FBS at 37 °C.",
+  "Reactor assays",
+  "Cooling was measured with a WidgetMeter 3000 (Example Instruments) as described previously3.",
+  "Statistical analysis",
+  "Two-tailed t tests were run in GraphPad Prism v9; n = 4 reactors per group.",
+  "",
+  "References",
+  "1. Smith J, Roe R. Widgets in reactors. J Widgets. 2019;12(3):100-110.",
+  "2. Doe A. Cooling without widgets. Reactor Res. 2020;4:1-9.",
+  "3. Poe E. Measuring cooling. Reactor Res. 2021;5:10-19.",
+].join("\n");
+
+/** A fetch stub answering with one Claude-shaped judgment. */
+function claudeFetch(judgments: unknown[]) {
+  return vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ content: [{ type: "text", text: JSON.stringify({ judgments }) }], stop_reason: "end_turn" }),
+  })) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
+}
 
 const check = (id: string) => {
   const c = iscienceProfile.checks.find((x) => x.id === `iscience.${id}`);
@@ -57,7 +102,7 @@ describe("STAR Methods structure", () => {
   });
 
   it("LLM method checks only build prompts when a methods section exists", () => {
-    for (const id of ["star.references_in_lieu", "star.method_details", "references.datasets_code_cited"]) {
+    for (const id of LLM_METHOD_CHECKS) {
       const c = check(id);
       expect(c.detector.kind).toBe("llm");
       if (c.detector.kind !== "llm") continue;
@@ -66,6 +111,51 @@ describe("STAR Methods structure", () => {
       expect(applies(id, withMethods)).toBe(true);
       expect(c.detector.prompt(withMethods)?.excerpt).toBe("We did things.");
     }
+  });
+
+  it("LLM method checks read classic methods with subsections (empty parent body) and clip the excerpt", () => {
+    // Nature/Vancouver style: every word of the methods sits under a subheading.
+    const nested = makeModel({ sections: [section("Materials and Methods", 0, "", [section("Cell culture", 30, "Cells were grown.", [], 2), section("Statistics", 60, "x".repeat(12000), [], 2)])] });
+    expect(methodsSection(nested)?.body).toBe("");
+    expect(methodsText(nested)).toContain("Cell culture\n\nCells were grown.");
+    for (const id of LLM_METHOD_CHECKS) {
+      const c = check(id);
+      if (c.detector.kind !== "llm") throw new Error(`${id} is not an llm check`);
+      expect(applies(id, nested)).toBe(true);
+      const excerpt = c.detector.prompt(nested)?.excerpt;
+      expect(excerpt).toContain("Cells were grown.");
+      // Clipped to the existing size limit (9000, or 7000 for the citation check) plus the marker.
+      expect(excerpt!.length).toBeLessThanOrEqual(9000 + "\n[...]".length);
+      expect(excerpt!.endsWith("[...]")).toBe(true);
+    }
+    expect(methodsText(makeModel())).toBeUndefined();
+  });
+
+  it("sends the methods prompts to Claude for a parsed 'Materials and Methods' manuscript", async () => {
+    const model = await buildManuscriptModel({ text: CLASSIC_METHODS_MANUSCRIPT, fileName: "classic.txt" });
+    expect(model.starMethods.present).toBe(false);
+    expect(model.starMethods.headingText).toBe("Materials and Methods");
+    // The parent section body is empty: this is exactly what used to yield "No manuscript excerpt available".
+    expect(methodsSection(model)?.body).toBe("");
+
+    const fetchImpl = claudeFetch([{ checkId: "iscience.star.method_details", status: "pass", summary: "Reagents, instruments and software are given.", evidence: ["WidgetMeter 3000"], confidence: "high" }]);
+    const report = await runFormatChecks(model, iscienceProfile, { llmOptions: { apiKey: "test-key", fetchImpl } });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body);
+    const prompt: string = body.messages[0].content;
+    for (const id of LLM_METHOD_CHECKS) {
+      const block = prompt.match(new RegExp(`<check id="iscience.${id}">[\\s\\S]*?</check>`))?.[0];
+      expect(block, id).toBeDefined();
+      expect(block).toContain("Materials and Methods");
+      expect(block).toContain("Cell culture");
+      expect(block).toContain("WidgetMeter 3000");
+      expect(block).toContain("GraphPad Prism v9");
+      expect(block).not.toContain("Widgets have long been studied"); // the introduction is not part of the methods excerpt
+    }
+
+    const byId = Object.fromEntries(report.results.map((r) => [r.checkId, r]));
+    expect(byId["iscience.star.method_details"]).toMatchObject({ status: "pass", summary: "Reagents, instruments and software are given." });
+    for (const id of LLM_METHOD_CHECKS) expect(byId[`iscience.${id}`].summary).not.toContain("No manuscript excerpt");
   });
 });
 

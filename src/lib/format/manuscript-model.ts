@@ -116,10 +116,16 @@ async function readSource(input: BuildModelInput): Promise<SourceText> {
   if (sourceType === "docx") {
     if (!input.buffer) throw new Error("A DOCX manuscript requires a buffer");
     const extraction = await extractDocx(input.buffer);
+    // Word heading styles drive the outline when the authors used them. A
+    // manuscript whose headings are merely bold "Normal" paragraphs yields no
+    // <h1>-<h3> at all; handing an empty map to the structure detector would
+    // silence the heuristics and leave the outline, statements and features
+    // empty, so such a file is read like a PDF: text heuristics on each line.
+    const explicitHeadings = extraction.explicitHeadings.size > 0 ? extraction.explicitHeadings : undefined;
     return {
       sourceType,
       text: normalizeText(extraction.text),
-      explicitHeadings: extraction.explicitHeadings,
+      explicitHeadings,
       docx: extraction.facts,
     };
   }
